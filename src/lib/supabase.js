@@ -6,8 +6,9 @@ export const supabase = createClient(
   {
     auth: {
       persistSession: true,
+      storage: window.localStorage,
       autoRefreshToken: true,
-      detectSessionInUrl: true, // handles magic links if enabled
+      detectSessionInUrl: true,
     },
   }
 );

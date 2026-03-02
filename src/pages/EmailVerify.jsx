@@ -10,9 +10,10 @@ export default function EmailVerify(){
   const nav = useNavigate();
   const { email } = useAuthFlow();
   const [code, setCode] = useState("");
-  const [left, setLeft] = useState(60); // resend throttle
+  const [left, setLeft] = useState(60);
   const [error, setError] = useState("");
   const [resending, setResending] = useState(false);
+  const [sendingMagic, setSendingMagic] = useState(false);
 
   useEffect(()=>{
     const t = setInterval(()=>setLeft(s => s>0 ? s-1 : 0), 1000);
@@ -24,7 +25,7 @@ export default function EmailVerify(){
     try {
       const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
       if (error) throw error;
-      nav("/discover", { replace: true });
+      nav("/setup/basics", { replace: true });
     } catch (e) {
       setError(e.message || "Invalid code");
     }
@@ -44,6 +45,22 @@ export default function EmailVerify(){
     }
   };
 
+  const sendMagicLink = async () => {
+    setSendingMagic(true); setError("");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true, emailRedirectTo: `${window.location.origin}/auth/callback` }
+      });
+      if (error) throw error;
+      alert("Magic link sent. Check your email to continue.");
+    } catch (e) {
+      setError(e.message || "Failed to send magic link");
+    } finally {
+      setSendingMagic(false);
+    }
+  };
+
   return (
     <div className="min-h-dvh">
       <TopBar title="Verify your email" />
@@ -53,12 +70,11 @@ export default function EmailVerify(){
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="pt-4 space-y-3">
           <Button className="w-full" disabled={code.length<6} onClick={verify}>Continue</Button>
-          <button
-            onClick={resend}
-            disabled={left>0 || resending}
-            className={`w-full text-sm ${left>0 ? "text-gray-400" : "text-violet-600"}`}
-          >
-            {left>0 ? `Resend in ${left}s` : (resending ? "Resending..." : "Resend code")}
+          <button onClick={resend} disabled={left>0 || resending} className={`w-full text-sm ${left>0 ? "text-gray-400" : "text-violet-600"}`}>
+            {left>0 ? `Resend in ${left}s` : (resending ? "Resending…" : "Resend code")}
+          </button>
+          <button onClick={sendMagicLink} disabled={sendingMagic} className="w-full text-sm text-violet-600">
+            {sendingMagic ? "Sending magic link…" : "Use magic link instead"}
           </button>
         </div>
       </div>

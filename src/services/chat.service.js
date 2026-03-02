@@ -1,7 +1,19 @@
 import { api } from "../lib/api";
 export const chatService = {
-  list: () => api.get("/chat").then(r => r.items),
-  getConversation: (id) => api.get(`/chat/${id}`).then(r => r.items),
-  sendToConversation: ({ id, text, attachment_url }) => api.post(`/chat/${id}`, { text, attachment_url }).then(r => r.message),
-  sendToMatch: ({ matchId, text }) => api.post(`/chat`, { matchId, text }).then(r => r.message),
+  list: async () => {
+    const r = await api.get("/chat");
+    return Array.isArray(r?.items) ? r.items : [];
+  },
+  getConversation: async (id) => {
+    const r = await api.get(`/chat/${id}`);
+    return Array.isArray(r?.items) ? r.items : [];
+  },
+  sendToConversation: async ({ id, text, attachment_url }) => {
+    const r = await api.post(`/chat/${id}`, { text, attachment_url });
+    return r?.message;
+  },
+  sendToMatch: async ({ matchId, text }) => {
+    const r = await api.post(`/chat`, { matchId, text });
+    return r?.message;
+  },
 };

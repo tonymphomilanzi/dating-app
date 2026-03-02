@@ -4,11 +4,13 @@ import TabsLayout from "./layouts/TabsLayout.jsx";
 
 import GuestOnly from "./components/GuestOnly.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
+import SetupGate from "./components/SetupGate.jsx";
 
 import Onboarding from "./pages/Onboarding.jsx";
 import AuthChoice from "./pages/AuthChoice.jsx";
 import EmailLogin from "./pages/EmailLogin.jsx";
 import EmailVerify from "./pages/EmailVerify.jsx";
+import AuthCallback from "./pages/AuthCallback.jsx";
 
 import Discover from "./pages/Discover.jsx";
 import Matches from "./pages/Matches.jsx";
@@ -19,10 +21,20 @@ import Chat from "./pages/Chat.jsx";
 import ProfileView from "./pages/ProfileView.jsx";
 import MatchSuccess from "./pages/MatchSuccess.jsx";
 
+import SetupBasics from "./pages/setup/Basics.jsx";
+import SetupDOB from "./pages/setup/DOB.jsx";
+import SetupGender from "./pages/setup/Gender.jsx";
+import SetupInterests from "./pages/setup/Interests.jsx";
+import SetupPhoto from "./pages/setup/Photo.jsx";
+
 export default function App() {
   return (
     <Routes>
       <Route element={<RootLayout />}>
+        {/* Magic-link callback must be reachable unauthenticated */}
+        <Route path="/auth/callback" element={<AuthCallback />} />
+
+        {/* Public (only while logged out) */}
         <Route element={<GuestOnly />}>
           <Route path="/" element={<Onboarding />} />
           <Route path="/auth" element={<AuthChoice />} />
@@ -30,17 +42,28 @@ export default function App() {
           <Route path="/auth/email-verify" element={<EmailVerify />} />
         </Route>
 
+        {/* Protected */}
         <Route element={<RequireAuth />}>
-          <Route element={<TabsLayout />}>
-            <Route path="/discover" element={<Discover />} />
-            <Route path="/matches" element={<Matches />} />
-            <Route path="/messages" element={<Messages />} />
-            <Route path="/profile" element={<ProfileYou />} />
+          {/* Setup flow (always reachable) */}
+          <Route path="/setup/basics" element={<SetupBasics />} />
+          <Route path="/setup/dob" element={<SetupDOB />} />
+          <Route path="/setup/gender" element={<SetupGender />} />
+          <Route path="/setup/interests" element={<SetupInterests />} />
+          <Route path="/setup/photo" element={<SetupPhoto />} />
+
+          {/* App gated by setup completion */}
+          <Route element={<SetupGate />}>
+            <Route element={<TabsLayout />}>
+              <Route path="/discover" element={<Discover />} />
+              <Route path="/matches" element={<Matches />} />
+              <Route path="/messages" element={<Messages />} />
+              <Route path="/profile" element={<ProfileYou />} />
+            </Route>
+            <Route path="/filters" element={<Filters />} />
+            <Route path="/chat/:id" element={<Chat />} />
+            <Route path="/profile/:id" element={<ProfileView />} />
+            <Route path="/match" element={<MatchSuccess />} />
           </Route>
-          <Route path="/filters" element={<Filters />} />
-          <Route path="/chat/:id" element={<Chat />} />
-          <Route path="/profile/:id" element={<ProfileView />} />
-          <Route path="/match" element={<MatchSuccess />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

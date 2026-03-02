@@ -15,3 +15,11 @@
 @layer utilities {
   .pb-safe { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
 }
+
+
+/* hide scrollbar for the stories row */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* soft card shadow */
+.shadow-card { box-shadow: 0 10px 30px rgba(0,0,0,0.12); }
