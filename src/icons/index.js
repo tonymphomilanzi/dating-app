@@ -20,5 +20,7 @@ export const Icons = {
   Send: 'telegram',         // alt: 'paper-plane'
   MoreHorizontal: 'more',   // alt: 'more-alt' or 'ellipsis'
   Location: 'map-marker',
+  Filters: 'sliders-horizontal-square-2', // alt: 'sliders'
+  Tune: 'tune',            // alt: 'sliders'
 };
 

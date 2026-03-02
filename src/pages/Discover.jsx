@@ -4,6 +4,7 @@ import { discoverService } from "../services/discover.service.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { saveBrowserLocationToProfile } from "../utils/location.js";
 import { kmBetween } from "../utils/geo.js";
+import { Link } from "react-router-dom";
 
 const tabs = [
   { key: "matches", label: "Matches" },
@@ -11,23 +12,9 @@ const tabs = [
   { key: "for_you", label: "For You" },
 ];
 
-function greetingText() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning!";
-  if (h < 17) return "Good afternoon!";
-  return "Good evening!";
-}
-
-const numOrNull = (v) => {
-  if (v === null || v === undefined) return null;
-  const n = parseFloat(String(v));
-  return Number.isFinite(n) ? n : null;
-};
-function normalizeCoords(p) {
-  const lat = numOrNull(p.lat ?? p.latitude);
-  const lng = numOrNull(p.lng ?? p.longitude ?? p.long);
-  return { lat, lng };
-}
+function greetingText() { const h = new Date().getHours(); if (h < 12) return "Good morning!"; if (h < 17) return "Good afternoon!"; return "Good evening!"; }
+const numOrNull = (v) => (v == null ? null : (Number.isFinite(+v) ? +v : parseFloat(String(v)) || null));
+const normalizeCoords = (p) => ({ lat: numOrNull(p.lat ?? p.latitude), lng: numOrNull(p.lng ?? p.longitude ?? p.long) });
 
 export default function Discover(){
   const { profile, reloadProfile } = useAuth();
@@ -37,70 +24,82 @@ export default function Discover(){
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
-  const triedFallbackRef = useRef(false);
 
   const myLat = numOrNull(profile?.lat);
   const myLng = numOrNull(profile?.lng);
   const userHasLocation = myLat != null && myLng != null;
 
-  async function loadMode(requestedMode) {
-    // Ask service with dev debug toggles
-    const data = await discoverService.list(requestedMode, 20, { debug: true });
-    return Array.isArray(data) ? data : [];
+  // cache last results per tab
+  const cacheRef = useRef({ for_you: [], matches: [], nearby: [] });
+  const reqIdRef = useRef(0);
+
+  async function loadOne(requestedMode, reqId) {
+    try {
+      setErr("");
+      let data = await discoverService.list(requestedMode, 20, { debug: true });
+
+      // compute fallback distances
+      if (myLat != null && myLng != null) {
+        data = data.map((p) => {
+          const { lat, lng } = normalizeCoords(p);
+          let distance_km = p.distance_km;
+          if ((distance_km == null || Number.isNaN(Number(distance_km))) && lat != null && lng != null) {
+            const d = kmBetween(myLat, myLng, lat, lng);
+            distance_km = Math.round(d * 10) / 10;
+          }
+          return { ...p, lat, lng, distance_km };
+        });
+      } else {
+        data = data.map((p) => ({ ...p, ...normalizeCoords(p) }));
+      }
+
+      // ignore stale requests
+      if (reqIdRef.current !== reqId) return;
+
+      cacheRef.current[requestedMode] = data;
+      setItems(data);
+      setActiveMode(requestedMode);
+    } catch (e) {
+      if (reqIdRef.current !== reqId) return;
+      console.error("[Discover] loadOne error:", e);
+      setErr(e.message || "Failed to load");
+    } finally {
+      if (reqIdRef.current === reqId) setLoading(false);
+    }
   }
 
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      setLoading(true); setErr("");
-      triedFallbackRef.current = false;
+    // show cached immediately (if any) to prevent blank state
+    const cached = cacheRef.current[mode] || [];
+    if (cached.length) {
+      setItems(cached);
+      setActiveMode(mode);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
-      try {
-        let data = await loadMode(mode);
-        let used = mode;
+    // kick off a new request
+    const myReqId = ++reqIdRef.current;
+    loadOne(mode, myReqId);
 
-        if (!data.length && mode === "for_you") {
-          triedFallbackRef.current = true;
-          let d2 = await loadMode("matches");
-          if (d2.length) { data = d2; used = "matches"; }
-          else {
-            let d3 = await loadMode("nearby");
-            if (d3.length) { data = d3; used = "nearby"; }
-          }
+    // For "for_you", do a fallback chain if empty (don’t block UI)
+    if (!cached.length && mode === "for_you") {
+      (async () => {
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
+        // small delay to avoid spamming
+        await wait(50);
+
+        // if still active and empty, try matches
+        if (reqIdRef.current === myReqId && (!cacheRef.current.for_you?.length)) {
+          await loadOne("matches", myReqId);
         }
-
-        // Normalize coords and compute distance client-side if missing
-        if (myLat != null && myLng != null) {
-          data = data.map((p) => {
-            const { lat, lng } = normalizeCoords(p);
-            let distance_km = p.distance_km;
-            if ((distance_km == null || Number.isNaN(Number(distance_km))) && lat != null && lng != null) {
-              const d = kmBetween(myLat, myLng, lat, lng);
-              distance_km = Math.round(d * 10) / 10;
-            }
-            return { ...p, lat, lng, distance_km };
-          });
-        } else {
-          data = data.map((p) => ({ ...p, ...normalizeCoords(p) }));
+        // if still empty, try nearby
+        if (reqIdRef.current === myReqId && (!cacheRef.current.matches?.length)) {
+          await loadOne("nearby", myReqId);
         }
-
-        if (!cancel) {
-          if (data[0]) console.info("[Discover] candidate[0]", data[0]);
-          console.info("[discover]", { mode: used, count: data.length, ignoreSwiped: localStorage.getItem("DEBUG_DISCOVER_IGNORE")==='1' });
-          setItems(data);
-          setActiveMode(used);
-        }
-      } catch (e) {
-        if (!cancel) {
-          console.error("[Discover] load error:", e);
-          setErr(e.message || "Failed to load");
-        }
-      } finally {
-        if (!cancel) setLoading(false);
-      }
-    })();
-
-    return () => { cancel = true; };
+      })();
+    }
   }, [mode, myLat, myLng]);
 
   const stories = useMemo(() => (items || []).slice(0, 6), [items]);
@@ -134,11 +133,12 @@ export default function Discover(){
           <div className="text-sm leading-tight">
             <p className="text-gray-500">{greetingText()}</p>
           </div>
-          <a href="/filters" className="ml-auto rounded-full p-2 hover:bg-gray-100" aria-label="Filters">
-            <i className="lni lni-sliders text-xl" />
-          </a>
+          <Link to="/filters" className="ml-auto rounded-full p-2 hover:bg-gray-100" aria-label="Filters">
+            <i className="lni lni-filter text-xl" />
+          </Link>
         </div>
 
+        {/* stories */}
         <div className="no-scrollbar mb-3 flex items-start gap-3 overflow-x-auto pb-1">
           <div className="flex w-16 flex-col items-center">
             <button className="grid h-14 w-14 place-items-center rounded-full border-2 border-dashed border-violet-600 text-violet-600">
@@ -162,6 +162,7 @@ export default function Discover(){
 
         <p className="font-semibold">Let’s Find Your <span className="text-violet-600">Matches</span></p>
 
+        {/* pill tabs */}
         <div className="items-center mt-2">
           <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
             {tabs.map((t)=>(
@@ -193,7 +194,7 @@ export default function Discover(){
             <div>
               <p className="text-red-600 font-medium">Failed to load</p>
               <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
-              <button className="btn-outline mt-3" onClick={()=>location.reload()}>Retry</button>
+              <button className="btn-outline mt-3" onClick={()=>setMode(mode)}>Retry</button>
             </div>
           </div>
         ) : (

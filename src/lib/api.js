@@ -1,30 +1,44 @@
 import { supabase } from "./supabase";
 
-async function request(method, url, { params, data } = {}) {
+// timeout wrapper
+function withTimeout(ms) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(new Error(`timeout:${ms}ms`)), ms);
+  return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
+}
+
+async function request(method, url, { params, data, timeoutMs = 10000 } = {}) {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess?.session?.access_token;
 
   const q = params ? "?" + new URLSearchParams(params).toString() : "";
-  const res = await fetch(`/api${url}${q}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: ["GET", "HEAD"].includes(method) ? undefined : JSON.stringify(data || {}),
-  });
+  const { signal, cancel } = withTimeout(timeoutMs);
 
-  const text = await res.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch {}
+  try {
+    const res = await fetch(`/api${url}${q}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: ["GET", "HEAD"].includes(method) ? undefined : JSON.stringify(data || {}),
+      signal,
+    });
 
-  if (!res.ok) {
-    const err = new Error(json?.error || `HTTP ${res.status}`);
-    err.status = res.status;
-    err.body = json;
-    throw err;
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
+
+    if (!res.ok) {
+      const err = new Error(json?.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.body = json;
+      throw err;
+    }
+    return json;
+  } finally {
+    cancel();
   }
-  return json;
 }
 
 export const api = {

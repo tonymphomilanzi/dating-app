@@ -4,7 +4,7 @@ export default function SwipeCard({ person, onSwipe }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-150, 0, 150], [-12, 0, 12]);
 
-  // Drag hints: show "Like" when swiping right, "Nope" when swiping left
+  // Drag hints
   const likeOpacity = useTransform(x, [40, 150], [0, 1]);
   const nopeOpacity = useTransform(x, [-150, -40], [1, 0]);
 
@@ -15,6 +15,11 @@ export default function SwipeCard({ person, onSwipe }) {
     person.photos?.[0] ||
     "https://picsum.photos/800/1200";
   const name = person.display_name || person.name || "Member";
+
+  const stopDrag = (e) => {
+    // Prevent starting a drag when pressing the buttons
+    e.stopPropagation();
+  };
 
   return (
     <motion.div
@@ -39,8 +44,8 @@ export default function SwipeCard({ person, onSwipe }) {
       {/* Bottom gradient for readability */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
-      {/* Content overlay */}
-      <div className="absolute inset-0 p-4 flex flex-col justify-between">
+      {/* Content overlay (reserve space for action dock with pb-28) */}
+      <div className="absolute inset-0 flex flex-col px-4 pt-4 pb-28">
         {/* Top badges */}
         <div className="flex items-start justify-between gap-2">
           <div className="rounded-full bg-black/40 text-white text-xs px-3 py-1 backdrop-blur-sm ring-1 ring-white/10">
@@ -51,8 +56,8 @@ export default function SwipeCard({ person, onSwipe }) {
           </div>
         </div>
 
-        {/* Name / meta */}
-        <div className="text-white drop-shadow">
+        {/* Name/meta pinned above dock */}
+        <div className="mt-auto text-white drop-shadow">
           <div className="text-xl font-semibold">
             {name}{person.age ? `, ${person.age}` : ""}
           </div>
@@ -76,10 +81,11 @@ export default function SwipeCard({ person, onSwipe }) {
         Nope
       </motion.div>
 
-      {/* Action buttons */}
-      <div className="pointer-events-none absolute inset-0 flex items-end justify-center p-4">
-        <div className="pointer-events-auto flex w-full max-w-sm mx-auto justify-center gap-6">
+      {/* Action dock (sits above the bottom, not covering text) */}
+      <div className="absolute inset-x-0 bottom-3 flex justify-center px-4">
+        <div className="flex w-full max-w-sm items-center justify-center gap-6">
           <button
+            onPointerDown={stopDrag}
             onClick={() => onSwipe("left")}
             className="grid h-14 w-14 place-items-center rounded-full bg-white shadow-card"
             aria-label="Nope"
@@ -87,6 +93,7 @@ export default function SwipeCard({ person, onSwipe }) {
             <i className="lni lni-close text-2xl text-gray-700" />
           </button>
           <button
+            onPointerDown={stopDrag}
             onClick={() => onSwipe("super")}
             className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-r from-fuchsia-600 to-violet-600 text-white shadow-glow"
             aria-label="Super like"
@@ -94,6 +101,7 @@ export default function SwipeCard({ person, onSwipe }) {
             <i className="lni lni-star text-2xl" />
           </button>
           <button
+            onPointerDown={stopDrag}
             onClick={() => onSwipe("right")}
             className="grid h-14 w-14 place-items-center rounded-full bg-white shadow-card"
             aria-label="Like"
