@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 
-export default function OTPInput({ length = 4, onChange }) {
+export default function OTPInput({ length = 6, onChange }) {
   const refs = useMemo(() => Array.from({ length }, () => React.createRef()), [length]);
 
   const handle = (i, e) => {
