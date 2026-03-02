@@ -127,7 +127,12 @@ export default function SetupPhoto(){
       console.info("[Photo] success; navigating → /discover");
       setUploading(false);
       // Navigate out; SetupGate will pass now that avatar_url is set
-      nav("/discover", { replace: true });
+
+      // After verifying avatar_url:
+window.localStorage.setItem("SETUP_OK", "1");
+setUploading(false);
+nav("/discover", { replace: true });
+
     } catch (e) {
       clearTimeout(watchdog);
       console.error("[Photo] upload failure:", e);

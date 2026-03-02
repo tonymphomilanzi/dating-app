@@ -1,16 +1,32 @@
-// src/services/discover.service.js
 import { api } from "../lib/api";
 
-function normalizeList(r) {
-  if (Array.isArray(r)) return r;
-  if (Array.isArray(r?.items)) return r.items;
-  if (r?.items == null) return [];
-  return [];
-}
+const normalizeItems = (res) =>
+  Array.isArray(res?.items) ? res.items : [];
 
 export const discoverService = {
-  list: async (mode = "for_you", limit = 20) => {
-    const res = await api.get("/discover", { params: { mode, limit } });
-    return normalizeList(res);
+  async list(mode = "for_you", limit = 20, options = {}) {
+    const params = {
+      mode,
+      limit,
+    };
+
+    if (options.ignoreSwiped) params.ignore_swiped = "1";
+    if (options.debug) params.debug = "1";
+
+    const response = await api.get("/discover", { params });
+
+    if (options.debug && response?.debug) {
+      console.info("[discover.debug]", response.debug);
+    }
+
+    const items = normalizeItems(response);
+
+    console.info("[discover]", {
+      mode,
+      count: items.length,
+      ignoreSwiped: !!options.ignoreSwiped,
+    });
+
+    return items;
   },
 };

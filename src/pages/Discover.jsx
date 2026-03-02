@@ -3,6 +3,7 @@ import SwipeDeck from "../components/SwipeDeck.jsx";
 import { discoverService } from "../services/discover.service.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { saveBrowserLocationToProfile } from "../utils/location.js";
+import { kmBetween } from "../utils/geo.js";
 
 const tabs = [
   { key: "matches", label: "Matches" },
@@ -17,24 +18,37 @@ function greetingText() {
   return "Good evening!";
 }
 
+const numOrNull = (v) => {
+  if (v === null || v === undefined) return null;
+  const n = parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+};
+function normalizeCoords(p) {
+  const lat = numOrNull(p.lat ?? p.latitude);
+  const lng = numOrNull(p.lng ?? p.longitude ?? p.long);
+  return { lat, lng };
+}
+
 export default function Discover(){
   const { profile, reloadProfile } = useAuth();
-  const [mode, setMode] = useState("for_you");             // user-selected tab
-  const [activeMode, setActiveMode] = useState("for_you"); // actually displayed results (fallback aware)
+  const [mode, setMode] = useState("for_you");
+  const [activeMode, setActiveMode] = useState("for_you");
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
   const triedFallbackRef = useRef(false);
 
-  const userHasLocation = !!(profile?.lat != null && profile?.lng != null);
+  const myLat = numOrNull(profile?.lat);
+  const myLng = numOrNull(profile?.lng);
+  const userHasLocation = myLat != null && myLng != null;
 
   async function loadMode(requestedMode) {
-    const data = await discoverService.list(requestedMode, 20);
+    // Ask service with dev debug toggles
+    const data = await discoverService.list(requestedMode, 20, { debug: true });
     return Array.isArray(data) ? data : [];
   }
 
-  // Load with fallback only when mode === "for_you"
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -55,20 +69,39 @@ export default function Discover(){
           }
         }
 
-        if (cancel) return;
-        setItems(data);
-        setActiveMode(used);
+        // Normalize coords and compute distance client-side if missing
+        if (myLat != null && myLng != null) {
+          data = data.map((p) => {
+            const { lat, lng } = normalizeCoords(p);
+            let distance_km = p.distance_km;
+            if ((distance_km == null || Number.isNaN(Number(distance_km))) && lat != null && lng != null) {
+              const d = kmBetween(myLat, myLng, lat, lng);
+              distance_km = Math.round(d * 10) / 10;
+            }
+            return { ...p, lat, lng, distance_km };
+          });
+        } else {
+          data = data.map((p) => ({ ...p, ...normalizeCoords(p) }));
+        }
+
+        if (!cancel) {
+          if (data[0]) console.info("[Discover] candidate[0]", data[0]);
+          console.info("[discover]", { mode: used, count: data.length, ignoreSwiped: localStorage.getItem("DEBUG_DISCOVER_IGNORE")==='1' });
+          setItems(data);
+          setActiveMode(used);
+        }
       } catch (e) {
-        if (cancel) return;
-        console.error("[Discover] load error:", e);
-        setErr(e.message || "Failed to load");
+        if (!cancel) {
+          console.error("[Discover] load error:", e);
+          setErr(e.message || "Failed to load");
+        }
       } finally {
         if (!cancel) setLoading(false);
       }
     })();
 
     return () => { cancel = true; };
-  }, [mode]);
+  }, [mode, myLat, myLng]);
 
   const stories = useMemo(() => (items || []).slice(0, 6), [items]);
 
@@ -76,9 +109,9 @@ export default function Discover(){
     if (locBusy) return;
     setLocBusy(true);
     try {
-      await saveBrowserLocationToProfile(); // writes lat/lng to profiles
-      await reloadProfile();               // refresh profile in context so prompt hides
-      setMode("nearby");                   // switch to Nearby; effect will reload items
+      await saveBrowserLocationToProfile();
+      await reloadProfile();
+      setMode("nearby");
     } catch (e) {
       console.warn("[Discover] enable location failed:", e);
       alert(e.message || "Could not get your location. Check browser permissions.");
@@ -87,10 +120,11 @@ export default function Discover(){
     }
   };
 
+  const showEnableNearby = activeMode === "nearby" && !userHasLocation;
+
   return (
     <div className="flex min-h-[70vh] flex-col bg-white text-gray-900">
       <header className="px-4 pt-4">
-        {/* Top row */}
         <div className="mb-3 flex items-center gap-3">
           <img
             src={profile?.avatar_url || "/me.jpg"}
@@ -100,26 +134,18 @@ export default function Discover(){
           <div className="text-sm leading-tight">
             <p className="text-gray-500">{greetingText()}</p>
           </div>
-          <a
-            href="/filters"
-            className="ml-auto rounded-full p-2 hover:bg-gray-100"
-            aria-label="Filters"
-          >
+          <a href="/filters" className="ml-auto rounded-full p-2 hover:bg-gray-100" aria-label="Filters">
             <i className="lni lni-sliders text-xl" />
           </a>
         </div>
 
-        {/* Stories row */}
         <div className="no-scrollbar mb-3 flex items-start gap-3 overflow-x-auto pb-1">
           <div className="flex w-16 flex-col items-center">
             <button className="grid h-14 w-14 place-items-center rounded-full border-2 border-dashed border-violet-600 text-violet-600">
               <i className="lni lni-plus" />
             </button>
-            <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
-              My story
-            </span>
+            <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">My story</span>
           </div>
-
           {stories.map((s) => (
             <div key={s.id} className="flex w-16 flex-col items-center">
               <img
@@ -134,11 +160,8 @@ export default function Discover(){
           ))}
         </div>
 
-        <p className="font-semibold">
-          Let’s Find Your <span className="text-violet-600">Matches</span>
-        </p>
+        <p className="font-semibold">Let’s Find Your <span className="text-violet-600">Matches</span></p>
 
-        {/* Pill tabs */}
         <div className="items-center mt-2">
           <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
             {tabs.map((t)=>(
@@ -146,9 +169,7 @@ export default function Discover(){
                 key={t.key}
                 onClick={()=>setMode(t.key)}
                 className={`rounded-full px-4 py-2 text-sm transition-colors
-                  ${mode===t.key
-                    ? "bg-violet-600 text-white shadow"
-                    : "text-gray-700 hover:bg-violet-50"}`}
+                  ${mode===t.key ? "bg-violet-600 text-white shadow" : "text-gray-700 hover:bg-violet-50"}`}
               >
                 {t.label}
               </button>
@@ -172,48 +193,22 @@ export default function Discover(){
             <div>
               <p className="text-red-600 font-medium">Failed to load</p>
               <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
-              <button
-                className="btn-outline mt-3"
-                onClick={()=>{
-                  setErr("");
-                  setLoading(true);
-                  discoverService.list(mode, 20)
-                    .then(setItems)
-                    .catch(e=>setErr(e.message||"Failed"))
-                    .finally(()=>setLoading(false));
-                }}
-              >
-                Retry
-              </button>
+              <button className="btn-outline mt-3" onClick={()=>location.reload()}>Retry</button>
             </div>
           </div>
         ) : (
           <>
-            {/* Show CTA only if YOU don't have a location set and active tab is Nearby */}
-            {activeMode === "nearby" && !userHasLocation && (
+            {showEnableNearby && (
               <div className="mb-3 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
                 <div className="flex items-center justify-between gap-3">
                   <span>Enable your location to see people Nearby.</span>
-                  <button
-                    onClick={enableLocation}
-                    disabled={locBusy}
-                    className="rounded-full bg-amber-600 px-3 py-1 text-white"
-                  >
+                  <button onClick={enableLocation} disabled={locBusy} className="rounded-full bg-amber-600 px-3 py-1 text-white">
                     {locBusy ? "Enabling…" : "Enable"}
                   </button>
                 </div>
               </div>
             )}
-
-            {/* If you have a location but distances are null (others lack location),
-                show a neutral info instead of asking you to enable */}
-            {activeMode === "nearby" && userHasLocation && !items.some(i => i?.distance_km != null) && (
-              <div className="mb-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
-                Distances will appear as more profiles add their location.
-              </div>
-            )}
-
-            <SwipeDeck initialItems={items} mode={activeMode} />
+            <SwipeDeck initialItems={items} mode={activeMode} myLoc={{ lat: myLat, lng: myLng }} />
           </>
         )}
       </main>
