@@ -1,13 +1,11 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Avatar from "../components/Avatar.jsx";
-
-const chats = [
-  { id:"1", name:"Grace", last:"See you tonight? 😊", time:"2m" },
-  { id:"2", name:"Annabelle", last:"Loved your photos!", time:"1h" },
-  { id:"3", name:"Jake", last:"Coffee tomorrow?", time:"3h" },
-];
+import { chatService } from "../services/chat.service.js";
 
 export default function Messages(){
+  const [items, setItems] = useState([]);
+  useEffect(()=>{ chatService.list().then(setItems).catch(console.error); }, []);
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="flex items-center justify-between p-4">
@@ -18,15 +16,17 @@ export default function Messages(){
         </div>
       </header>
       <div className="divide-y">
-        {chats.map(c=>(
+        {items.map(c=>(
           <Link key={c.id} to={`/chat/${c.id}`} className="flex items-center gap-3 bg-white px-4 py-3">
-            <Avatar size={44}/>
+            <Avatar size={44} src={c.other?.avatar_url}/>
             <div className="flex-1">
               <div className="flex items-center justify-between">
-                <div className="font-medium">{c.name}</div>
-                <div className="text-xs text-gray-500">{c.time}</div>
+                <div className="font-medium">{c.other?.display_name || "Match"}</div>
+                <div className="text-xs text-gray-500">{c.last?.created_at ? new Date(c.last.created_at).toLocaleTimeString() : ""}</div>
               </div>
-              <div className="text-sm text-gray-600 line-clamp-1">{c.last}</div>
+              <div className={`text-sm line-clamp-1 ${c.last?.blurred ? "text-transparent bg-clip-text bg-gradient-to-r from-gray-300 to-gray-300" : "text-gray-600"}`}>
+                {c.last?.text || "Say hello 👋"}
+              </div>
             </div>
           </Link>
         ))}

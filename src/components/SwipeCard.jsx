@@ -16,13 +16,25 @@ export default function SwipeCard({ person, onSwipe }) {
       }}
       className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-card"
     >
-      <img src={person.photo} className="h-full w-full object-cover" />
-      <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/60 to-transparent p-4">
+      <img src={person.avatar_url || person.photo} className="h-full w-full object-cover" />
+      <div className="absolute inset-0 p-4 flex flex-col justify-between">
+        {/* Top badges */}
+        <div className="flex items-start justify-between">
+          <div className="rounded-full bg-black/40 text-white text-xs px-3 py-1 backdrop-blur">
+            {person.distance_km != null ? `${person.distance_km} km away` : "Distance n/a"}
+          </div>
+          <div className="rounded-full bg-violet-600 text-white text-xs px-3 py-1 shadow-glow">
+            {person.match_score != null ? `${person.match_score}% Match` : "—% Match"}
+          </div>
+        </div>
+        {/* Bottom name */}
         <div className="text-white">
-          <div className="text-xl font-semibold">{person.name}, {person.age}</div>
+          <div className="text-xl font-semibold drop-shadow">{person.display_name}{person.age ? `, ${person.age}` : ""}</div>
+          {person.city && <div className="text-sm text-white/90">{person.city}</div>}
         </div>
       </div>
 
+      {/* Action buttons */}
       <div className="pointer-events-none absolute inset-0 flex items-end justify-center gap-4 p-4">
         <div className="pointer-events-auto flex w-full justify-center gap-6">
           <button onClick={() => onSwipe("left")} className="grid h-14 w-14 place-items-center rounded-full bg-white shadow-card" aria-label="Nope">

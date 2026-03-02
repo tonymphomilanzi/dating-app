@@ -1,22 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import SwipeCard from "./SwipeCard.jsx";
+import { swipesService } from "../services/swipes.service.js";
 
-const sample = [
-  { id:"1", name:"Jess", age:23, photo:"https://images.unsplash.com/photo-1524504388940-b1c1722653e1?q=80&w=800&auto=format&fit=crop" },
-  { id:"2", name:"Camila", age:25, photo:"https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=800&auto=format&fit=crop" },
-  { id:"3", name:"Brad", age:28, photo:"https://images.unsplash.com/photo-1519340241574-2cec6aef0c01?q=80&w=800&auto=format&fit=crop" },
-];
+export default function SwipeDeck({ initialItems = [], mode }) {
+  const [people, setPeople] = useState(initialItems);
+  useEffect(()=>{ setPeople(initialItems); }, [initialItems]);
 
-export default function SwipeDeck() {
-  const [people, setPeople] = useState(sample);
-  const handle = () => setPeople(([ , ...rest]) => rest);
+  const handleSwipe = async (dir, userId) => {
+    setPeople(prev => prev.filter(p => p.id !== userId));
+    try { await swipesService.swipe({ targetUserId: userId, dir }); } catch (e) { console.error(e); }
+  };
 
-  if (people.length === 0) {
+  if (!people.length) {
     return (
       <div className="grid h-[70vh] place-items-center rounded-3xl bg-white text-center shadow-card">
         <div>
           <p className="text-gray-700">You're all caught up 🎉</p>
-          <p className="text-sm text-gray-500">Adjust your filters to see more people.</p>
+          <p className="text-sm text-gray-500">Try {mode==="nearby" ? "expanding distance" : "a different tab"}.</p>
         </div>
       </div>
     );
@@ -26,7 +26,7 @@ export default function SwipeDeck() {
     <div className="relative h-[70vh]">
       {people.map((p) => (
         <div key={p.id} className="absolute inset-0">
-          <SwipeCard person={p} onSwipe={handle} />
+          <SwipeCard person={p} onSwipe={(d) => handleSwipe(d, p.id)} />
         </div>
       )).reverse()}
     </div>
