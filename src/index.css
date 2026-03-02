@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 font-semibold transition active:scale-[.98]; }
+  .btn-primary { @apply btn text-white bg-gradient-to-r from-fuchsia-600 to-violet-600 shadow-glow; }
+  .btn-outline { @apply btn border border-gray-200 text-gray-800 bg-white; }
+  .field { @apply w-full appearance-none rounded-xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200; }
+  .chip { @apply select-none rounded-full border px-4 py-2 text-sm transition; }
+  .chip-on { @apply border-transparent bg-violet-600 text-white; }
+  .chip-off { @apply border-gray-300 bg-white text-gray-700; }
+}
+
+@layer utilities {
+  .pb-safe { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+}
