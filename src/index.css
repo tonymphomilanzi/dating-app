@@ -23,3 +23,7 @@
 
 /* soft card shadow */
 .shadow-card { box-shadow: 0 10px 30px rgba(0,0,0,0.12); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+

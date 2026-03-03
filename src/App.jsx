@@ -26,6 +26,8 @@ import SetupDOB from "./pages/setup/DOB.jsx";
 import SetupGender from "./pages/setup/Gender.jsx";
 import SetupInterests from "./pages/setup/Interests.jsx";
 import SetupPhoto from "./pages/setup/Photo.jsx";
+import UserProfile from "./pages/UserProfile.jsx";
+import ProfileGallery from "./pages/ProfileGallery.jsx";
 
 export default function App() {
   return (
@@ -54,16 +56,22 @@ export default function App() {
           {/* App gated by setup completion */}
           <Route element={<SetupGate />}>
             <Route element={<TabsLayout />}>
+
               <Route path="/discover" element={<Discover />} />
               <Route path="/matches" element={<Matches />} />
               <Route path="/messages" element={<Messages />} />
               <Route path="/profile" element={<ProfileYou />} />
             </Route>
+            
             <Route path="/filters" element={<Filters />} />
             <Route path="/chat/:id" element={<Chat />} />
             <Route path="/profile/:id" element={<ProfileView />} />
             <Route path="/match" element={<MatchSuccess />} />
+        
+         
           </Route>
+          
+      <Route path="/profile/:id/gallery" element={<ProfileGallery />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
