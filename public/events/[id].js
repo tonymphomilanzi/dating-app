@@ -1,5 +1,5 @@
 // api/events/[id].js
-import { requireUser } from "../_supabase.js";
+import { requireUser } from "../../api/_supabase.js";
 export default async function handler(req, res) {
   const ctx = await requireUser(req, res); if (!ctx) return;
   const { supabase, user } = ctx;
