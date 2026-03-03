@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { kmBetween } from "../utils/geo.js";
 import { swipesService } from "../services/swipes.service.js";
-
+import { chatService } from "../services/chat.service.js";
 // Skeletons
 const Sk = {
   block: ({ className = "" }) => <div className={`animate-pulse rounded bg-gray-200 ${className}`} />,
@@ -180,9 +180,19 @@ export default function UserProfile() {
               </h1>
             )}
           </div>
-          <button className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-gray-200 text-violet-600" aria-label="Send">
-            <i className="lni lni-telegram-original text-lg" />
-          </button>
+        <button
+  onClick={async ()=>{
+    try {
+      const r = await chatService.openOrSendToUser({ userId: id });
+      const convId = r?.conversation?.id;
+      if (convId) nav(`/chat/${convId}`);
+    } catch (e) { alert(e.message || "Failed to open chat"); }
+  }}
+  className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-gray-200 text-violet-600"
+  aria-label="Send"
+>
+  <i className="lni lni-telegram-original text-lg" />
+</button>
         </div>
 
         {/* Location */}

@@ -1,9 +1,23 @@
 import { supabase } from "./supabase";
 
-// timeout wrapper
+// Base for API (dev: proxied /api; prod: set VITE_API_BASE to your deployed functions URL)
+const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+
+// Build a full URL safely (supports absolute URLs)
+function buildUrl(url, params) {
+  const isAbs = /^https?:\/\//i.test(url);
+  const base = isAbs ? "" : API_BASE;
+  const q = params ? "?" + new URLSearchParams(params).toString() : "";
+  return `${base}${url}${q}`;
+}
+
+// Timeout wrapper
 function withTimeout(ms) {
   const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(new Error(`timeout:${ms}ms`)), ms);
+  const id = setTimeout(() => {
+    // Abort reasons are not always supported across browsers; keep it generic
+    ctrl.abort();
+  }, ms);
   return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
 }
 
@@ -11,19 +25,23 @@ async function request(method, url, { params, data, timeoutMs = 10000 } = {}) {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess?.session?.access_token;
 
-  const q = params ? "?" + new URLSearchParams(params).toString() : "";
   const { signal, cancel } = withTimeout(timeoutMs);
+  const fetchUrl = buildUrl(url, params);
 
   try {
-    const res = await fetch(`/api${url}${q}`, {
+    const res = await fetch(fetchUrl, {
       method,
       headers: {
         "Content-Type": "application/json",
+        Accept: "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: ["GET", "HEAD"].includes(method) ? undefined : JSON.stringify(data || {}),
       signal,
     });
+
+    // 204 No Content → return null
+    if (res.status === 204) return null;
 
     const text = await res.text();
     let json = null;
@@ -36,6 +54,14 @@ async function request(method, url, { params, data, timeoutMs = 10000 } = {}) {
       throw err;
     }
     return json;
+  } catch (e) {
+    // Normalize AbortError into a clearer timeout error
+    if (e?.name === "AbortError") {
+      const err = new Error(`Request timed out after ${timeoutMs}ms`);
+      err.status = 408;
+      throw err;
+    }
+    throw e;
   } finally {
     cancel();
   }

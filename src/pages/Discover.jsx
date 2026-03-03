@@ -4,8 +4,8 @@ import { discoverService } from "../services/discover.service.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { saveBrowserLocationToProfile } from "../utils/location.js";
 import { kmBetween } from "../utils/geo.js";
-import { Link } from "react-router-dom";
-
+import { storiesService } from "../services/stories.service.js";
+import { Link, useNavigate } from "react-router-dom";
 const tabs = [
   { key: "matches", label: "Matches" },
   { key: "nearby", label: "Nearby" },
@@ -24,6 +24,32 @@ export default function Discover(){
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
+
+
+  //stories
+  // inside component:
+const nav = useNavigate();
+const [storyUsers, setStoryUsers] = useState([]);
+const [hasMyStory, setHasMyStory] = useState(false);
+
+useEffect(()=>{
+  let cancel = false;
+  (async ()=>{
+    try {
+      const [users, hasMine] = await Promise.all([
+        storiesService.listActiveUsers(30),
+        storiesService.hasMyActive(),
+      ]);
+      if (!cancel) {
+        setStoryUsers(users);
+        setHasMyStory(hasMine);
+      }
+    } catch {}
+  })();
+  return ()=>{ cancel = true; };
+}, []);
+
+
 
   const myLat = numOrNull(profile?.lat);
   const myLng = numOrNull(profile?.lng);
@@ -139,26 +165,49 @@ export default function Discover(){
         </div>
 
         {/* stories */}
-        <div className="no-scrollbar mb-3 flex items-start gap-3 overflow-x-auto pb-1">
-          <div className="flex w-16 flex-col items-center">
-            <button className="grid h-14 w-14 place-items-center rounded-full border-2 border-dashed border-violet-600 text-violet-600">
-              <i className="lni lni-plus" />
-            </button>
-            <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">My story</span>
-          </div>
-          {stories.map((s) => (
-            <div key={s.id} className="flex w-16 flex-col items-center">
-              <img
-                src={s.avatar_url || s.avatar || s.photo || s.photoUrl}
-                alt={(s.display_name || s.name || "User")}
-                className="h-14 w-14 rounded-full object-cover ring-2 ring-violet-200"
-              />
-              <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
-                {(s.display_name || s.name || "User").split(" ")[0]}
-              </span>
-            </div>
-          ))}
-        </div>
+  <div className="no-scrollbar mt-5 mb-3 flex items-start gap-3 overflow-x-auto pb-1">
+  {/* My story bubble */}
+  <div className="flex w-16 flex-col items-center">
+    <button
+      className={[
+        "grid h-14 w-14 place-items-center rounded-full",
+        hasMyStory
+          ? "ring-2 ring-violet-600"
+          : "border-2 border-dashed border-violet-600 text-violet-600"
+      ].join(" ")}
+      onClick={()=> nav("/stories/new")}
+      aria-label="My story"
+    >
+      {hasMyStory ? (
+        <i className="lni lni-plus text-sm opacity-60" />
+      ) : (
+        <i className="lni lni-plus" />
+      )}
+    </button>
+    <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
+      My story
+    </span>
+  </div>
+
+  {/* Other users with active stories */}
+  {storyUsers.map((u) => (
+    <button
+      key={u.user_id}
+      onClick={()=> nav(`/stories/${u.user_id}`)}
+      className="flex w-16 flex-col items-center"
+      aria-label={`Open ${u.name}'s story`}
+    >
+      <img
+        src={u.avatar || "/me.jpg"}
+        alt={u.name}
+        className="h-14 w-14 rounded-full object-cover ring-2 ring-violet-200"
+      />
+      <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
+        {String(u.name).split(" ")[0]}
+      </span>
+    </button>
+  ))}
+</div>
 
         <p className="font-semibold">Let’s Find Your <span className="text-violet-600">Matches</span></p>
 

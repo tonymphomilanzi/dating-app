@@ -29,6 +29,9 @@ import SetupPhoto from "./pages/setup/Photo.jsx";
 import UserProfile from "./pages/UserProfile.jsx";
 import ProfileGallery from "./pages/ProfileGallery.jsx";
 
+import StoryComposer from "./pages/StoryComposer.jsx";
+import StoryPage from "./pages/StoryPage.jsx";
+
 export default function App() {
   return (
     <Routes>
@@ -67,7 +70,8 @@ export default function App() {
             <Route path="/chat/:id" element={<Chat />} />
             <Route path="/profile/:id" element={<ProfileView />} />
             <Route path="/match" element={<MatchSuccess />} />
-        
+            <Route path="/stories/new" element={<StoryComposer />} />
+            <Route path="/stories/:userId" element={<StoryPage />} />
          
           </Route>
           
