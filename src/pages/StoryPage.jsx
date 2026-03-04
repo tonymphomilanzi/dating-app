@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import StoryViewer from "../components/StoryViewer.jsx";
 import { storiesService } from "../services/stories.service.js";
-import { supabase } from "../../api/lib/supabase.js";
+import { supabase } from "../lib/supabase.client.js";
 
 export default function StoryPage() {
   const nav = useNavigate();

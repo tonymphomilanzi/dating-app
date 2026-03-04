@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../../api/lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 
 export default function AuthCallback() {
   const nav = useNavigate();

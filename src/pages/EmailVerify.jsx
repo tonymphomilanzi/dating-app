@@ -3,7 +3,7 @@ import TopBar from "../components/TopBar.jsx";
 import OTPInput from "../components/OTPInput.jsx";
 import Button from "../components/Button.jsx";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../../api/lib/supabase.js";
+import { supabase } from "../lib/supabase.client.js";
 import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
 
 export default function EmailVerify(){

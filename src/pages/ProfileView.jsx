@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { supabase } from "../../api/lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { kmBetween } from "../utils/geo.js";
 import { swipesService } from "../services/swipes.service.js";
