@@ -1,5 +1,5 @@
 // api/chat/index.js
-import { requireUser, getPremiumFlag } from "../lib/_supabase.js";
+import { requireUser, getPremiumFlag } from "../lib/supabase.js";
 
 async function listConversations(supabase, userId) {
   const { data, error } = await supabase
