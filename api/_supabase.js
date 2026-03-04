@@ -1,6 +1,9 @@
 // api/_supabase.js
 import { createClient } from "@supabase/supabase-js";
 
+console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
+console.log("SUPABASE_URL type =", typeof process.env.SUPABASE_URL);
+
 export function supabaseFromReq(req) {
   return createClient(
     process.env.SUPABASE_URL,
