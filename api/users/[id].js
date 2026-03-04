@@ -1,5 +1,5 @@
 // api/users/[id].js
-import { requireUser, getPremiumFlag } from "../lib/supabase.js";
+import { requireUser, supabaseFromReq } from "../lib/_supabase.js";
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET"); return res.status(405).end();

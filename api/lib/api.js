@@ -1,4 +1,3 @@
-import { supabase } from "./supabase.client.js";
 
 async function request(method, url, { params, data } = {}) {
   const { data: sess } = await supabase.auth.getSession();
