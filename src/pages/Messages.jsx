@@ -1,10 +1,12 @@
+// src/pages/Messages.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import MessagesList from "../components/MessagesList.jsx";
 import { chatService } from "../services/chat.service.js";
+import { formatChatListTime } from "../utils/time.js";
 
 export default function Messages(){
-const nav = useNavigate();
+  const nav = useNavigate();
   const [threads, setThreads] = useState([]);
   const [all, setAll] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13,16 +15,28 @@ const nav = useNavigate();
     let cancel = false;
     (async ()=>{
       try {
-        const items = await chatService.list();
+        const items = await chatService.list(); // from /api/chat
         if (cancel) return;
-        const list = (items || []).map(i => ({
-          id: i.id,
-          name: i.other?.display_name || "User",
-          avatar: i.other?.avatar_url || "https://picsum.photos/80",
-          lastMessage: i.last ? { text: i.last.text || "", time: i.last.created_at } : null,
-          unreadCount: i.unreadCount || 0,
-          blurred: i.last?.blurred || i.blurred || false,
-        }));
+
+        const list = (items || []).map(i => {
+          const ts = i.last?.created_at || i.last_message_at || i.created_at;
+          return {
+            id: i.id,
+            name: i.other?.display_name || "User",
+            avatar: i.other?.avatar_url || "https://picsum.photos/80",
+            lastMessage: i.last ? {
+              text: i.last.text || "",
+              time: formatChatListTime(ts, { hour12: true }), // WhatsApp-like
+            } : null,
+            unreadCount: i.unreadCount || 0,
+            blurred: i.last?.blurred || i.blurred || false,
+            updatedAt: ts,
+          };
+        });
+
+        // Sort by activity (optional if API already sorts)
+        list.sort((a,b)=> new Date(b.updatedAt) - new Date(a.updatedAt));
+
         setThreads(list);
         setAll(list);
       } finally {
