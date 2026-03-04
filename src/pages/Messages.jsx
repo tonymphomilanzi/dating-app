@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import MessagesList from "../components/MessagesList.jsx";
 import { chatService } from "../services/chat.service.js";
 import { formatChatListTime } from "../utils/time.js";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../lib/supabase.client.js";  
 import { ChatCache } from "../lib/cache.js";
 
 export default function Messages(){
