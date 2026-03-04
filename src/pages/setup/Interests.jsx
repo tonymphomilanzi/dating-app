@@ -1,16 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
-import TopBar from "../../components/TopBar.jsx";
-import Tag from "../../components/Tag.jsx";
-import Button from "../../components/Button.jsx";
 import { supabase } from "../../lib/supabase.client.js";
 import { useNavigate } from "react-router-dom";
 
 const DEFAULT_INTERESTS = [
   "Photography","Art","Travel","Cooking","Dogs","Fitness","Hiking",
-  "Music","Yoga","Dancing","Outdoors","Reading","Tech","Gaming"
+  "Music","Yoga","Dancing","Outdoors","Reading","Tech","Gaming",
+  "Shopping","Karaoke","Tennis","Swimming","Run","Extreme","Drink","Video games"
 ];
 
 const norm = (s) => s.trim().toLowerCase();
+
+// Simple icon mapper (Lineicons). Falls back gracefully.
+const ICONS = {
+  photography: "lni lni-camera",
+  art: "lni lni-brush",
+  travel: "lni lni-plane",
+  cooking: "lni lni-restaurant",
+  dogs: "lni lni-paw",
+  fitness: "lni lni-dumbbell",
+  hiking: "lni lni-map",
+  music: "lni lni-music",
+  yoga: "lni lni-leaf",
+  dancing: "lni lni-music",
+  outdoors: "lni lni-sun",
+  reading: "lni lni-book",
+  tech: "lni lni-code",
+  gaming: "lni lni-game",
+  shopping: "lni lni-shopping-basket",
+  karaoke: "lni lni-mic",
+  tennis: "lni lni-tennis-ball",
+  swimming: "lni lni-wave",
+  run: "lni lni-bolt",
+  extreme: "lni lni-thunder",
+  drink: "lni lni-coffee-cup",
+  "video games": "lni lni-game",
+};
+const iconFor = (label) => ICONS[norm(label)] || "lni lni-heart";
 
 export default function SetupInterests(){
   const nav = useNavigate();
@@ -105,7 +130,6 @@ export default function SetupInterests(){
           .from("interests")
           .upsert(payload, { onConflict: "label" });
         if (upErr) {
-          // If you keep catalog read-only, run the SQL seed above and remove this upsert path
           throw new Error("Interests not seeded and insert blocked. Run the SQL seed or enable insert policy.");
         }
 
@@ -142,35 +166,108 @@ export default function SetupInterests(){
     }
   };
 
+  const canContinue = pickedLabels.length >= 5 && !saving;
+
   return (
-    <div className="min-h-dvh">
-      <TopBar title="Your interests"/>
-      <div className="space-y-6 p-6">
+    <div className="min-h-dvh bg-white text-gray-900">
+      {/* Top bar: back + Skip */}
+      <div className="sticky top-0 z-10 bg-white/90 px-4 pt-4 backdrop-blur">
+        <div className="mx-auto flex max-w-md items-center">
+          <button
+            onClick={() => nav(-1)}
+            aria-label="Back"
+            className="grid h-10 w-10 place-items-center rounded-2xl border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            <i className="lni lni-chevron-left text-lg" />
+          </button>
+          <button
+            onClick={() => nav("/setup/photo")}
+            className="ml-auto text-sm font-medium text-violet-600 hover:text-violet-700"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="mx-auto max-w-md px-4 pb-40 pt-4">
+        <h1 className="text-3xl font-bold">Your interests</h1>
+        <p className="mt-2 text-sm text-gray-600">
+          Select a few of your interests and let everyone know what you're passionate about.
+        </p>
+
+        {usingFallback && (
+          <div className="mt-3 text-xs text-amber-600">
+            Using defaults (DB not seeded)
+          </div>
+        )}
+        {error && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         {loading ? (
-          <div className="text-sm text-gray-500">Loading interests…</div>
+          <div className="mt-8 text-sm text-gray-500">Loading interests…</div>
         ) : (
           <>
-            <p className="text-sm text-gray-600">
-              Pick at least 5.{" "}
-              {usingFallback && (
-                <span className="text-amber-600">Using defaults (DB not seeded)</span>
-              )}
-            </p>
-            {error && <div className="text-sm text-red-600">{error}</div>}
-            <div className="flex flex-wrap gap-2">
-              {all.map(i => {
+            {/* Chips grid (2 columns) */}
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              {all.map((i) => {
                 const label = i.label;
                 const active = pickedLabels.includes(label);
                 return (
-                  <Tag key={label} label={label} active={active} onClick={()=>toggle(label)} />
+                  <button
+                    key={label}
+                    onClick={() => toggle(label)}
+                    className={[
+                      "flex items-center justify-start gap-2 rounded-full border px-4 py-2.5 text-left text-sm transition",
+                      active
+                        ? "border-violet-600 bg-violet-600 text-white shadow"
+                        : "border-gray-200 bg-white text-gray-800 hover:border-violet-200 hover:bg-violet-50/50"
+                    ].join(" ")}
+                    aria-pressed={active}
+                  >
+                    <i
+                      className={[
+                        iconFor(label),
+                        "text-base",
+                        active ? "text-white" : "text-violet-600"
+                      ].join(" ")}
+                    />
+                    <span className="truncate">{label}</span>
+                  </button>
                 );
               })}
             </div>
-            <Button className="w-full" disabled={pickedLabels.length<5 || saving} onClick={save}>
-              {saving ? "Saving..." : "Continue"}
-            </Button>
+
+            {/* Helper: count + requirement */}
+            <div className="mt-4 flex items-center justify-between text-xs">
+              <span className="text-gray-600">Pick at least 5</span>
+              <span className={`font-medium ${pickedLabels.length >= 5 ? "text-violet-700" : "text-gray-500"}`}>
+                {pickedLabels.length} selected
+              </span>
+            </div>
           </>
         )}
+      </div>
+
+      {/* Bottom sticky continue */}
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-100 bg-white/95 px-4 pb-[env(safe-area-inset-bottom)] pt-3 backdrop-blur">
+        <div className="mx-auto max-w-md">
+          <button
+            onClick={save}
+            disabled={!canContinue}
+            className={[
+              "w-full rounded-full px-4 py-3.5 text-center text-base font-semibold shadow-card transition active:scale-[0.99]",
+              canContinue
+                ? "bg-violet-600 text-white hover:bg-violet-700"
+                : "bg-violet-300 text-white"
+            ].join(" ")}
+          >
+            {saving ? "Saving..." : "Continue"}
+          </button>
+        </div>
       </div>
     </div>
   );
