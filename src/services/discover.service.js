@@ -1,5 +1,5 @@
 import { api } from "../lib/api";
-import { supabase } from "../../api/lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 
 const norm = (r) => (Array.isArray(r?.items) ? r.items : Array.isArray(r) ? r : []);
 

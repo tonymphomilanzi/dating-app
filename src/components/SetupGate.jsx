@@ -1,7 +1,7 @@
 // src/components/SetupGate.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { supabase } from "../../api/lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

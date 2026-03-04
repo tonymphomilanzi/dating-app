@@ -1,4 +1,4 @@
-import { supabase } from "../../api/lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 
 export const prefsService = {
   get: async () => {
