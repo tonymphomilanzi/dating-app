@@ -1,4 +1,4 @@
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../api/lib/supabase";
 
 const sanitize = (name) => String(name).replace(/[^A-Za-z0-9._-]+/g, "-");
 

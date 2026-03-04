@@ -1,5 +1,5 @@
 // api/swipes/index.js
-import { requireUser, getPremiumFlag } from "../_supabase.js";
+import { requireUser, getPremiumFlag } from "../lib/_supabase.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

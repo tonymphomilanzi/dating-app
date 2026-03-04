@@ -1,6 +1,5 @@
 // api/chat/[id].js
-import { requireUser, getPremiumFlag } from "../_supabase.js";
-
+import { requireUser, getPremiumFlag } from "../../lib/_supabase.js";
 async function computeUnlockedSet(supabase, userId, isPremium) {
   if (isPremium) return new Set(); // means no lock
   const { data, error } = await supabase

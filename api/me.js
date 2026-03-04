@@ -1,5 +1,5 @@
 // api/me.js
-import { requireUser } from "./_supabase.js";
+import { requireUser } from "./lib/_supabase.js";
 export default async function handler(req, res) {
   if (req.method === "GET") {
     const ctx = await requireUser(req, res); if (!ctx) return;

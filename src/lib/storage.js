@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { supabase } from "../../api/lib/supabase";
 
 export async function uploadProfilePhoto(file) {
   const { data: { user } } = await supabase.auth.getUser();

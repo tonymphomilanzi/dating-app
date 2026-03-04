@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../api/lib/supabase";
 import GalleryViewer from "../components/GalleryViewer.jsx";
 
 export default function ProfileGallery() {

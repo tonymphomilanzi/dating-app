@@ -1,7 +1,7 @@
 import { useState } from "react";
 import TopBar from "../../components/TopBar.jsx";
 import Button from "../../components/Button.jsx";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "../../../api/lib/supabase.js";
 import { useNavigate } from "react-router-dom";
 
 const years = Array.from({length: 70}, (_,i)=> new Date().getFullYear()-i-18);

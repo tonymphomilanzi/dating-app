@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { supabase } from "../../api/lib/supabase";
 
 // Base for API (dev: proxied /api; prod: set VITE_API_BASE to your deployed functions URL)
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";

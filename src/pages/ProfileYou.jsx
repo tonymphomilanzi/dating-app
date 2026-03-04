@@ -3,7 +3,7 @@ import TopBar from "../components/TopBar.jsx";
 import Button from "../components/Button.jsx";
 import TextField from "../components/TextField.jsx";
 import Tag from "../components/Tag.jsx";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../api/lib/supabase.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 // Skeletons

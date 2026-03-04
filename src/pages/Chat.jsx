@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import TopBar from "../components/TopBar.jsx";
 import Avatar from "../components/Avatar.jsx";
 import { chatService } from "../services/chat.service.js";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../api/lib/supabase.js";
 
 export default function Chat(){
   const { id } = useParams();

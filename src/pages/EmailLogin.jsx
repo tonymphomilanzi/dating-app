@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import TopBar from "../components/TopBar.jsx";
 import TextField from "../components/TextField.jsx";
 import Button from "../components/Button.jsx";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../api/lib/supabase.js";
 import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
 
 export default function EmailLogin(){

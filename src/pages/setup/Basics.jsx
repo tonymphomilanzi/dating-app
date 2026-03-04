@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import TopBar from "../../components/TopBar.jsx";
 import TextField from "../../components/TextField.jsx";
 import Button from "../../components/Button.jsx";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "../../../api/lib/supabase.js";
 import { useNavigate } from "react-router-dom";
 
 export default function SetupBasics(){
