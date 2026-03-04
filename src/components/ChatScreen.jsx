@@ -1,14 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export default function ChatScreen({
   user = { name: "", avatar: "", online: false },
-  messages = [],
+  status,                 // 'Typing…' | 'Online' | ''
+  messages = [],          // [{ id, me, text, time?, attachmentUrl?, attachmentType? }]
   onBack,
   onCall,
   onMore,
-  onOpenAttachment,      // (type) => void
-  onOpenAttachmentItem,  // (message) => void
-  onSend,                // (text) => void
+  onOpenAttachment,       // (type) => void  ("camera"|"gallery"|"document"|"audio"|"location"|"contact")
+  onOpenAttachmentItem,   // (message) => void
+  onSend,                 // (text) => void
 }) {
   const [text, setText] = useState("");
   const [openAttach, setOpenAttach] = useState(false);
@@ -26,7 +27,7 @@ export default function ChatScreen({
     inputRef.current?.focus();
   };
 
-  // auto-scroll on new messages
+  // Auto-scroll on new messages
   useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
@@ -59,7 +60,9 @@ export default function ChatScreen({
             </div>
             <div className="min-w-0">
               <div className="truncate text-[15px] font-semibold">{user.name || "User"}</div>
-              <div className="text-xs text-gray-500">{user.online ? "Online" : ""}</div>
+              <div className={`text-xs ${status ? "text-violet-600" : "text-gray-500"}`}>
+                {status || (user.online ? "Online" : "")}
+              </div>
             </div>
           </div>
 
