@@ -1,20 +1,24 @@
 // api/_supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
-console.log("SUPABASE_URL type =", typeof process.env.SUPABASE_URL);
-
 export function supabaseFromReq(req) {
+  if (!process.env.SUPABASE_URL?.startsWith("https://")) {
+    throw new Error("Invalid SUPABASE_URL on server");
+  }
+
   return createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_ANON_KEY,
     {
       auth: { persistSession: false },
-      global: { headers: { Authorization: req.headers.authorization || "" } },
+      global: {
+        headers: {
+          Authorization: req.headers.authorization ?? "",
+        },
+      },
     }
   );
 }
-
 export async function requireUser(req, res) {
   const supabase = supabaseFromReq(req);
   const { data: { user }, error } = await supabase.auth.getUser();
