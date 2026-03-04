@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import ChatScreen from "../components/ChatScreen.jsx"; // your design component
 import { chatService } from "../services/chat.service.js";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../lib/supabase.client.js";
 
 // tiny helpers
 const sanitize = (name) => String(name).replace(/[^A-Za-z0-9._-]+/g, "-");
