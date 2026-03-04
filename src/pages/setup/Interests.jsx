@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import TopBar from "../../components/TopBar.jsx";
 import Tag from "../../components/Tag.jsx";
 import Button from "../../components/Button.jsx";
-import { supabase } from "../../../api/lib/supabase.js";
+import { supabase } from "../../lib/supabase.client.js";
 import { useNavigate } from "react-router-dom";
 
 const DEFAULT_INTERESTS = [

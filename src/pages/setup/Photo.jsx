@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import TopBar from "../../components/TopBar.jsx";
 import Button from "../../components/Button.jsx";
 import Avatar from "../../components/Avatar.jsx";
-import { supabase } from "../../../api/lib/supabase.js";
+import { supabase } from "../../lib/supabase.client.js";  
 import { useNavigate } from "react-router-dom";
 
 const MAX_MB = 10;
