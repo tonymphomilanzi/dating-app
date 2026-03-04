@@ -1,14 +1,32 @@
+// api/_supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-  {
-    auth: {
-      persistSession: true,
-      storage: window.localStorage,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-    },
+console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
+console.log("SUPABASE_URL type =", typeof process.env.SUPABASE_URL);
+
+export function supabaseFromReq(req) {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY,
+    {
+      auth: { persistSession: false },
+      global: { headers: { Authorization: req.headers.authorization || "" } },
+    }
+  );
+}
+
+export async function requireUser(req, res) {
+  const supabase = supabaseFromReq(req);
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
   }
-);
+  return { supabase, user };
+}
+
+export async function getPremiumFlag(supabase, userId) {
+  const { data, error } = await supabase.from("profiles").select("is_premium").eq("id", userId).single();
+  if (error) throw error;
+  return !!data?.is_premium;
+}
