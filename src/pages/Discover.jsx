@@ -4,20 +4,22 @@ import { discoverService } from "../services/discover.service.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { saveBrowserLocationToProfile } from "../utils/location.js";
 import { kmBetween } from "../utils/geo.js";
-import { storiesService } from "../services/stories.service.js";
-import { Link, useNavigate } from "react-router-dom";
+import { DiscoverCache } from "../lib/discoverCache.js";
+import { useRevalidate } from "../hooks/useRevalidate.js";
+import { Link } from "react-router-dom";
+
 const tabs = [
   { key: "matches", label: "Matches" },
   { key: "nearby", label: "Nearby" },
   { key: "for_you", label: "For You" },
 ];
 
-function greetingText() { const h = new Date().getHours(); if (h < 12) return "Good morning!"; if (h < 17) return "Good afternoon!"; return "Good evening!"; }
 const numOrNull = (v) => (v == null ? null : (Number.isFinite(+v) ? +v : parseFloat(String(v)) || null));
 const normalizeCoords = (p) => ({ lat: numOrNull(p.lat ?? p.latitude), lng: numOrNull(p.lng ?? p.longitude ?? p.long) });
 
 export default function Discover(){
   const { profile, reloadProfile } = useAuth();
+  const uid = profile?.id || "me";
   const [mode, setMode] = useState("for_you");
   const [activeMode, setActiveMode] = useState("for_you");
   const [items, setItems] = useState([]);
@@ -25,108 +27,74 @@ export default function Discover(){
   const [err, setErr] = useState("");
   const [locBusy, setLocBusy] = useState(false);
 
-
-  //stories
-  // inside component:
-const nav = useNavigate();
-const [storyUsers, setStoryUsers] = useState([]);
-const [hasMyStory, setHasMyStory] = useState(false);
-
-useEffect(()=>{
-  let cancel = false;
-  (async ()=>{
-    try {
-      const [users, hasMine] = await Promise.all([
-        storiesService.listActiveUsers(30),
-        storiesService.hasMyActive(),
-      ]);
-      if (!cancel) {
-        setStoryUsers(users);
-        setHasMyStory(hasMine);
-      }
-    } catch {}
-  })();
-  return ()=>{ cancel = true; };
-}, []);
-
-
-
   const myLat = numOrNull(profile?.lat);
   const myLng = numOrNull(profile?.lng);
   const userHasLocation = myLat != null && myLng != null;
 
-  // cache last results per tab
-  const cacheRef = useRef({ for_you: [], matches: [], nearby: [] });
   const reqIdRef = useRef(0);
 
-  async function loadOne(requestedMode, reqId) {
+  const mapAndNormalize = (data) => {
+    if (myLat != null && myLng != null) {
+      return data.map((p) => {
+        const { lat, lng } = normalizeCoords(p);
+        let distance_km = p.distance_km;
+        if ((distance_km == null || Number.isNaN(Number(distance_km))) && lat != null && lng != null) {
+          const d = kmBetween(myLat, myLng, lat, lng);
+          distance_km = Math.round(d * 10) / 10;
+        }
+        return { ...p, lat, lng, distance_km };
+      });
+    }
+    return data.map((p) => ({ ...p, ...normalizeCoords(p) }));
+  };
+
+  // Load once per tab: cache-first, then background refresh
+  const fetchMode = async (requestedMode, { background = false } = {}) => {
+    const myReq = ++reqIdRef.current;
+    if (!background) { setLoading(true); setErr(""); }
+
     try {
-      setErr("");
-      let data = await discoverService.list(requestedMode, 20, { debug: true });
+      const res = await discoverService.list(requestedMode, 20, { debug: false });
+      let data = Array.isArray(res) ? res : [];
+      data = mapAndNormalize(data);
 
-      // compute fallback distances
-      if (myLat != null && myLng != null) {
-        data = data.map((p) => {
-          const { lat, lng } = normalizeCoords(p);
-          let distance_km = p.distance_km;
-          if ((distance_km == null || Number.isNaN(Number(distance_km))) && lat != null && lng != null) {
-            const d = kmBetween(myLat, myLng, lat, lng);
-            distance_km = Math.round(d * 10) / 10;
-          }
-          return { ...p, lat, lng, distance_km };
-        });
-      } else {
-        data = data.map((p) => ({ ...p, ...normalizeCoords(p) }));
-      }
+      // Ignore stale response if a newer req started
+      if (reqIdRef.current !== myReq) return;
 
-      // ignore stale requests
-      if (reqIdRef.current !== reqId) return;
-
-      cacheRef.current[requestedMode] = data;
       setItems(data);
       setActiveMode(requestedMode);
+      DiscoverCache.save(uid, requestedMode, data);
     } catch (e) {
-      if (reqIdRef.current !== reqId) return;
-      console.error("[Discover] loadOne error:", e);
+      if (reqIdRef.current !== myReq) return;
       setErr(e.message || "Failed to load");
     } finally {
-      if (reqIdRef.current === reqId) setLoading(false);
+      if (reqIdRef.current === myReq && !background) setLoading(false);
     }
-  }
+  };
 
+  // On tab change: show cached immediately, refresh in background
   useEffect(() => {
-    // show cached immediately (if any) to prevent blank state
-    const cached = cacheRef.current[mode] || [];
-    if (cached.length) {
-      setItems(cached);
+    const cached = DiscoverCache.load(uid, mode);
+    if (cached.items?.length) {
+      setItems(cached.items);
       setActiveMode(mode);
       setLoading(false);
+      // if stale, refresh silently
+      if (DiscoverCache.isStale(cached.ts)) fetchMode(mode, { background: true });
     } else {
-      setLoading(true);
+      // nothing cached → do a foreground fetch
+      fetchMode(mode, { background: false });
     }
+  }, [mode, uid, myLat, myLng]);
 
-    // kick off a new request
-    const myReqId = ++reqIdRef.current;
-    loadOne(mode, myReqId);
-
-    // For "for_you", do a fallback chain if empty (don’t block UI)
-    if (!cached.length && mode === "for_you") {
-      (async () => {
-        const wait = (ms) => new Promise(r => setTimeout(r, ms));
-        // small delay to avoid spamming
-        await wait(50);
-
-        // if still active and empty, try matches
-        if (reqIdRef.current === myReqId && (!cacheRef.current.for_you?.length)) {
-          await loadOne("matches", myReqId);
-        }
-        // if still empty, try nearby
-        if (reqIdRef.current === myReqId && (!cacheRef.current.matches?.length)) {
-          await loadOne("nearby", myReqId);
-        }
-      })();
-    }
-  }, [mode, myLat, myLng]);
+  // Revalidate on focus/visibility/online every time the tab is visible again
+  useRevalidate({
+    refetch: () => fetchMode(mode, { background: true }),
+    intervalMs: 60_000,      // also refresh once per minute in background
+    onFocus: true,
+    onVisibility: true,
+    onOnline: true,
+  });
 
   const stories = useMemo(() => (items || []).slice(0, 6), [items]);
 
@@ -138,8 +106,7 @@ useEffect(()=>{
       await reloadProfile();
       setMode("nearby");
     } catch (e) {
-      console.warn("[Discover] enable location failed:", e);
-      alert(e.message || "Could not get your location. Check browser permissions.");
+      alert(e.message || "Could not get your location");
     } finally {
       setLocBusy(false);
     }
@@ -150,6 +117,7 @@ useEffect(()=>{
   return (
     <div className="flex min-h-[70vh] flex-col bg-white text-gray-900">
       <header className="px-4 pt-4">
+        {/* Top row */}
         <div className="mb-3 flex items-center gap-3">
           <img
             src={profile?.avatar_url || "/me.jpg"}
@@ -157,15 +125,15 @@ useEffect(()=>{
             className="h-9 w-9 rounded-full object-cover ring-2 ring-violet-600 ring-offset-2"
           />
           <div className="text-sm leading-tight">
-            <p className="text-gray-500">{greetingText()}</p>
+            <p className="text-gray-500">Discover</p>
           </div>
           <Link to="/filters" className="ml-auto rounded-full p-2 hover:bg-gray-100" aria-label="Filters">
             <i className="lni lni-filter text-xl" />
           </Link>
         </div>
 
-        {/* stories */}
-  <div className="no-scrollbar mt-5 mb-3 flex items-start gap-3 overflow-x-auto pb-1">
+        {/* Stories row (kept as-is) */}
+      <div className="no-scrollbar mt-5 mb-3 flex items-start gap-3 overflow-x-auto pb-1">
   {/* My story bubble */}
   <div className="flex w-16 flex-col items-center">
     <button
@@ -209,9 +177,10 @@ useEffect(()=>{
   ))}
 </div>
 
+
         <p className="font-semibold">Let’s Find Your <span className="text-violet-600">Matches</span></p>
 
-        {/* pill tabs */}
+        {/* Pill tabs */}
         <div className="items-center mt-2">
           <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
             {tabs.map((t)=>(
@@ -234,16 +203,22 @@ useEffect(()=>{
       </header>
 
       <main className="px-4 pt-4 pb-6">
-        {loading ? (
+        {loading && items.length === 0 ? (
           <div className="grid h-[70vh] place-items-center rounded-3xl bg-white text-center shadow-card border border-gray-100">
-            <div className="text-gray-600">Loading…</div>
+            <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-card">
+              <span className="relative inline-block h-4 w-4">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-500 opacity-75" />
+                <span className="relative inline-flex h-4 w-4 rounded-full bg-violet-600" />
+              </span>
+              <span className="text-sm font-medium text-gray-700">Loading…</span>
+            </div>
           </div>
         ) : err ? (
           <div className="grid h-[70vh] place-items-center rounded-3xl bg-white text-center shadow-card border border-gray-100">
             <div>
               <p className="text-red-600 font-medium">Failed to load</p>
               <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
-              <button className="btn-outline mt-3" onClick={()=>setMode(mode)}>Retry</button>
+              <button className="btn-outline mt-3" onClick={()=>fetchMode(mode)}>Retry</button>
             </div>
           </div>
         ) : (
