@@ -64,6 +64,7 @@ export default function App() {
               <Route path="/discover" element={<Discover />} />
               <Route path="/matches" element={<Matches />} />
               <Route path="/messages" element={<Messages />} />
+              <Route path="/events" element={<Events />} />
               <Route path="/profile" element={<ProfileYou />} />
             </Route>
             
