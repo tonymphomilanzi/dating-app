@@ -36,6 +36,7 @@ export default function AuthChoice(){
           <div className="flex items-center gap-3 text-gray-400">
             <div className="h-px flex-1 bg-gray-200" />
             <span className="text-xs">or</span>
+            <p className="h-px flex-1 bg-gray-200" > sign up with</p>
             <div className="h-px flex-1 bg-gray-200" />
           </div>
 
@@ -62,9 +63,7 @@ export default function AuthChoice(){
           </div>
 
           {/* Fine print */}
-          <p className="text-xs text-gray-500">
-            By continuing you agree to our Terms & Privacy Policy.
-          </p>
+    
         </div>
 
         {/* Bottom legal (optional, matches your style) */}
