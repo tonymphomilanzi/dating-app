@@ -35,6 +35,7 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
       await swipesService.swipe({ targetUserId: person.id, dir });
     } catch (e) {
       console.error("[SwipeDeck] swipe error:", e);
+      // restore on error
       setPeople(prev => [person, ...prev]);
       if (e.status === 402) alert(e.message || "Premium required for this action.");
       else alert("Action failed. Please try again.");
@@ -45,8 +46,10 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
     return (
       <div className="grid h-[70vh] place-items-center rounded-3xl bg-white text-center shadow-card border border-gray-100">
         <div>
-          <p className="text-gray-700">You're all caught up!</p>
-          <p className="text-sm text-gray-500">Try {mode==="nearby" ? "expanding distance" : "a different tab"}.</p>
+          <p className="text-gray-700">You're all caught up 🎉</p>
+          <p className="text-sm text-gray-500">
+            Try {mode==="nearby" ? "expanding distance" : "a different tab"}.
+          </p>
         </div>
       </div>
     );
@@ -54,6 +57,7 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
 
   return (
     <div className="relative h-[70vh]">
+      {/* Decorative stacked cards */}
       <div className="pointer-events-none absolute inset-x-3 top-6 -z-10">
         <div className="mx-auto h-[60vh] max-w-md rotate-[6deg] rounded-3xl bg-violet-50 shadow-card" />
         <div className="mx-auto -mt-10 h-[60vh] max-w-md -rotate-[4deg] rounded-3xl bg-amber-50 shadow-card" />
@@ -61,7 +65,11 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
 
       {displayPeople.map((p) => (
         <div key={p.id} className="absolute inset-0 p-2">
-          <SwipeCard person={p} onSwipe={(d) => handleSwipe(d, p)} onOpen={openProfile} />
+          <SwipeCard
+            person={p}
+            onSwipe={(d) => handleSwipe(d, p)}
+            onOpen={openProfile}
+          />
         </div>
       )).reverse()}
     </div>
