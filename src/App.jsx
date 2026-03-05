@@ -31,6 +31,7 @@ import ProfileGallery from "./pages/ProfileGallery.jsx";
 
 import StoryComposer from "./pages/StoryComposer.jsx";
 import StoryPage from "./pages/StoryPage.jsx";
+import Events from "./pages/Events.jsx";
 
 export default function App() {
   return (

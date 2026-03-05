@@ -9,7 +9,7 @@ const Tab = ({ to, icon, label }) => (
       }`
     }
   >
-    <i className={`lni ${icon} text-xl leading-none`} />
+    <i className={`lni ${icon} text-xl`} />
     <span className="text-xs">{label}</span>
   </NavLink>
 );
@@ -17,11 +17,12 @@ const Tab = ({ to, icon, label }) => (
 export default function BottomTabs() {
   return (
     <nav className="fixed bottom-3 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl bg-white/90 px-2 py-2 shadow-card backdrop-blur pb-safe">
-      <div className="grid grid-cols-4">
+      <div className="grid grid-cols-5">
         <Tab to="/discover" icon="lni-home" label="Discover" />
         <Tab to="/matches" icon="lni-heart" label="Matches" />
         <Tab to="/messages" icon="lni-comments" label="Messages" />
-        <Tab to="/profile"  icon="lni-user" label="Profile" />
+        <Tab to="/events" icon="lni-calendar" label="Events" />
+        <Tab to="/profile" icon="lni-user" label="Profile" />
       </div>
     </nav>
   );
