@@ -32,6 +32,7 @@ import ProfileGallery from "./pages/ProfileGallery.jsx";
 import StoryComposer from "./pages/StoryComposer.jsx";
 import StoryPage from "./pages/StoryPage.jsx";
 import Events from "./pages/Events.jsx";
+import EventDetail from "./pages/EventDetail.jsx";
 
 export default function App() {
   return (
@@ -65,9 +66,10 @@ export default function App() {
               <Route path="/matches" element={<Matches />} />
               <Route path="/messages" element={<Messages />} />
               <Route path="/events" element={<Events />} />
-              <Route path="/profile" element={<ProfileYou />} />
+         
             </Route>
-            
+
+            <Route path="/profile" element={<ProfileYou />} />
             <Route path="/filters" element={<Filters />} />
             <Route path="/chat/:id" element={<Chat />} />
             <Route path="/profile/:id" element={<ProfileView />} />
