@@ -28,3 +28,31 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+
+/* src/index.css or src/App.css */
+
+/* src/index.css - Add these styles */
+
+/* Prevent overscroll globally */
+html, body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  overscroll-behavior-y: contain;
+}
+
+/* Prevent text selection during swipe */
+.select-none {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Disable touch action for swipe card */
+.touch-none {
+  touch-action: none;
+  -ms-touch-action: none;
+}

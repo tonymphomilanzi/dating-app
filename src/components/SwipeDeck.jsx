@@ -29,11 +29,31 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [lastAction, setLastAction] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Sync with initial items
   useEffect(() => {
     setPeople(initialItems);
   }, [initialItems]);
+
+  // Prevent body scroll when dragging
+  useEffect(() => {
+    if (isDragging) {
+      document.body.style.overflow = "hidden";
+      document.body.style.touchAction = "none";
+      document.documentElement.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+      document.body.style.touchAction = "";
+      document.documentElement.style.overflow = "";
+    }
+
+    return () => {
+      document.body.style.overflow = "";
+      document.body.style.touchAction = "";
+      document.documentElement.style.overflow = "";
+    };
+  }, [isDragging]);
 
   // Calculate distances
   const displayPeople = useMemo(() => {
@@ -44,7 +64,6 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
       const { lat, lng } = normalizeCoords(person);
       let distanceKm = person.distance_km;
 
-      // Calculate distance if not provided or invalid
       if (
         (distanceKm == null || Number.isNaN(Number(distanceKm))) &&
         myLat != null &&
@@ -53,11 +72,9 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
         lng != null
       ) {
         const distance = kmBetween(myLat, myLng, lat, lng);
-        // Ensure positive value and round to 1 decimal
         distanceKm = Math.abs(Math.round(distance * 10) / 10);
       }
 
-      // Ensure distance is always positive
       if (distanceKm != null) {
         distanceKm = Math.abs(distanceKm);
       }
@@ -74,51 +91,55 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
     [navigate]
   );
 
+  // Handle drag state from child
+  const handleDragStateChange = useCallback((dragging) => {
+    setIsDragging(dragging);
+  }, []);
+
   // Handle swipe
-// In SwipeDeck.jsx - update the handleSwipe function
+  const handleSwipe = useCallback(
+    async (direction, person) => {
+      if (isProcessing) return;
+      setIsProcessing(true);
+      setIsDragging(false);
 
-const handleSwipe = useCallback(
-  async (direction, person) => {
-    if (isProcessing) return;
-    setIsProcessing(true);
+      // Optimistically remove card
+      setPeople((prev) => prev.filter((p) => p.id !== person.id));
+      setLastAction({ person, direction });
 
-    // Optimistically remove card
-    setPeople((prev) => prev.filter((p) => p.id !== person.id));
-    setLastAction({ person, direction });
-
-    try {
-      const result = await swipesService.swipe({
-        targetUserId: person.id,
-        dir: direction,
-      });
-
-      // Check for match (only show modal for new matches)
-      if (result?.matched && result?.isNew) {
-        setMatchedPerson({
-          ...person,
-          matchId: result.match?.id,
-          conversationId: result.match?.conversationId,
+      try {
+        const result = await swipesService.swipe({
+          targetUserId: person.id,
+          dir: direction,
         });
-        setTimeout(() => setShowMatchModal(true), 400);
-      }
-    } catch (error) {
-      console.error("[SwipeDeck] swipe error:", error);
 
-      // Restore card
-      setPeople((prev) => [person, ...prev]);
-      setLastAction(null);
+        // Check for match (only show modal for new matches)
+        if (result?.matched && result?.isNew) {
+          setMatchedPerson({
+            ...person,
+            matchId: result.match?.id,
+            conversationId: result.match?.conversationId,
+          });
+          setTimeout(() => setShowMatchModal(true), 400);
+        }
+      } catch (error) {
+        console.error("[SwipeDeck] swipe error:", error);
 
-      if (error.status === 402) {
-        alert(error.message || "Premium required for this action.");
-      } else {
-        alert("Action failed. Please try again.");
+        // Restore card
+        setPeople((prev) => [person, ...prev]);
+        setLastAction(null);
+
+        if (error.status === 402) {
+          alert(error.message || "Premium required for this action.");
+        } else {
+          alert("Action failed. Please try again.");
+        }
+      } finally {
+        setIsProcessing(false);
       }
-    } finally {
-      setIsProcessing(false);
-    }
-  },
-  [isProcessing]
-);
+    },
+    [isProcessing]
+  );
 
   // Undo
   const handleUndo = useCallback(async () => {
@@ -186,7 +207,10 @@ const handleSwipe = useCallback(
 
   return (
     <>
-      <div className="relative h-[70vh]">
+      <div 
+        className="relative h-[70vh] select-none overscroll-none"
+        style={{ touchAction: isDragging ? "none" : "pan-y" }}
+      >
         {/* Background cards */}
         <div className="pointer-events-none absolute inset-x-3 top-6 -z-10">
           {displayPeople.length > 2 && (
@@ -225,6 +249,7 @@ const handleSwipe = useCallback(
                     isActive={isTop}
                     onSwipe={(dir) => handleSwipe(dir, person)}
                     onOpen={handleOpenProfile}
+                    onDragStateChange={handleDragStateChange}
                   />
                 </motion.div>
               );
@@ -239,7 +264,7 @@ const handleSwipe = useCallback(
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               onClick={handleUndo}
-              className="absolute -top-2 left-4 z-50 flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg"
+              className="absolute -top-2 left-4 z-50 flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg border border-gray-100"
             >
               <svg className="h-3.5 w-3.5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />

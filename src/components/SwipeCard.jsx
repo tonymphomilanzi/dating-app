@@ -1,73 +1,54 @@
 // src/components/SwipeCard.jsx
 import { motion, useMotionValue, useTransform, animate } from "framer-motion";
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 
 /* ---------------- Constants ---------------- */
 const SWIPE_THRESHOLD = 100;
 const VELOCITY_THRESHOLD = 400;
 
-/* ---------------- Helper Functions ---------------- */
 function formatDistance(distanceKm) {
-  if (distanceKm == null || !Number.isFinite(distanceKm)) {
-    return null;
-  }
-  
-  // Handle absolute value (distance should never be negative)
+  if (distanceKm == null || !Number.isFinite(distanceKm)) return null;
   const distance = Math.abs(distanceKm);
-  
-  if (distance < 1) {
-    return `${Math.round(distance * 1000)}m`;
-  }
-  if (distance < 10) {
-    return `${distance.toFixed(1)}km`;
-  }
+  if (distance < 1) return `${Math.round(distance * 1000)}m`;
+  if (distance < 10) return `${distance.toFixed(1)}km`;
   return `${Math.round(distance)}km`;
 }
 
-export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) {
-  // Motion values
+export default function SwipeCard({ 
+  person, 
+  isActive = true, 
+  onSwipe, 
+  onOpen,
+  onDragStateChange 
+}) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
-  // Card transforms
+  // Transforms
   const rotate = useTransform(x, [-300, 0, 300], [-18, 0, 18]);
-  const cardScale = useTransform(
-    x,
-    [-300, -100, 0, 100, 300],
-    [0.95, 0.98, 1, 0.98, 0.95]
-  );
+  const cardScale = useTransform(x, [-300, -100, 0, 100, 300], [0.95, 0.98, 1, 0.98, 0.95]);
 
-  // LIKE stamp - appears immediately when dragging right
+  // LIKE stamp
   const likeOpacity = useTransform(x, [0, 30, 100], [0, 0.5, 1]);
   const likeScale = useTransform(x, [0, 30, 100], [0.6, 0.8, 1]);
   const likeRotate = useTransform(x, [0, 150], [-25, -12]);
-  const likeBorderWidth = useTransform(x, [0, 100], [3, 5]);
 
-  // NOPE stamp - appears immediately when dragging left
+  // NOPE stamp
   const nopeOpacity = useTransform(x, [-100, -30, 0], [1, 0.5, 0]);
   const nopeScale = useTransform(x, [-100, -30, 0], [1, 0.8, 0.6]);
   const nopeRotate = useTransform(x, [-150, 0], [12, 25]);
-  const nopeBorderWidth = useTransform(x, [-100, 0], [5, 3]);
 
-  // Background color overlay - immediate feedback
-  const bgGreen = useTransform(
-    x,
-    [0, 50, 150],
-    ["rgba(34,197,94,0)", "rgba(34,197,94,0.1)", "rgba(34,197,94,0.25)"]
-  );
-  const bgRed = useTransform(
-    x,
-    [-150, -50, 0],
-    ["rgba(239,68,68,0.25)", "rgba(239,68,68,0.1)", "rgba(239,68,68,0)"]
-  );
+  // Background overlays
+  const bgGreen = useTransform(x, [0, 50, 150], ["rgba(34,197,94,0)", "rgba(34,197,94,0.1)", "rgba(34,197,94,0.25)"]);
+  const bgRed = useTransform(x, [-150, -50, 0], ["rgba(239,68,68,0.25)", "rgba(239,68,68,0.1)", "rgba(239,68,68,0)"]);
 
   // State
   const isDraggingRef = useRef(false);
+  const cardRef = useRef(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showSuperLike, setShowSuperLike] = useState(false);
   const [ripple, setRipple] = useState(null);
 
-  // Image source
   const imgSrc =
     person.avatar_url ||
     person.photo ||
@@ -78,11 +59,46 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
   const name = person.display_name || person.name || "Member";
   const distanceText = formatDistance(person.distance_km);
 
+  // Prevent default touch behaviors during drag
+  useEffect(() => {
+    if (!isActive) return;
+
+    const card = cardRef.current;
+    if (!card) return;
+
+    const preventDefaultTouch = (e) => {
+      if (isDraggingRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const preventScroll = (e) => {
+      if (isDraggingRef.current) {
+        e.preventDefault();
+      }
+    };
+
+    // Add listeners to card
+    card.addEventListener("touchmove", preventDefaultTouch, { passive: false });
+    
+    // Add listener to document to catch any scroll attempts
+    document.addEventListener("touchmove", preventScroll, { passive: false });
+
+    return () => {
+      card.removeEventListener("touchmove", preventDefaultTouch);
+      document.removeEventListener("touchmove", preventScroll);
+    };
+  }, [isActive]);
+
   // Throw card animation
   const throwOut = useCallback(
     async (direction) => {
       if (isAnimating) return;
       setIsAnimating(true);
+
+      // Notify parent drag ended
+      onDragStateChange?.(false);
 
       if (direction === "super") {
         setShowSuperLike(true);
@@ -115,86 +131,94 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
 
       onSwipe?.(direction);
     },
-    [isAnimating, x, y, onSwipe]
+    [isAnimating, x, y, onSwipe, onDragStateChange]
   );
 
   // Snap back animation
   const snapBack = useCallback(async () => {
+    onDragStateChange?.(false);
     await Promise.all([
       animate(x, 0, { type: "spring", stiffness: 500, damping: 30 }),
       animate(y, 0, { type: "spring", stiffness: 500, damping: 30 }),
     ]);
-  }, [x, y]);
+  }, [x, y, onDragStateChange]);
+
+  // Handle drag start
+  const handleDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+    onDragStateChange?.(true);
+  }, [onDragStateChange]);
 
   // Handle drag end
   const handleDragEnd = useCallback(
     async (_, info) => {
       isDraggingRef.current = false;
-      if (isAnimating) return;
+
+      if (isAnimating) {
+        onDragStateChange?.(false);
+        return;
+      }
 
       const { offset, velocity } = info;
 
-      // Swipe right
       if (offset.x > SWIPE_THRESHOLD || velocity.x > VELOCITY_THRESHOLD) {
         return throwOut("right");
       }
-      // Swipe left
       if (offset.x < -SWIPE_THRESHOLD || velocity.x < -VELOCITY_THRESHOLD) {
         return throwOut("left");
       }
 
       await snapBack();
     },
-    [isAnimating, throwOut, snapBack]
+    [isAnimating, throwOut, snapBack, onDragStateChange]
   );
 
-  // Event handlers
-  const stopPropagation = (e) => {
+  // Handle pointer down (for buttons)
+  const handlePointerDown = useCallback((e) => {
     e.stopPropagation();
-  };
+  }, []);
 
-  const handleCardClick = () => {
+  // Handle card click (open profile)
+  const handleCardClick = useCallback(() => {
     if (!isDraggingRef.current && !isAnimating && isActive) {
       onOpen?.(person);
     }
-  };
+  }, [isAnimating, isActive, onOpen, person]);
 
-  const createRipple = (e, color) => {
+  // Create ripple effect
+  const createRipple = useCallback((e, color) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    setRipple({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      color,
-    });
+    setRipple({ x: e.clientX - rect.left, y: e.clientY - rect.top, color });
     setTimeout(() => setRipple(null), 600);
-  };
+  }, []);
 
-  const handleNope = (e) => {
-    stopPropagation(e);
+  // Button handlers
+  const handleNope = useCallback((e) => {
+    handlePointerDown(e);
     createRipple(e, "red");
     throwOut("left");
-  };
+  }, [handlePointerDown, createRipple, throwOut]);
 
-  const handleLike = (e) => {
-    stopPropagation(e);
+  const handleLike = useCallback((e) => {
+    handlePointerDown(e);
     createRipple(e, "green");
     throwOut("right");
-  };
+  }, [handlePointerDown, createRipple, throwOut]);
 
-  const handleSuperLike = (e) => {
-    stopPropagation(e);
+  const handleSuperLike = useCallback((e) => {
+    handlePointerDown(e);
     throwOut("super");
-  };
+  }, [handlePointerDown, throwOut]);
 
-  // Non-active card (in stack)
+  // Non-active card (stacked behind)
   if (!isActive) {
     return (
-      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-lg">
-        <img
-          src={imgSrc}
-          alt={name}
-          className="h-full w-full object-cover"
-          draggable={false}
+      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-lg select-none pointer-events-none">
+        <img 
+          src={imgSrc} 
+          alt={name} 
+          className="h-full w-full object-cover" 
+          draggable={false} 
         />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
         <div className="absolute bottom-20 left-4 right-4 text-white">
@@ -209,14 +233,16 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
 
   return (
     <motion.div
+      ref={cardRef}
       drag="x"
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.9}
-      onDragStart={() => (isDraggingRef.current = true)}
+      dragMomentum={false}
+      onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onClick={handleCardClick}
       style={{ x, y, rotate, scale: cardScale }}
-      className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-xl cursor-grab active:cursor-grabbing touch-none"
+      className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-xl select-none touch-none cursor-grab active:cursor-grabbing"
     >
       {/* Photo */}
       <img
@@ -224,52 +250,36 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
         alt={name}
         className="h-full w-full object-cover select-none pointer-events-none"
         draggable={false}
+        onDragStart={(e) => e.preventDefault()}
       />
 
-      {/* Color overlays - immediate feedback */}
-      <motion.div
-        style={{ backgroundColor: bgGreen }}
-        className="pointer-events-none absolute inset-0 transition-colors"
+      {/* Color overlays */}
+      <motion.div 
+        style={{ backgroundColor: bgGreen }} 
+        className="pointer-events-none absolute inset-0" 
       />
-      <motion.div
-        style={{ backgroundColor: bgRed }}
-        className="pointer-events-none absolute inset-0 transition-colors"
+      <motion.div 
+        style={{ backgroundColor: bgRed }} 
+        className="pointer-events-none absolute inset-0" 
       />
 
-      {/* Gradient overlay */}
+      {/* Gradient */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
 
       {/* Top badges */}
       <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2 pointer-events-none">
-        {/* Distance badge */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-md"
         >
-          <svg
-            className="h-3 w-3"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-            />
+          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
           <span>{distanceText || "Nearby"}</span>
         </motion.div>
 
-        {/* Match score badge */}
         {person.match_score != null && person.match_score > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -285,65 +295,47 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
         )}
       </div>
 
-      {/* LIKE Stamp - appears immediately on drag right */}
+      {/* LIKE Stamp */}
       <motion.div
-        style={{
-          opacity: likeOpacity,
-          scale: likeScale,
-          rotate: likeRotate,
-        }}
+        style={{ opacity: likeOpacity, scale: likeScale, rotate: likeRotate }}
         className="pointer-events-none absolute right-4 top-16 origin-center"
       >
         <div className="relative">
-          {/* Glow */}
-          <motion.div
-            style={{ opacity: likeOpacity }}
-            className="absolute -inset-3 rounded-xl bg-green-400/40 blur-xl"
+          <motion.div 
+            style={{ opacity: likeOpacity }} 
+            className="absolute -inset-3 rounded-xl bg-green-400/40 blur-xl" 
           />
-          {/* Stamp */}
-          <motion.div
-            style={{ borderWidth: likeBorderWidth }}
-            className="relative rounded-lg border-green-500 bg-green-500/20 px-5 py-1.5 backdrop-blur-sm"
-          >
+          <div className="relative rounded-lg border-[4px] border-green-500 bg-green-500/20 px-5 py-1.5 backdrop-blur-sm">
             <span className="text-2xl font-black tracking-widest text-green-500 drop-shadow-lg">
               LIKE
             </span>
-          </motion.div>
+          </div>
         </div>
       </motion.div>
 
-      {/* NOPE Stamp - appears immediately on drag left */}
+      {/* NOPE Stamp */}
       <motion.div
-        style={{
-          opacity: nopeOpacity,
-          scale: nopeScale,
-          rotate: nopeRotate,
-        }}
+        style={{ opacity: nopeOpacity, scale: nopeScale, rotate: nopeRotate }}
         className="pointer-events-none absolute left-4 top-16 origin-center"
       >
         <div className="relative">
-          {/* Glow */}
-          <motion.div
-            style={{ opacity: nopeOpacity }}
-            className="absolute -inset-3 rounded-xl bg-red-400/40 blur-xl"
+          <motion.div 
+            style={{ opacity: nopeOpacity }} 
+            className="absolute -inset-3 rounded-xl bg-red-400/40 blur-xl" 
           />
-          {/* Stamp */}
-          <motion.div
-            style={{ borderWidth: nopeBorderWidth }}
-            className="relative rounded-lg border-red-500 bg-red-500/20 px-5 py-1.5 backdrop-blur-sm"
-          >
+          <div className="relative rounded-lg border-[4px] border-red-500 bg-red-500/20 px-5 py-1.5 backdrop-blur-sm">
             <span className="text-2xl font-black tracking-widest text-red-500 drop-shadow-lg">
               NOPE
             </span>
-          </motion.div>
+          </div>
         </div>
       </motion.div>
 
       {/* SUPER LIKE Effect */}
       {showSuperLike && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+        <motion.div 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
           className="pointer-events-none absolute inset-0 z-20"
         >
           {/* Radial burst */}
@@ -355,22 +347,19 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
                 animate={{ scale: 4, opacity: 0 }}
                 transition={{ duration: 0.8, delay: i * 0.015 }}
                 className="absolute h-3 w-1 rounded-full bg-gradient-to-t from-cyan-400 to-blue-500"
-                style={{
-                  rotate: `${i * 22.5}deg`,
-                  transformOrigin: "center 80px",
-                }}
+                style={{ rotate: `${i * 22.5}deg`, transformOrigin: "center 80px" }}
               />
             ))}
           </div>
-
-          {/* Center glow */}
+          
+          {/* Glow */}
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: [0, 2, 1.5] }}
             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-32 w-32 rounded-full bg-cyan-400/40 blur-2xl"
           />
-
-          {/* Star */}
+          
+          {/* Star icon */}
           <motion.div
             initial={{ scale: 0, rotate: -180 }}
             animate={{ scale: [0, 1.4, 1], rotate: 0 }}
@@ -383,7 +372,7 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
               </svg>
             </div>
           </motion.div>
-
+          
           {/* Text */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -392,9 +381,7 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
             className="absolute left-1/2 top-1/2 mt-16 -translate-x-1/2"
           >
             <div className="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2 shadow-xl">
-              <span className="text-xl font-black tracking-wider text-white">
-                SUPER LIKE
-              </span>
+              <span className="text-xl font-black tracking-wider text-white">SUPER LIKE</span>
             </div>
           </motion.div>
         </motion.div>
@@ -402,9 +389,9 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
 
       {/* Person info */}
       <div className="absolute bottom-24 left-4 right-4 text-white pointer-events-none">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }} 
+          animate={{ opacity: 1, y: 0 }} 
           className="flex items-baseline gap-2"
         >
           <span className="text-2xl font-bold drop-shadow-lg">{name}</span>
@@ -412,7 +399,7 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
             <span className="text-xl font-light text-white/90">{person.age}</span>
           )}
         </motion.div>
-
+        
         {person.city && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -420,62 +407,33 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
             transition={{ delay: 0.1 }}
             className="mt-1 flex items-center gap-1.5 text-sm text-white/80"
           >
-            <svg
-              className="h-3.5 w-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-              />
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             <span>{person.city}</span>
           </motion.div>
         )}
-
-        {person.bio && (
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.15 }}
-            className="mt-2 line-clamp-2 text-sm text-white/70"
-          >
-            {person.bio}
-          </motion.p>
-        )}
       </div>
 
-      {/* Action buttons */}
-      <div className="absolute inset-x-0 bottom-4 flex justify-center px-4">
-        <div className="flex w-full max-w-xs items-center justify-center gap-4">
+      {/* Action buttons - pointer-events-auto to enable clicks */}
+      <div className="absolute inset-x-0 bottom-4 flex justify-center px-4 pointer-events-none">
+        <div className="flex w-full max-w-xs items-center justify-center gap-4 pointer-events-auto">
           {/* Nope button */}
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={stopPropagation}
+            onPointerDown={handlePointerDown}
             onClick={handleNope}
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden"
-            aria-label="Pass"
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden active:bg-gray-50"
+            style={{ touchAction: "manipulation" }}
           >
             {ripple?.color === "red" && (
               <motion.span
                 initial={{ scale: 0, opacity: 0.5 }}
                 animate={{ scale: 3, opacity: 0 }}
                 className="absolute inset-0 bg-red-400"
-                style={{
-                  borderRadius: "50%",
-                  transformOrigin: `${ripple.x}px ${ripple.y}px`,
-                }}
+                style={{ borderRadius: "50%", transformOrigin: `${ripple.x}px ${ripple.y}px` }}
               />
             )}
             <svg className="h-7 w-7 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -487,10 +445,10 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={stopPropagation}
+            onPointerDown={handlePointerDown}
             onClick={handleSuperLike}
-            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50"
-            aria-label="Super Like"
+            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 active:opacity-90"
+            style={{ touchAction: "manipulation" }}
           >
             <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400 opacity-20" />
             <svg className="h-8 w-8 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -502,20 +460,17 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={stopPropagation}
+            onPointerDown={handlePointerDown}
             onClick={handleLike}
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden"
-            aria-label="Like"
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden active:bg-gray-50"
+            style={{ touchAction: "manipulation" }}
           >
             {ripple?.color === "green" && (
               <motion.span
                 initial={{ scale: 0, opacity: 0.5 }}
                 animate={{ scale: 3, opacity: 0 }}
                 className="absolute inset-0 bg-green-400"
-                style={{
-                  borderRadius: "50%",
-                  transformOrigin: `${ripple.x}px ${ripple.y}px`,
-                }}
+                style={{ borderRadius: "50%", transformOrigin: `${ripple.x}px ${ripple.y}px` }}
               />
             )}
             <svg className="h-7 w-7 text-green-500" fill="currentColor" viewBox="0 0 24 24">
@@ -524,18 +479,6 @@ export default function SwipeCard({ person, isActive = true, onSwipe, onOpen }) 
           </motion.button>
         </div>
       </div>
-
-      {/* Tap hint */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.5 }}
-        className="absolute bottom-[92px] left-1/2 -translate-x-1/2 pointer-events-none"
-      >
-        <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] text-white/50 backdrop-blur-sm">
-          Tap to view profile
-        </span>
-      </motion.div>
     </motion.div>
   );
 }

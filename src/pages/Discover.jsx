@@ -304,7 +304,7 @@ const locationStatusDisplay = useMemo(() => {
 
 
   return (
-    <div className="flex min-h-[70vh] flex-col bg-white text-gray-900">
+    <div className="flex min-h-[70vh] flex-col bg-white text-gray-900 overscroll-none">
       {/* Header */}
       <header className="px-4 pt-4">
         {/* Top row with avatar and controls */}
@@ -317,7 +317,7 @@ const locationStatusDisplay = useMemo(() => {
           
           <div className="text-sm leading-tight">
             <p className="text-gray-500">Discover</p>
-           // In the JSX, update the location display:
+    
 {locationStatusDisplay && (
   <p className={`text-xs flex items-center gap-1 ${locationStatusDisplay.color}`}>
     <span className={`h-1.5 w-1.5 rounded-full bg-current ${locationStatusDisplay.icon}`} />
@@ -386,7 +386,7 @@ const locationStatusDisplay = useMemo(() => {
       </header>
 
       {/* Main content */}
-      <main className="px-4 pt-4 pb-6">
+      <main className="px-4 pt-4 pb-6 touch-pan-y overscroll-contain">
         {isLoading && profiles.length === 0 ? (
           <LoadingState />
         ) : error ? (
