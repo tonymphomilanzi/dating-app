@@ -180,46 +180,45 @@ const listEventsWithAuth = useCallback(async ({ signal } = {}) => {
   const lastFetchRef = useRef(0);
   const abortRef = useRef(null);
 
-  const refresh = useCallback(
-    
-    async ({ foreground = false } = {}) => {
-      const rows = await listEventsWithAuth({ signal: ac.signal });
-      const now = Date.now();
-      if (inflightRef.current) return inflightRef.current;
-      if (now - lastFetchRef.current < 400) return; // throttle quick bursts
+const refresh = useCallback(
+  async ({ foreground = false } = {}) => {
+    const now = Date.now();
+    if (inflightRef.current) return inflightRef.current;
+    if (now - lastFetchRef.current < 400) return; // throttle bursts
 
-      if (foreground && events.length === 0) setLoading(true);
+    if (foreground && events.length === 0) setLoading(true);
 
-      abortRef.current?.abort?.();
-      const ac = new AbortController();
-      abortRef.current = ac;
+    // Abort any previous request and create a new controller
+    abortRef.current?.abort?.();
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-      inflightRef.current = (async () => {
-        try {
-          const rows = await listEventsWithAuth(ac.signal);
-          if (!mountedRef.current) return;
-          setEvents(mapRows(rows));
-          setErr("");
-        } catch (e) {
-          if (!mountedRef.current) return;
-          if (e?.name === "AbortError") return;
-          const status = e?.status || e?.response?.status;
-          if (status === 401 || /session expired/i.test(e?.message || "")) {
-            setErr("Session expired. Please sign in again.");
-            return;
-          }
-          setErr(e.message || "Failed to load events");
-        } finally {
-          if (foreground && mountedRef.current) setLoading(false);
-          lastFetchRef.current = Date.now();
-          inflightRef.current = null;
+    inflightRef.current = (async () => {
+      try {
+        const rows = await listEventsWithAuth({ signal: ac.signal });
+        if (!mountedRef.current) return;
+        setEvents(mapRows(rows));
+        setErr("");
+      } catch (e) {
+        if (!mountedRef.current) return;
+        if (e?.name === "AbortError") return;
+        const status = e?.status || e?.response?.status;
+        if (status === 401 || /session expired/i.test(e?.message || "")) {
+          setErr("Session expired. Please sign in again.");
+          return;
         }
-      })();
+        setErr(e.message || "Failed to load events");
+      } finally {
+        if (foreground && mountedRef.current) setLoading(false);
+        lastFetchRef.current = Date.now();
+        inflightRef.current = null;
+      }
+    })();
 
-      return inflightRef.current;
-    },
-    [events.length, listEventsWithAuth, mapRows]
-  );
+    return inflightRef.current;
+  },
+  [events.length, listEventsWithAuth, mapRows]
+);
 
   // Initial load
   useEffect(() => {
@@ -473,6 +472,32 @@ function ExploreSection({ categories, cat, setCat, popular, upcoming, openDetail
       </div>
 
       <div className="no-scrollbar mt-4 flex gap-4 overflow-x-auto pb-1">
+        {popular[0] && (
+  <div className="mt-4">
+    <div className="relative overflow-hidden rounded-3xl shadow-lg">
+      <img
+        src={popular[0].img}
+        className="h-56 w-full object-cover"
+      />
+
+      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"/>
+
+      <div className="absolute bottom-4 left-4 right-4 text-white">
+        <div className="text-xs opacity-80">
+          Featured Event
+        </div>
+
+        <div className="text-xl font-bold">
+          {popular[0].title}
+        </div>
+
+        <div className="text-sm opacity-90">
+          {popular[0].place}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
         {popular.length === 0 && <div className="w-full text-sm text-gray-500">No events found.</div>}
         {popular
           .filter((e) => cat === "All" || e.category === cat)
