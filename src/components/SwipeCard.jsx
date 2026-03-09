@@ -14,12 +14,12 @@ function formatDistance(distanceKm) {
   return `${Math.round(distance)}km`;
 }
 
-export default function SwipeCard({ 
-  person, 
-  isActive = true, 
-  onSwipe, 
+export default function SwipeCard({
+  person,
+  isActive = true,
+  onSwipe,
   onOpen,
-  onDragStateChange 
+  onDragStateChange,
 }) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
@@ -39,15 +39,22 @@ export default function SwipeCard({
   const nopeRotate = useTransform(x, [-150, 0], [12, 25]);
 
   // Background overlays
-  const bgGreen = useTransform(x, [0, 50, 150], ["rgba(34,197,94,0)", "rgba(34,197,94,0.1)", "rgba(34,197,94,0.25)"]);
-  const bgRed = useTransform(x, [-150, -50, 0], ["rgba(239,68,68,0.25)", "rgba(239,68,68,0.1)", "rgba(239,68,68,0)"]);
+  const bgGreen = useTransform(
+    x,
+    [0, 50, 150],
+    ["rgba(34,197,94,0)", "rgba(34,197,94,0.1)", "rgba(34,197,94,0.25)"]
+  );
+  const bgRed = useTransform(
+    x,
+    [-150, -50, 0],
+    ["rgba(239,68,68,0.25)", "rgba(239,68,68,0.1)", "rgba(239,68,68,0)"]
+  );
 
   // State
   const isDraggingRef = useRef(false);
   const cardRef = useRef(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showSuperLike, setShowSuperLike] = useState(false);
-  const [ripple, setRipple] = useState(null);
 
   const imgSrc =
     person.avatar_url ||
@@ -73,21 +80,10 @@ export default function SwipeCard({
       }
     };
 
-    const preventScroll = (e) => {
-      if (isDraggingRef.current) {
-        e.preventDefault();
-      }
-    };
-
-    // Add listeners to card
     card.addEventListener("touchmove", preventDefaultTouch, { passive: false });
-    
-    // Add listener to document to catch any scroll attempts
-    document.addEventListener("touchmove", preventScroll, { passive: false });
 
     return () => {
       card.removeEventListener("touchmove", preventDefaultTouch);
-      document.removeEventListener("touchmove", preventScroll);
     };
   }, [isActive]);
 
@@ -96,13 +92,11 @@ export default function SwipeCard({
     async (direction) => {
       if (isAnimating) return;
       setIsAnimating(true);
-
-      // Notify parent drag ended
       onDragStateChange?.(false);
 
       if (direction === "super") {
         setShowSuperLike(true);
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
 
       const targetX =
@@ -114,21 +108,26 @@ export default function SwipeCard({
 
       const targetY = direction === "super" ? -window.innerHeight * 0.5 : 0;
 
-      await Promise.all([
+      const animations = [
         animate(x, targetX, {
           type: "spring",
           stiffness: 500,
           damping: 40,
           velocity: direction === "right" ? 800 : direction === "left" ? -800 : 0,
         }),
-        direction === "super" &&
+      ];
+
+      if (direction === "super") {
+        animations.push(
           animate(y, targetY, {
             type: "spring",
             stiffness: 500,
             damping: 40,
-          }),
-      ]);
+          })
+        );
+      }
 
+      await Promise.all(animations);
       onSwipe?.(direction);
     },
     [isAnimating, x, y, onSwipe, onDragStateChange]
@@ -173,52 +172,46 @@ export default function SwipeCard({
     [isAnimating, throwOut, snapBack, onDragStateChange]
   );
 
-  // Handle pointer down (for buttons)
-  const handlePointerDown = useCallback((e) => {
-    e.stopPropagation();
-  }, []);
-
   // Handle card click (open profile)
-  const handleCardClick = useCallback(() => {
-    if (!isDraggingRef.current && !isAnimating && isActive) {
-      onOpen?.(person);
-    }
-  }, [isAnimating, isActive, onOpen, person]);
+  const handleCardClick = useCallback(
+    (e) => {
+      // Don't open if clicking on buttons area
+      if (e.target.closest(".action-buttons")) return;
+      if (!isDraggingRef.current && !isAnimating && isActive) {
+        onOpen?.(person);
+      }
+    },
+    [isAnimating, isActive, onOpen, person]
+  );
 
-  // Create ripple effect
-  const createRipple = useCallback((e, color) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setRipple({ x: e.clientX - rect.left, y: e.clientY - rect.top, color });
-    setTimeout(() => setRipple(null), 600);
-  }, []);
-
-  // Button handlers
-  const handleNope = useCallback((e) => {
-    handlePointerDown(e);
-    createRipple(e, "red");
-    throwOut("left");
-  }, [handlePointerDown, createRipple, throwOut]);
-
-  const handleLike = useCallback((e) => {
-    handlePointerDown(e);
-    createRipple(e, "green");
-    throwOut("right");
-  }, [handlePointerDown, createRipple, throwOut]);
-
-  const handleSuperLike = useCallback((e) => {
-    handlePointerDown(e);
-    throwOut("super");
-  }, [handlePointerDown, throwOut]);
+  // Button handlers - stop propagation and prevent drag
+  const handleButtonClick = useCallback(
+    (e, action) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (isAnimating) return;
+      
+      if (action === "nope") {
+        throwOut("left");
+      } else if (action === "like") {
+        throwOut("right");
+      } else if (action === "super") {
+        throwOut("super");
+      }
+    },
+    [isAnimating, throwOut]
+  );
 
   // Non-active card (stacked behind)
   if (!isActive) {
     return (
       <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-lg select-none pointer-events-none">
-        <img 
-          src={imgSrc} 
-          alt={name} 
-          className="h-full w-full object-cover" 
-          draggable={false} 
+        <img
+          src={imgSrc}
+          alt={name}
+          className="h-full w-full object-cover"
+          draggable={false}
         />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
         <div className="absolute bottom-20 left-4 right-4 text-white">
@@ -254,32 +247,44 @@ export default function SwipeCard({
       />
 
       {/* Color overlays */}
-      <motion.div 
-        style={{ backgroundColor: bgGreen }} 
-        className="pointer-events-none absolute inset-0" 
+      <motion.div
+        style={{ backgroundColor: bgGreen }}
+        className="pointer-events-none absolute inset-0"
       />
-      <motion.div 
-        style={{ backgroundColor: bgRed }} 
-        className="pointer-events-none absolute inset-0" 
+      <motion.div
+        style={{ backgroundColor: bgRed }}
+        className="pointer-events-none absolute inset-0"
       />
 
       {/* Gradient */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
 
       {/* Top badges */}
-      <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2 pointer-events-none">
+      <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2 pointer-events-none z-10">
+        {/* Distance badge */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-md"
         >
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+            />
           </svg>
           <span>{distanceText || "Nearby"}</span>
         </motion.div>
 
+        {/* Match score badge */}
         {person.match_score != null && person.match_score > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -298,12 +303,12 @@ export default function SwipeCard({
       {/* LIKE Stamp */}
       <motion.div
         style={{ opacity: likeOpacity, scale: likeScale, rotate: likeRotate }}
-        className="pointer-events-none absolute right-4 top-16 origin-center"
+        className="pointer-events-none absolute right-4 top-16 origin-center z-20"
       >
         <div className="relative">
-          <motion.div 
-            style={{ opacity: likeOpacity }} 
-            className="absolute -inset-3 rounded-xl bg-green-400/40 blur-xl" 
+          <motion.div
+            style={{ opacity: likeOpacity }}
+            className="absolute -inset-3 rounded-xl bg-green-400/40 blur-xl"
           />
           <div className="relative rounded-lg border-[4px] border-green-500 bg-green-500/20 px-5 py-1.5 backdrop-blur-sm">
             <span className="text-2xl font-black tracking-widest text-green-500 drop-shadow-lg">
@@ -316,12 +321,12 @@ export default function SwipeCard({
       {/* NOPE Stamp */}
       <motion.div
         style={{ opacity: nopeOpacity, scale: nopeScale, rotate: nopeRotate }}
-        className="pointer-events-none absolute left-4 top-16 origin-center"
+        className="pointer-events-none absolute left-4 top-16 origin-center z-20"
       >
         <div className="relative">
-          <motion.div 
-            style={{ opacity: nopeOpacity }} 
-            className="absolute -inset-3 rounded-xl bg-red-400/40 blur-xl" 
+          <motion.div
+            style={{ opacity: nopeOpacity }}
+            className="absolute -inset-3 rounded-xl bg-red-400/40 blur-xl"
           />
           <div className="relative rounded-lg border-[4px] border-red-500 bg-red-500/20 px-5 py-1.5 backdrop-blur-sm">
             <span className="text-2xl font-black tracking-widest text-red-500 drop-shadow-lg">
@@ -333,10 +338,10 @@ export default function SwipeCard({
 
       {/* SUPER LIKE Effect */}
       {showSuperLike && (
-        <motion.div 
-          initial={{ opacity: 0 }} 
-          animate={{ opacity: 1 }} 
-          className="pointer-events-none absolute inset-0 z-20"
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="pointer-events-none absolute inset-0 z-30"
         >
           {/* Radial burst */}
           <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
@@ -351,14 +356,14 @@ export default function SwipeCard({
               />
             ))}
           </div>
-          
+
           {/* Glow */}
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: [0, 2, 1.5] }}
             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-32 w-32 rounded-full bg-cyan-400/40 blur-2xl"
           />
-          
+
           {/* Star icon */}
           <motion.div
             initial={{ scale: 0, rotate: -180 }}
@@ -372,7 +377,7 @@ export default function SwipeCard({
               </svg>
             </div>
           </motion.div>
-          
+
           {/* Text */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
@@ -388,18 +393,16 @@ export default function SwipeCard({
       )}
 
       {/* Person info */}
-      <div className="absolute bottom-24 left-4 right-4 text-white pointer-events-none">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }} 
-          animate={{ opacity: 1, y: 0 }} 
+      <div className="absolute bottom-24 left-4 right-4 text-white pointer-events-none z-10">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           className="flex items-baseline gap-2"
         >
           <span className="text-2xl font-bold drop-shadow-lg">{name}</span>
-          {person.age && (
-            <span className="text-xl font-light text-white/90">{person.age}</span>
-          )}
+          {person.age && <span className="text-xl font-light text-white/90">{person.age}</span>}
         </motion.div>
-        
+
         {person.city && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -408,46 +411,60 @@ export default function SwipeCard({
             className="mt-1 flex items-center gap-1.5 text-sm text-white/80"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+              />
             </svg>
             <span>{person.city}</span>
           </motion.div>
         )}
       </div>
 
-      {/* Action buttons - pointer-events-auto to enable clicks */}
-      <div className="absolute inset-x-0 bottom-4 flex justify-center px-4 pointer-events-none">
-        <div className="flex w-full max-w-xs items-center justify-center gap-4 pointer-events-auto">
+      {/* Action buttons */}
+      <div className="action-buttons absolute inset-x-0 bottom-4 flex justify-center px-4 z-40">
+        <div className="flex w-full max-w-xs items-center justify-center gap-4">
           {/* Nope button */}
           <motion.button
+            type="button"
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={handlePointerDown}
-            onClick={handleNope}
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden active:bg-gray-50"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => handleButtonClick(e, "nope")}
+            disabled={isAnimating}
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
           >
-            {ripple?.color === "red" && (
-              <motion.span
-                initial={{ scale: 0, opacity: 0.5 }}
-                animate={{ scale: 3, opacity: 0 }}
-                className="absolute inset-0 bg-red-400"
-                style={{ borderRadius: "50%", transformOrigin: `${ripple.x}px ${ripple.y}px` }}
-              />
-            )}
-            <svg className="h-7 w-7 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <svg
+              className="h-7 w-7 text-red-500"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={3}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </motion.button>
 
           {/* Super Like button */}
           <motion.button
+            type="button"
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={handlePointerDown}
-            onClick={handleSuperLike}
-            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 active:opacity-90"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => handleButtonClick(e, "super")}
+            disabled={isAnimating}
+            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
           >
             <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400 opacity-20" />
@@ -458,21 +475,16 @@ export default function SwipeCard({
 
           {/* Like button */}
           <motion.button
+            type="button"
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            onPointerDown={handlePointerDown}
-            onClick={handleLike}
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden active:bg-gray-50"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => handleButtonClick(e, "like")}
+            disabled={isAnimating}
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
           >
-            {ripple?.color === "green" && (
-              <motion.span
-                initial={{ scale: 0, opacity: 0.5 }}
-                animate={{ scale: 3, opacity: 0 }}
-                className="absolute inset-0 bg-green-400"
-                style={{ borderRadius: "50%", transformOrigin: `${ripple.x}px ${ripple.y}px` }}
-              />
-            )}
             <svg className="h-7 w-7 text-green-500" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
             </svg>
