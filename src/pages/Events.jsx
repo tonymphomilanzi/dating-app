@@ -170,39 +170,10 @@ export default function Events() {
   );
 
   // Auth-safe list requester (no unauthenticated fallback)
-  const listEventsWithAuth = useCallback(async (signal) => {
-    // Try your typed service first
-    try {
-      const maybeSupportsSignal = eventsService.list.length > 0;
-      const rows = maybeSupportsSignal ? await eventsService.list({ signal }) : await eventsService.list();
-      return rows;
-    } catch (e) {
-      const status = e?.status || e?.response?.status;
-      if (status === 401) {
-        throw Object.assign(new Error("Session expired. Please sign in again."), { status: 401 });
-      }
-      // Optional: dev fallback with credentials + bearer if present
-      const token = localStorage.getItem("access_token");
-      const r = await fetch("/api/events", {
-        method: "GET",
-        signal,
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-      if (r.status === 401) {
-        throw Object.assign(new Error("Session expired. Please sign in again."), { status: 401 });
-      }
-      if (!r.ok) {
-        const t = await r.text().catch(() => "");
-        throw new Error(`HTTP ${r.status}${t ? ` – ${t.slice(0, 120)}` : ""}`);
-      }
-      const json = await r.json().catch(() => ({}));
-      return json.items || [];
-    }
-  }, []);
+const listEventsWithAuth = useCallback(async ({ signal } = {}) => {
+  // Single source of truth
+  return await eventsService.list({ signal });
+}, []);
 
   // Refresh with de-dupe/abort/throttle
   const inflightRef = useRef(null);
@@ -210,7 +181,9 @@ export default function Events() {
   const abortRef = useRef(null);
 
   const refresh = useCallback(
+    
     async ({ foreground = false } = {}) => {
+      const rows = await listEventsWithAuth({ signal: ac.signal });
       const now = Date.now();
       if (inflightRef.current) return inflightRef.current;
       if (now - lastFetchRef.current < 400) return; // throttle quick bursts
