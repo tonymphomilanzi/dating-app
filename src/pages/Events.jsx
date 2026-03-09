@@ -6,7 +6,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { eventsService } from "../services/events.service.js";
 
-/* ---------------- Small revalidate hook (dedup/abort/cooldown) ---------------- */
+/* ---------------- Revalidate Hook (dedup/abort/cooldown) ---------------- */
 function useRevalidate({
   refetch,
   intervalMs = 0,
@@ -15,88 +15,119 @@ function useRevalidate({
   onOnline = true,
   cooldownMs = 1000,
 } = {}) {
-  const refRefetch = useRef(refetch);
-  refRefetch.current = refetch;
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
 
-  const last = useRef(0);
-  const inFlight = useRef(false);
-  const queued = useRef(false);
+  const lastFetchTime = useRef(0);
+  const isInFlight = useRef(false);
+  const isQueued = useRef(false);
   const timerRef = useRef(null);
 
   const fire = useCallback(() => {
     const now = Date.now();
+    
     const run = () => {
-      inFlight.current = true;
-      Promise.resolve(refRefetch.current?.())
+      isInFlight.current = true;
+      Promise.resolve(refetchRef.current?.())
         .catch(() => {})
         .finally(() => {
-          inFlight.current = false;
-          last.current = Date.now();
-          if (queued.current) {
-            queued.current = false;
+          isInFlight.current = false;
+          lastFetchTime.current = Date.now();
+          if (isQueued.current) {
+            isQueued.current = false;
             fire();
           }
         });
     };
 
-    if (inFlight.current) {
-      queued.current = true;
+    if (isInFlight.current) {
+      isQueued.current = true;
       return;
     }
-    const delta = now - last.current;
-    if (delta < cooldownMs) {
+    
+    const timeSinceLastFetch = now - lastFetchTime.current;
+    if (timeSinceLastFetch < cooldownMs) {
       clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(run, cooldownMs - delta);
+      timerRef.current = setTimeout(run, cooldownMs - timeSinceLastFetch);
       return;
     }
+    
     run();
   }, [cooldownMs]);
 
   useEffect(() => {
-    const onVis = () => {
+    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") fire();
     };
+    
     if (onFocus) window.addEventListener("focus", fire, { passive: true });
-    if (onVisibility) document.addEventListener("visibilitychange", onVis, { passive: true });
+    if (onVisibility) document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
     if (onOnline) window.addEventListener("online", fire, { passive: true });
 
-    let id = null;
-    if (intervalMs > 0) id = setInterval(fire, intervalMs);
+    let intervalId = null;
+    if (intervalMs > 0) intervalId = setInterval(fire, intervalMs);
 
     return () => {
       if (onFocus) window.removeEventListener("focus", fire);
-      if (onVisibility) document.removeEventListener("visibilitychange", onVis);
+      if (onVisibility) document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (onOnline) window.removeEventListener("online", fire);
-      if (id) clearInterval(id);
+      if (intervalId) clearInterval(intervalId);
       clearTimeout(timerRef.current);
     };
   }, [intervalMs, onFocus, onVisibility, onOnline, fire]);
 }
 
-/* ---------------- Geo and date helpers ---------------- */
-const toRad = (d) => (d * Math.PI) / 180;
-function kmBetween(a, b) {
-  if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null) return Infinity;
-  const R = 6371;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const s = Math.sin(dLat / 2) ** 2 + Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
-}
-const distanceLabel = (km) => (km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`);
-function dateLabelFromISO(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString([], { day: "2-digit", month: "short" });
-}
-function dayMonthFromISO(iso) {
-  const d = new Date(iso);
-  return { day: String(d.getDate()).padStart(2, "0"), month: d.toLocaleDateString([], { month: "short" }) };
+/* ---------------- Geo and Date Helpers ---------------- */
+const toRadians = (degrees) => (degrees * Math.PI) / 180;
+
+function calculateKmBetween(pointA, pointB) {
+  if (
+    !pointA || 
+    !pointB || 
+    pointA.lat == null || 
+    pointA.lng == null || 
+    pointB.lat == null || 
+    pointB.lng == null
+  ) {
+    return Infinity;
+  }
+  
+  const EARTH_RADIUS_KM = 6371;
+  const deltaLat = toRadians(pointB.lat - pointA.lat);
+  const deltaLng = toRadians(pointB.lng - pointA.lng);
+  const lat1Rad = toRadians(pointA.lat);
+  const lat2Rad = toRadians(pointB.lat);
+  
+  const haversine = 
+    Math.sin(deltaLat / 2) ** 2 + 
+    Math.sin(deltaLng / 2) ** 2 * Math.cos(lat1Rad) * Math.cos(lat2Rad);
+  
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
-/* ---------------- Map pin ---------------- */
+function formatDistanceLabel(km) {
+  if (km < 1) {
+    return `${Math.round(km * 1000)} m`;
+  }
+  return `${km.toFixed(1)} km`;
+}
+
+function formatDateLabel(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  return date.toLocaleDateString([], { day: "2-digit", month: "short" });
+}
+
+function extractDayMonth(isoString) {
+  if (!isoString) return { day: "--", month: "---" };
+  const date = new Date(isoString);
+  return { 
+    day: String(date.getDate()).padStart(2, "0"), 
+    month: date.toLocaleDateString([], { month: "short" }) 
+  };
+}
+
+/* ---------------- Map Pin Icon ---------------- */
 const pinIcon = L.divIcon({
   className: "",
   iconSize: [40, 40],
@@ -118,116 +149,146 @@ const pinIcon = L.divIcon({
   `,
 });
 
-/* ---------------- Main page ---------------- */
+/* ---------------- Main Events Page ---------------- */
 export default function Events() {
-  const nav = useNavigate();
-  const locState = useLocation();
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // Mode + filters
+  // Mode and filters
   const [mode, setMode] = useState("explore"); // explore | near
-  const [q, setQ] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [radius, setRadius] = useState(50);
-  const [view, setView] = useState("list"); // list | map
-  const [cat, setCat] = useState("All");
+  const [viewType, setViewType] = useState("list"); // list | map
+  const [selectedCategory, setSelectedCategory] = useState("All");
 
-  // Location
-  const [loc, setLoc] = useState(null);
-  const [locStatus, setLocStatus] = useState("loading");
-  const [placeLabel, setPlaceLabel] = useState("");
+  // User location
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("loading");
+  const [locationLabel, setLocationLabel] = useState("");
 
   // Data
   const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const mountedRef = useRef(true);
+  const isMountedRef = useRef(true);
+  
   useEffect(() => {
-    mountedRef.current = true;
+    isMountedRef.current = true;
     return () => {
-      mountedRef.current = false;
+      isMountedRef.current = false;
     };
   }, []);
 
-  // Map server rows to UI
-  const mapRows = useCallback(
-    (rows) =>
-      rows.map((ev) => ({
-        id: ev.id,
-        title: ev.title,
-        description: ev.description || "",
-        img: ev.cover_url || "",
-        dateISO: ev.starts_at,
-        dateLabel: dateLabelFromISO(ev.starts_at),
-        ...dayMonthFromISO(ev.starts_at),
-        category: ev.category || "Other",
-        place: ev.city || "Unknown",
-        lat: ev.lat,
-        lng: ev.lng,
-        price: ev.price || 0,
-        created_at: ev.created_at,
-      })),
-    []
-  );
+  // Map server response to UI format
+  const mapServerRowsToUIFormat = useCallback((rows) => {
+    // Debug: Log raw data to see what's coming from API
+    console.log("Raw API response:", rows);
+    
+    return rows.map((event) => {
+      // Debug: Log each event's location data
+      console.log(`Event "${event.title}" location:`, {
+        city: event.city,
+        lat: event.lat,
+        lng: event.lng,
+        location: event.location,
+        address: event.address,
+        venue: event.venue,
+      });
+      
+      // Determine the place name with multiple fallbacks
+      const placeName = 
+        event.city || 
+        event.location || 
+        event.address || 
+        event.venue || 
+        "Location TBD";
+      
+      // Parse coordinates safely
+      const latitude = event.lat != null ? Number(event.lat) : null;
+      const longitude = event.lng != null ? Number(event.lng) : null;
+      
+      return {
+        id: event.id,
+        title: event.title || "Untitled Event",
+        description: event.description || "",
+        img: event.cover_url || "",
+        dateISO: event.starts_at,
+        dateLabel: formatDateLabel(event.starts_at),
+        ...extractDayMonth(event.starts_at),
+        category: event.category || "Other",
+        place: placeName,
+        lat: latitude,
+        lng: longitude,
+        price: event.price != null ? Number(event.price) : 0,
+        created_at: event.created_at,
+      };
+    });
+  }, []);
 
-  // Auth-safe list requester (no unauthenticated fallback)
-const listEventsWithAuth = useCallback(async ({ signal } = {}) => {
-  // Single source of truth
-  return await eventsService.list({ signal });
-}, []);
+  // Fetch events from API
+  const fetchEvents = useCallback(async ({ signal } = {}) => {
+    return await eventsService.list({ signal });
+  }, []);
 
-  // Refresh with de-dupe/abort/throttle
-  const inflightRef = useRef(null);
-  const lastFetchRef = useRef(0);
-  const abortRef = useRef(null);
+  // Refresh with deduplication/abort/throttle
+  const inflightRequestRef = useRef(null);
+  const lastFetchTimeRef = useRef(0);
+  const abortControllerRef = useRef(null);
 
-const refresh = useCallback(
-  async ({ foreground = false } = {}) => {
-    const now = Date.now();
-    if (inflightRef.current) return inflightRef.current;
-    if (now - lastFetchRef.current < 400) return;
+  const refresh = useCallback(
+    async ({ foreground = false } = {}) => {
+      const now = Date.now();
+      
+      // Prevent duplicate requests
+      if (inflightRequestRef.current) return inflightRequestRef.current;
+      
+      // Throttle rapid requests
+      if (now - lastFetchTimeRef.current < 400) return;
 
-    if (foreground && events.length === 0) setLoading(true);
+      if (foreground && events.length === 0) setIsLoading(true);
 
-    abortRef.current?.abort?.();
-    const ac = new AbortController();
-    abortRef.current = ac;
+      // Abort previous request
+      abortControllerRef.current?.abort?.();
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
 
-    inflightRef.current = (async () => {
-      try {
-        const rows = await listEventsWithAuth({ signal: ac.signal });
-        if (!mountedRef.current) return;
-        setEvents(mapRows(rows));
-        setErr("");
-      } catch (e) {
-        if (!mountedRef.current) return;
-        if (e?.name === "AbortError") return;
-        
-        const status = e?.status || e?.response?.status;
-        if (status === 401 || /session expired/i.test(e?.message || "")) {
-          setErr("Session expired. Please sign in again.");
-          return;
+      inflightRequestRef.current = (async () => {
+        try {
+          const rows = await fetchEvents({ signal: abortController.signal });
+          if (!isMountedRef.current) return;
+          
+          setEvents(mapServerRowsToUIFormat(rows));
+          setError("");
+        } catch (err) {
+          if (!isMountedRef.current) return;
+          if (err?.name === "AbortError") return;
+          
+          const status = err?.status || err?.response?.status;
+          if (status === 401 || /session expired/i.test(err?.message || "")) {
+            setError("Session expired. Please sign in again.");
+            return;
+          }
+          
+          const errorMessage = 
+            err?.message || 
+            err?.error || 
+            err?.response?.data?.message || 
+            err?.response?.data?.error ||
+            "Failed to load events";
+          
+          setError(errorMessage);
+        } finally {
+          if (foreground && isMountedRef.current) setIsLoading(false);
+          lastFetchTimeRef.current = Date.now();
+          inflightRequestRef.current = null;
         }
-        
-        // Better error message extraction
-        const errorMessage = 
-          e?.message || 
-          e?.error || 
-          e?.response?.data?.message || 
-          e?.response?.data?.error ||
-          "Failed to load events";
-        
-        setErr(errorMessage);
-      } finally {
-        if (foreground && mountedRef.current) setLoading(false);
-        lastFetchRef.current = Date.now();
-        inflightRef.current = null;
-      }
-    })();
+      })();
 
-    return inflightRef.current;
-  },
-  [events.length, listEventsWithAuth, mapRows]
-);
+      return inflightRequestRef.current;
+    },
+    [events.length, fetchEvents, mapServerRowsToUIFormat]
+  );
 
   // Initial load
   useEffect(() => {
@@ -235,16 +296,20 @@ const refresh = useCallback(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // After create: merge newly-created event returned from /events/new
+  // Handle newly created event from navigation state
   useEffect(() => {
-    const created = locState.state?.created;
-    if (created) {
-      setEvents((prev) => (prev.some((e) => e.id === created.id) ? prev : [created, ...prev]));
-      nav("/events", { replace: true, state: null });
+    const createdEvent = location.state?.created;
+    if (createdEvent) {
+      setEvents((prevEvents) => 
+        prevEvents.some((e) => e.id === createdEvent.id) 
+          ? prevEvents 
+          : [createdEvent, ...prevEvents]
+      );
+      navigate("/events", { replace: true, state: null });
     }
-  }, [locState.state, nav]);
+  }, [location.state, navigate]);
 
-  // Auto-refresh in background (focus, visible, online, 60s) – coalesced by the hook
+  // Auto-refresh in background
   useRevalidate({
     refetch: () => refresh({ foreground: false }),
     intervalMs: 60_000,
@@ -254,113 +319,169 @@ const refresh = useCallback(
     cooldownMs: 1000,
   });
 
-  // Geolocation (for Near You)
-  useEffect(() => {
-    getMyLocation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  function getMyLocation() {
+  // Get user's geolocation
+  function getUserLocation() {
     if (!("geolocation" in navigator)) {
-      setLocStatus("unsupported");
+      setLocationStatus("unsupported");
       return;
     }
-    setLocStatus("loading");
+    
+    setLocationStatus("loading");
+    
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const p = { lat: Number(pos.coords.latitude), lng: Number(pos.coords.longitude) };
-        setLoc(p);
-        setLocStatus("granted");
-        reverseGeocode(p).catch(() => {});
+      (position) => {
+        const coords = { 
+          lat: Number(position.coords.latitude), 
+          lng: Number(position.coords.longitude) 
+        };
+        setUserLocation(coords);
+        setLocationStatus("granted");
+        reverseGeocodeLocation(coords).catch(() => {});
       },
       () => {
-        setLocStatus("denied");
+        setLocationStatus("denied");
       },
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 60_000 }
     );
   }
-  async function reverseGeocode({ lat, lng }) {
+
+  async function reverseGeocodeLocation({ lat, lng }) {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-    const res = await fetch(url, { headers: { "Accept-Language": "en" } });
-    const data = await res.json().catch(() => ({}));
-    const city =
+    const response = await fetch(url, { headers: { "Accept-Language": "en" } });
+    const data = await response.json().catch(() => ({}));
+    
+    const cityName =
       data?.address?.city ||
       data?.address?.town ||
       data?.address?.village ||
       data?.address?.county ||
       data?.address?.state ||
       "";
-    setPlaceLabel(city || "Your area");
+    
+    setLocationLabel(cityName || "Your area");
   }
 
-  // Categories derived from live data
+  // Get location on mount
+  useEffect(() => {
+    getUserLocation();
+  }, []);
+
+  // Categories derived from events data
   const categories = useMemo(() => {
-    const set = new Set(events.map((e) => e.category).filter(Boolean));
-    return ["All", ...Array.from(set).sort()];
+    const categorySet = new Set(events.map((event) => event.category).filter(Boolean));
+    return ["All", ...Array.from(categorySet).sort()];
   }, [events]);
 
-  // Explore: filtered & sorted
-  const exploreFiltered = useMemo(() => {
-    let base = events.slice();
-    if (cat !== "All") base = base.filter((e) => e.category === cat);
-    if (q.trim()) {
-      const s = q.trim().toLowerCase();
-      base = base.filter((e) => (e.title || "").toLowerCase().includes(s) || (e.place || "").toLowerCase().includes(s));
+  // Filtered and sorted events for Explore mode
+  const filteredExploreEvents = useMemo(() => {
+    let result = events.slice();
+    
+    // Filter by category
+    if (selectedCategory !== "All") {
+      result = result.filter((event) => event.category === selectedCategory);
     }
-    base.sort((a, b) => new Date(a.dateISO) - new Date(b.dateISO) || new Date(b.created_at) - new Date(a.created_at));
-    if (loc) {
-      base = base
-        .map((e) => ({ ...e, _d: kmBetween(loc, e) }))
-        .sort((a, b) => new Date(a.dateISO) - new Date(b.dateISO) || a._d - b._d)
-        .map(({ _d, ...rest }) => rest);
+    
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter((event) => 
+        (event.title || "").toLowerCase().includes(query) || 
+        (event.place || "").toLowerCase().includes(query)
+      );
     }
-    return base;
-  }, [events, cat, q, loc]);
-
-  const popular = useMemo(() => exploreFiltered.slice(0, 12), [exploreFiltered]);
-  const upcoming = useMemo(() => exploreFiltered.slice(0, 10), [exploreFiltered]);
-
-  // Near You data
-  const nearEvents = useMemo(() => {
-    if (!loc) return [];
-    const pool = events.map((e) => ({ ...e, distanceKm: kmBetween(loc, e) }));
-    let list = pool.filter((e) => e.distanceKm <= radius);
-    if (q.trim()) {
-      const s = q.trim().toLowerCase();
-      list = list.filter((e) => (e.title || "").toLowerCase().includes(s) || (e.place || "").toLowerCase().includes(s));
+    
+    // Sort by date, then by distance if location available
+    result.sort((a, b) => 
+      new Date(a.dateISO) - new Date(b.dateISO) || 
+      new Date(b.created_at) - new Date(a.created_at)
+    );
+    
+    if (userLocation) {
+      result = result
+        .map((event) => ({ ...event, _distance: calculateKmBetween(userLocation, event) }))
+        .sort((a, b) => 
+          new Date(a.dateISO) - new Date(b.dateISO) || 
+          a._distance - b._distance
+        )
+        .map(({ _distance, ...rest }) => rest);
     }
-    list.sort((a, b) => a.distanceKm - b.distanceKm);
-    return list;
-  }, [events, loc, radius, q]);
+    
+    return result;
+  }, [events, selectedCategory, searchQuery, userLocation]);
 
-  const openDetail = (event) => nav(`/events/${event.id}`, { state: { event } });
+  const popularEvents = useMemo(() => filteredExploreEvents.slice(0, 12), [filteredExploreEvents]);
+  const upcomingEvents = useMemo(() => filteredExploreEvents.slice(0, 10), [filteredExploreEvents]);
+
+  // Events near user location
+  const nearbyEvents = useMemo(() => {
+    if (!userLocation) return [];
+    
+    // Only include events with valid coordinates
+    const eventsWithCoordinates = events.filter(
+      (event) => event.lat != null && event.lng != null
+    );
+    
+    // Calculate distance for each event
+    const eventsWithDistance = eventsWithCoordinates.map((event) => ({ 
+      ...event, 
+      distanceKm: calculateKmBetween(userLocation, event) 
+    }));
+    
+    // Filter by radius and valid distance
+    let result = eventsWithDistance.filter(
+      (event) => event.distanceKm <= radius && event.distanceKm !== Infinity
+    );
+    
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter((event) => 
+        (event.title || "").toLowerCase().includes(query) || 
+        (event.place || "").toLowerCase().includes(query)
+      );
+    }
+    
+    // Sort by distance
+    result.sort((a, b) => a.distanceKm - b.distanceKm);
+    
+    return result;
+  }, [events, userLocation, radius, searchQuery]);
+
+  const openEventDetail = (event) => navigate(`/events/${event.id}`, { state: { event } });
 
   return (
     <div className="min-h-dvh bg-white text-gray-900 pb-24">
       <div className="mx-auto w-full max-w-md">
-        {/* Sticky Header (modern, glassy) */}
+        {/* Sticky Header */}
         <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-gray-100 px-4 pt-3 pb-3">
           <div className="flex items-center justify-between">
+            {/* Mode Toggle */}
             <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
-              {["explore", "near"].map((m) => (
+              {["explore", "near"].map((modeOption) => (
                 <button
-                  key={m}
-                  onClick={() => setMode(m)}
+                  key={modeOption}
+                  onClick={() => setMode(modeOption)}
                   className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                    mode === m ? "bg-violet-600 text-white shadow" : "text-gray-700 hover:bg-violet-50"
+                    mode === modeOption 
+                      ? "bg-violet-600 text-white shadow" 
+                      : "text-gray-700 hover:bg-violet-50"
                   }`}
                 >
-                  {m === "explore" ? "Explore" : "Near You"}
+                  {modeOption === "explore" ? "Explore" : "Near You"}
                 </button>
               ))}
             </div>
 
+            {/* Location Button */}
             <button
-              onClick={getMyLocation}
+              onClick={getUserLocation}
               className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
               title="Update location"
             >
               <i className="lni lni-map-marker text-violet-600" />
-              {placeLabel || (locStatus === "loading" ? "Locating…" : locStatus === "denied" ? "Location off" : "Change")}
+              {locationLabel || 
+                (locationStatus === "loading" ? "Locating…" : 
+                 locationStatus === "denied" ? "Location off" : "Change")}
               <i className="lni lni-reload text-gray-400" />
             </button>
           </div>
@@ -370,8 +491,8 @@ const refresh = useCallback(
             <div className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
               <i className="lni lni-search-alt text-gray-400" />
               <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={mode === "explore" ? "Search for event" : "Search nearby events"}
                 className="w-full bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none"
               />
@@ -384,12 +505,18 @@ const refresh = useCallback(
                 <i className="lni lni-plus" />
               </Link>
             </div>
+            
+            {/* Status Line */}
             <div className="mt-2 flex items-center gap-2 text-xs">
               <i className="lni lni-navigation text-violet-600" />
               {mode === "near" ? (
                 <span className="text-gray-600">
-                  {locStatus === "loading" ? "Finding your position…" : `${nearEvents.length} results within ${radius} km of `}
-                  <span className="font-medium text-gray-800">{placeLabel || "your area"}</span>
+                  {locationStatus === "loading" 
+                    ? "Finding your position…" 
+                    : `${nearbyEvents.length} results within ${radius} km of `}
+                  <span className="font-medium text-gray-800">
+                    {locationLabel || "your area"}
+                  </span>
                 </span>
               ) : (
                 <span className="text-gray-600">Discover top picks and upcoming events</span>
@@ -398,42 +525,42 @@ const refresh = useCallback(
           </div>
         </div>
 
-        {/* Body */}
+        {/* Body Content */}
         <div className="px-4 pt-3">
-          {loading ? (
+          {isLoading ? (
             <LoadingCard />
-          ) : err ? (
+          ) : error ? (
             <ErrorCard
-              err={err}
+              error={error}
               onRetry={() => refresh({ foreground: true })}
-              onSignIn={() => nav("/login", { state: { from: "/events" } })}
+              onSignIn={() => navigate("/login", { state: { from: "/events" } })}
             />
           ) : events.length === 0 ? (
-            <EmptyCreate onCreate={() => nav("/events/new")} />
+            <EmptyCreate onCreate={() => navigate("/events/new")} />
           ) : mode === "explore" ? (
             <ExploreSection
               categories={categories}
-              cat={cat}
-              setCat={setCat}
-              popular={popular}
-              upcoming={upcoming}
-              openDetail={openDetail}
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              popularEvents={popularEvents}
+              upcomingEvents={upcomingEvents}
+              openEventDetail={openEventDetail}
             />
           ) : (
             <NearYouSection
-              loc={loc}
+              userLocation={userLocation}
               radius={radius}
               setRadius={setRadius}
-              view={view}
-              setView={setView}
-              events={nearEvents}
-              openDetail={openDetail}
+              viewType={viewType}
+              setViewType={setViewType}
+              events={nearbyEvents}
+              openEventDetail={openEventDetail}
             />
           )}
         </div>
       </div>
 
-      {/* Floating create (mobile-ish pattern) */}
+      {/* Floating Create Button */}
       <Link
         to="/events/new"
         className="fixed bottom-28 right-5 z-20 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg hover:bg-violet-700"
@@ -445,184 +572,226 @@ const refresh = useCallback(
   );
 }
 
-/* ---------------- Explore tab ---------------- */
-function ExploreSection({ categories, cat, setCat, popular, upcoming, openDetail }) {
-  const countsByCat = useMemo(() => {
-    const pool = [...popular, ...upcoming];
-    const counts = { All: pool.length };
-    for (const c of categories.slice(1)) counts[c] = pool.filter((e) => e.category === c).length;
+/* ---------------- Explore Section ---------------- */
+function ExploreSection({ 
+  categories, 
+  selectedCategory, 
+  setSelectedCategory, 
+  popularEvents, 
+  upcomingEvents, 
+  openEventDetail 
+}) {
+  const countsByCategory = useMemo(() => {
+    const allEvents = [...popularEvents, ...upcomingEvents];
+    const counts = { All: allEvents.length };
+    
+    for (const category of categories.slice(1)) {
+      counts[category] = allEvents.filter((event) => event.category === category).length;
+    }
+    
     return counts;
-  }, [categories, popular, upcoming]);
+  }, [categories, popularEvents, upcomingEvents]);
 
   return (
     <>
-
-         {popular[0] && (
-  <div className="mt-4">
-    <div className="relative overflow-hidden rounded-3xl shadow-lg">
-      <img
-        src={popular[0].img}
-        className="h-56 w-full object-cover"
-      />
-
-      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"/>
-
-      <div className="absolute bottom-4 left-4 right-4 text-white">
-        <div className="text-xs opacity-80">
-          Featured Event
+      {/* Featured Event */}
+      {popularEvents[0] && (
+        <div className="mt-4">
+          <div 
+            className="relative overflow-hidden rounded-3xl shadow-lg cursor-pointer"
+            onClick={() => openEventDetail(popularEvents[0])}
+          >
+            <img
+              src={popularEvents[0].img}
+              alt={popularEvents[0].title}
+              className="h-56 w-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+            <div className="absolute bottom-4 left-4 right-4 text-white">
+              <div className="text-xs opacity-80">Featured Event</div>
+              <div className="text-xl font-bold">{popularEvents[0].title}</div>
+              <div className="text-sm opacity-90">{popularEvents[0].place}</div>
+            </div>
+          </div>
         </div>
+      )}
 
-        <div className="text-xl font-bold">
-          {popular[0].title}
-        </div>
-
-        <div className="text-sm opacity-90">
-          {popular[0].place}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
       <HeaderRow title="Popular Events" />
+      
+      {/* Category Filters */}
       <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
-        {categories.map((c) => (
+        {categories.map((category) => (
           <button
-            key={c}
-            onClick={() => setCat(c)}
+            key={category}
+            onClick={() => setSelectedCategory(category)}
             className={[
               "shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm transition-colors border",
-              cat === c ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
+              selectedCategory === category 
+                ? "bg-violet-600 text-white border-violet-600 shadow" 
+                : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
             ].join(" ")}
           >
-            <span>{c}</span>
+            <span>{category}</span>
             <span
               className={[
                 "rounded-full px-1.5 text-[11px]",
-                cat === c ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600",
+                selectedCategory === category 
+                  ? "bg-white/20 text-white" 
+                  : "bg-gray-100 text-gray-600",
               ].join(" ")}
             >
-              {countsByCat[c] ?? 0}
+              {countsByCategory[category] ?? 0}
             </span>
           </button>
         ))}
       </div>
 
+      {/* Popular Events Carousel */}
       <div className="no-scrollbar mt-4 flex gap-4 overflow-x-auto pb-1">
-   
-        {popular.length === 0 && <div className="w-full text-sm text-gray-500">No events found.</div>}
-        {popular
-          .filter((e) => cat === "All" || e.category === cat)
-          .map((e) => (
-            <button
-              key={e.id}
-              onClick={() => openDetail(e)}
-              className="group w-[265px] shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white text-left shadow-card hover:shadow-md active:scale-[0.99]"
-            >
-              <div className="relative h-44">
-                {e.img ? (
-                  <img src={e.img} alt={e.title} className="h-full w-full object-cover" draggable={false} />
-                ) : (
-                  <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">No cover</div>
-                )}
-                <div className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-xs text-white ring-1 ring-white/10">
-                  {e.dateLabel}
-                </div>
-                <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs text-gray-800 ring-1 ring-gray-200">
-                  {e.category}
-                </div>
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
-                <div className="absolute inset-x-2 bottom-2 flex items-end justify-between">
-                  <div className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">{e.title}</div>
-                  <div className="rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
-                    ${e.price}
-                  </div>
-                </div>
-              </div>
-              <div className="p-3">
-                <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
-                  <i className="lni lni-map-marker text-violet-600" />
-                  {e.place}
-                </div>
-              </div>
-            </button>
+        {popularEvents.length === 0 && (
+          <div className="w-full text-sm text-gray-500">No events found.</div>
+        )}
+        {popularEvents
+          .filter((event) => selectedCategory === "All" || event.category === selectedCategory)
+          .map((event) => (
+            <EventCard key={event.id} event={event} onClick={() => openEventDetail(event)} />
           ))}
       </div>
 
-      <HeaderRow title="Upcoming events" />
+      <HeaderRow title="Upcoming Events" />
+      
+      {/* Upcoming Events List */}
       <div className="mt-3 space-y-3">
-        {upcoming.map((e) => (
-          <UpcomingRow key={e.id} item={e} onOpen={openDetail} />
+        {upcomingEvents.map((event) => (
+          <UpcomingEventRow key={event.id} event={event} onOpen={openEventDetail} />
         ))}
       </div>
     </>
   );
 }
 
-/* ---------------- Near You tab ---------------- */
-function NearYouSection({ loc, radius, setRadius, view, setView, events, openDetail }) {
+/* ---------------- Event Card (Popular Section) ---------------- */
+function EventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group w-[265px] shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white text-left shadow-card hover:shadow-md active:scale-[0.99]"
+    >
+      <div className="relative h-44">
+        {event.img ? (
+          <img 
+            src={event.img} 
+            alt={event.title} 
+            className="h-full w-full object-cover" 
+            draggable={false} 
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">
+            No cover
+          </div>
+        )}
+        
+        {/* Date Badge */}
+        <div className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-xs text-white ring-1 ring-white/10">
+          {event.dateLabel}
+        </div>
+        
+        {/* Category Badge */}
+        <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs text-gray-800 ring-1 ring-gray-200">
+          {event.category}
+        </div>
+        
+        {/* Gradient Overlay */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
+        
+        {/* Title and Price */}
+        <div className="absolute inset-x-2 bottom-2 flex items-end justify-between">
+          <div className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">
+            {event.title}
+          </div>
+          <div className="rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+            ${event.price}
+          </div>
+        </div>
+      </div>
+      
+      <div className="p-3">
+        <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600" />
+          {event.place}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ---------------- Near You Section ---------------- */
+function NearYouSection({ 
+  userLocation, 
+  radius, 
+  setRadius, 
+  viewType, 
+  setViewType, 
+  events, 
+  openEventDetail 
+}) {
   return (
     <>
+      {/* Controls */}
       <div className="mt-5 flex items-center justify-between">
         <RadiusSlider value={radius} onChange={setRadius} />
+        
+        {/* View Toggle */}
         <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
           <button
-            onClick={() => setView("list")}
-            className={`rounded-full px-3 py-1.5 text-sm ${view === "list" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
+            onClick={() => setViewType("list")}
+            className={`rounded-full px-3 py-1.5 text-sm ${
+              viewType === "list" 
+                ? "bg-violet-600 text-white" 
+                : "text-gray-700 hover:bg-violet-50"
+            }`}
           >
             <i className="lni lni-list" /> List
           </button>
           <button
-            onClick={() => setView("map")}
-            className={`rounded-full px-3 py-1.5 text-sm ${view === "map" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
+            onClick={() => setViewType("map")}
+            className={`rounded-full px-3 py-1.5 text-sm ${
+              viewType === "map" 
+                ? "bg-violet-600 text-white" 
+                : "text-gray-700 hover:bg-violet-50"
+            }`}
           >
             <i className="lni lni-map" /> Map
           </button>
         </div>
       </div>
 
-      {view === "map" ? (
+      {/* Map or List View */}
+      {viewType === "map" ? (
         <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200">
-          {loc ? (
-            <NearMap center={loc} events={events} onOpen={openDetail} />
+          {userLocation ? (
+            <NearbyEventsMap 
+              center={userLocation} 
+              events={events} 
+              onOpenEvent={openEventDetail} 
+            />
           ) : (
-            <div className="aspect-[16/9] grid place-items-center text-sm text-gray-500">Locating…</div>
+            <div className="aspect-[16/9] grid place-items-center text-sm text-gray-500">
+              Locating…
+            </div>
           )}
         </div>
       ) : (
         <div className="mt-4 space-y-3">
           {events.length === 0 ? (
-            <EmptyState msg={`No events within ${radius} km. Try widening the radius.`} />
+            <EmptyState message={`No events within ${radius} km. Try widening the radius.`} />
           ) : (
-            events.map((e) => (
-              <button
-                key={e.id}
-                onClick={() => openDetail(e)}
-                className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-card hover:shadow-md active:scale-[0.99]"
-              >
-                <div className="h-20 w-28 overflow-hidden rounded-lg bg-gray-100">
-                  {e.img ? (
-                    <img src={e.img} alt={e.title} className="h-full w-full object-cover" draggable={false} />
-                  ) : (
-                    <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="truncate text-sm font-semibold">{e.title}</div>
-                    <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
-                      {distanceLabel(e.distanceKm)} away
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
-                    <i className="lni lni-map-marker text-violet-600" />
-                    {e.place}
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-violet-700">
-                    ${e.price}
-                    <span className="text-[11px] text-gray-500">/Person</span>
-                  </div>
-                </div>
-              </button>
+            events.map((event) => (
+              <NearbyEventCard 
+                key={event.id} 
+                event={event} 
+                onClick={() => openEventDetail(event)} 
+              />
             ))
           )}
         </div>
@@ -631,7 +800,49 @@ function NearYouSection({ loc, radius, setRadius, view, setView, events, openDet
   );
 }
 
-/* ---------------- Shared bits ---------------- */
+/* ---------------- Nearby Event Card ---------------- */
+function NearbyEventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-card hover:shadow-md active:scale-[0.99]"
+    >
+      <div className="h-20 w-28 overflow-hidden rounded-lg bg-gray-100">
+        {event.img ? (
+          <img 
+            src={event.img} 
+            alt={event.title} 
+            className="h-full w-full object-cover" 
+            draggable={false} 
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-gray-400">
+            No cover
+          </div>
+        )}
+      </div>
+      
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="truncate text-sm font-semibold">{event.title}</div>
+          <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+            {formatDistanceLabel(event.distanceKm)} away
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600" />
+          {event.place}
+        </div>
+        <div className="mt-1 text-sm font-semibold text-violet-700">
+          ${event.price}
+          <span className="text-[11px] text-gray-500">/Person</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ---------------- Shared Components ---------------- */
 function RadiusSlider({ value, onChange }) {
   return (
     <div className="flex items-center gap-3">
@@ -655,38 +866,50 @@ function HeaderRow({ title }) {
   return (
     <div className="mt-6 flex items-center">
       <h2 className="text-lg font-semibold">{title}</h2>
-      <span className="ml-auto text-sm font-medium text-violet-700 opacity-70" />
     </div>
   );
 }
-function UpcomingRow({ item, onOpen }) {
+
+function UpcomingEventRow({ event, onOpen }) {
   return (
     <button
-      onClick={() => onOpen(item)}
+      onClick={() => onOpen(event)}
       className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-card hover:shadow-md active:scale-[0.99]"
     >
+      {/* Date Box */}
       <div className="grid w-14 place-items-center rounded-xl border border-gray-200 bg-white">
         <div className="text-center leading-tight">
-          <div className="text-lg font-bold text-violet-700">{item.day}</div>
-          <div className="text-[11px] text-gray-500">{item.month}</div>
+          <div className="text-lg font-bold text-violet-700">{event.day}</div>
+          <div className="text-[11px] text-gray-500">{event.month}</div>
         </div>
       </div>
+      
       <div className="flex min-w-0 flex-1 items-start gap-3">
+        {/* Thumbnail */}
         <div className="h-16 w-24 overflow-hidden rounded-lg bg-gray-100">
-          {item.img ? (
-            <img src={item.img} alt={item.title} className="h-full w-full object-cover" draggable={false} />
+          {event.img ? (
+            <img 
+              src={event.img} 
+              alt={event.title} 
+              className="h-full w-full object-cover" 
+              draggable={false} 
+            />
           ) : (
-            <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
+            <div className="grid h-full w-full place-items-center text-gray-400">
+              No cover
+            </div>
           )}
         </div>
+        
+        {/* Info */}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{item.title}</div>
+          <div className="truncate text-sm font-semibold">{event.title}</div>
           <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
             <i className="lni lni-map-marker text-violet-600" />
-            {item.place}
+            {event.place}
           </div>
           <div className="mt-1 text-sm font-semibold text-violet-700">
-            ${item.price}
+            ${event.price}
             <span className="text-[11px] text-gray-500">/Person</span>
           </div>
         </div>
@@ -694,6 +917,7 @@ function UpcomingRow({ item, onOpen }) {
     </button>
   );
 }
+
 function EmptyCreate({ onCreate }) {
   return (
     <div className="mt-10 rounded-2xl border border-dashed border-gray-300 p-6 text-center">
@@ -710,13 +934,15 @@ function EmptyCreate({ onCreate }) {
     </div>
   );
 }
-function EmptyState({ msg }) {
+
+function EmptyState({ message }) {
   return (
     <div className="rounded-2xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600">
-      {msg}
+      {message}
     </div>
   );
 }
+
 function LoadingCard() {
   return (
     <div className="grid h-[60vh] place-items-center">
@@ -730,17 +956,26 @@ function LoadingCard() {
     </div>
   );
 }
-function ErrorCard({ err, onRetry, onSignIn }) {
-  const isAuth = /session expired|unauthorized|401/i.test(String(err));
+
+function ErrorCard({ error, onRetry, onSignIn }) {
+  const isAuthError = /session expired|unauthorized|401/i.test(
+    error?.message || error?.error || (typeof error === 'string' ? error : "")
+  );
+  
+  const errorMessage = 
+    error?.message || 
+    error?.error || 
+    (typeof error === 'string' ? error : 'An unexpected error occurred');
+
   return (
     <div className="grid h-[60vh] place-items-center text-center">
       <div>
-        <p className={isAuth ? "text-amber-600 font-medium" : "text-red-600 font-medium"}>
-          {isAuth ? "You need to sign in" : "Failed to load"}
+        <p className={isAuthError ? "text-amber-600 font-medium" : "text-red-600 font-medium"}>
+          {isAuthError ? "You need to sign in" : "Failed to load"}
         </p>
-        <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
+        <p className="mt-1 text-xs text-gray-500">{errorMessage}</p>
         <div className="mt-3 flex items-center justify-center gap-2">
-          {isAuth ? (
+          {isAuthError ? (
             <button className="btn-primary" onClick={onSignIn}>
               <i className="lni lni-unlock mr-1" />
               Sign in
@@ -755,7 +990,8 @@ function ErrorCard({ err, onRetry, onSignIn }) {
     </div>
   );
 }
-function NearMap({ center, events, onOpen }) {
+
+function NearbyEventsMap({ center, events, onOpenEvent }) {
   return (
     <MapContainer
       center={[center.lat, center.lng]}
@@ -765,14 +1001,19 @@ function NearMap({ center, events, onOpen }) {
       zoomControl={false}
     >
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      <Recenter position={[center.lat, center.lng]} />
-      {events.map((e) => (
-        <Marker key={e.id} position={[e.lat, e.lng]} icon={pinIcon} eventHandlers={{ click: () => onOpen(e) }}>
+      <RecenterMap position={[center.lat, center.lng]} />
+      {events.map((event) => (
+        <Marker 
+          key={event.id} 
+          position={[event.lat, event.lng]} 
+          icon={pinIcon} 
+          eventHandlers={{ click: () => onOpenEvent(event) }}
+        >
           <Popup>
             <div className="text-sm">
-              <div className="font-semibold">{e.title}</div>
-              <div className="text-gray-600">{e.place}</div>
-              <div className="mt-1 text-violet-700 font-semibold">${e.price}</div>
+              <div className="font-semibold">{event.title}</div>
+              <div className="text-gray-600">{event.place}</div>
+              <div className="mt-1 text-violet-700 font-semibold">${event.price}</div>
             </div>
           </Popup>
         </Marker>
@@ -780,10 +1021,13 @@ function NearMap({ center, events, onOpen }) {
     </MapContainer>
   );
 }
-function Recenter({ position }) {
+
+function RecenterMap({ position }) {
   const map = useMap();
+  
   useEffect(() => {
     map.setView(position, 12, { animate: true });
   }, [position, map]);
+  
   return null;
 }
