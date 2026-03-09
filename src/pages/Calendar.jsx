@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { eventsService } from "../services/events.service.js";
+import TopBar from "../components/TopBar.jsx";
 
 /* ---------------- date helpers ---------------- */
 const DAY_MS = 24 * 3600 * 1000;
@@ -326,7 +327,9 @@ export default function Calendar() {
   const onOpenDetail = (ev) => nav(`/events/${ev.id}`, { state: { event: ev } });
 
   return (
+
     <div className="min-h-dvh bg-white text-gray-900">
+            <TopBar title="Calendar" backTo="/events" className="bg-white/90 backdrop-blur" />
       {/* Sticky header */}
       <div className="sticky top-0 z-10 border-b border-gray-100 bg-white/90 backdrop-blur">
         <div className="mx-auto max-w-md px-4 pt-3 pb-3">
