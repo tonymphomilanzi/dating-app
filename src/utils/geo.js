@@ -1,14 +1,26 @@
-// Haversine distance in km
-export function kmBetween(aLat, aLng, bLat, bLng) {
-  const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLng = toRad(bLng - aLng);
-  const la1 = toRad(aLat);
-  const la2 = toRad(bLat);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+// src/utils/geo.js
+export function kmBetween(lat1, lng1, lat2, lng2) {
+  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) {
+    return Infinity;
+  }
+  
+  const R = 6371; // Earth radius in km
+  const toRad = (degrees) => (degrees * Math.PI) / 180;
+  
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const radLat1 = toRad(lat1);
+  const radLat2 = toRad(lat2);
+  
+  const a = Math.sin(dLat / 2) ** 2 + 
+            Math.cos(radLat1) * Math.cos(radLat2) * Math.sin(dLng / 2) ** 2;
+  
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+export function formatDistance(km) {
+  if (km == null || !Number.isFinite(km)) return null;
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km)} km`;
 }
