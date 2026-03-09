@@ -1,35 +1,34 @@
 import { supabase } from "./supabase.client.js";
 
-// Base for API (dev: proxied /api; prod: set VITE_API_BASE to your deployed functions URL)
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
-// Build a full URL safely (supports absolute URLs)
 function buildUrl(url, params) {
-  const isAbs = /^https?:\/\//i.test(url);
-  const base = isAbs ? "" : API_BASE;
-  const q = params ? "?" + new URLSearchParams(params).toString() : "";
-  return `${base}${url}${q}`;
+  const isAbsolute = /^https?:\/\//i.test(url);
+  const baseUrl = isAbsolute ? "" : API_BASE;
+  const queryString = params ? "?" + new URLSearchParams(params).toString() : "";
+  return `${baseUrl}${url}${queryString}`;
 }
 
-// Timeout wrapper
-function withTimeout(ms) {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => {
-    // Abort reasons are not always supported across browsers; keep it generic
-    ctrl.abort();
-  }, ms);
-  return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
-}
+async function request(method, url, options = {}) {
+  const { params, data, timeoutMs = 10000, signal: externalSignal } = options;
+  
+  const { data: session } = await supabase.auth.getSession();
+  const token = session?.session?.access_token;
 
-async function request(method, url, { params, data, timeoutMs = 10000 } = {}) {
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess?.session?.access_token;
-
-  const { signal, cancel } = withTimeout(timeoutMs);
   const fetchUrl = buildUrl(url, params);
 
+  // Use external signal if provided, otherwise create timeout controller
+  const timeoutController = new AbortController();
+  let timeoutId;
+  
+  if (!externalSignal) {
+    timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  }
+
+  const signal = externalSignal || timeoutController.signal;
+
   try {
-    const res = await fetch(fetchUrl, {
+    const response = await fetch(fetchUrl, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -40,36 +39,47 @@ async function request(method, url, { params, data, timeoutMs = 10000 } = {}) {
       signal,
     });
 
-    // 204 No Content → return null
-    if (res.status === 204) return null;
+    // Handle No Content response
+    if (response.status === 204) return null;
 
-    const text = await res.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
+    const responseText = await response.text();
+    let responseJson = null;
+    
+    try { 
+      responseJson = responseText ? JSON.parse(responseText) : null; 
+    } catch (parseError) {
+      // Ignore JSON parse errors
+    }
 
-    if (!res.ok) {
-      const err = new Error(json?.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.body = json;
-      throw err;
+    if (!response.ok) {
+      const errorMessage = responseJson?.error || responseJson?.message || `HTTP ${response.status}`;
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.body = responseJson;
+      throw error;
     }
-    return json;
-  } catch (e) {
-    // Normalize AbortError into a clearer timeout error
-    if (e?.name === "AbortError") {
-      const err = new Error(`Request timed out after ${timeoutMs}ms`);
-      err.status = 408;
-      throw err;
+    
+    return responseJson;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const abortError = new Error(
+        externalSignal ? "Request aborted" : `Request timed out after ${timeoutMs}ms`
+      );
+      abortError.name = "AbortError";
+      abortError.status = externalSignal ? 0 : 408;
+      throw abortError;
     }
-    throw e;
+    throw error;
   } finally {
-    cancel();
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
 export const api = {
-  get: (u, o) => request("GET", u, o),
-  post: (u, d, o) => request("POST", u, { ...(o || {}), data: d }),
-  patch: (u, d, o) => request("PATCH", u, { ...(o || {}), data: d }),
-  del: (u, o) => request("DELETE", u, o),
+  get: (url, options) => request("GET", url, options),
+  post: (url, data, options) => request("POST", url, { ...(options || {}), data }),
+  patch: (url, data, options) => request("PATCH", url, { ...(options || {}), data }),
+  del: (url, options) => request("DELETE", url, options),
 };
