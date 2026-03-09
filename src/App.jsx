@@ -35,6 +35,7 @@ import Events from "./pages/Events.jsx";
 import EventDetail from "./pages/EventDetail.jsx";
 
 import CreateEvent from "./pages/CreateEvent.jsx";
+import Calendar from "./pages/Calendar.jsx";
 export default function App() {
   return (
     <Routes>
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/stories/new" element={<StoryComposer />} />
             <Route path="/stories/:userId" element={<StoryPage />} />
             <Route path="/events/new" element={<CreateEvent />} />
+            <Route path="/calendar" element={<Calendar />} />
          
           </Route>
           
