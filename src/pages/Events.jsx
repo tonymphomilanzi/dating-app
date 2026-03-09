@@ -455,7 +455,7 @@ export default function Events() {
       {/* Floating create (mobile-ish pattern) */}
       <Link
         to="/events/new"
-        className="fixed bottom-20 right-5 z-20 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg hover:bg-violet-700"
+        className="fixed bottom-28 right-5 z-20 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg hover:bg-violet-700"
         title="Create"
       >
         <i className="lni lni-plus" />
