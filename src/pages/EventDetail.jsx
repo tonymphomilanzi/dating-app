@@ -1,172 +1,110 @@
 // src/pages/EventDetail.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-
-// Map libs
+import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-
 import { eventsService } from "../services/events.service.js";
 
-/* ---------------- helpers ---------------- */
-function dateLabelFromISO(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString([], { day: "2-digit", month: "short" });
-}
-function dayMonthFromISO(iso) {
-  const d = new Date(iso);
-  return { day: String(d.getDate()).padStart(2, "0"), month: d.toLocaleDateString([], { month: "short" }) };
-}
-function fmtDayTime(iso) {
-  const d = new Date(iso || Date.now());
-  return d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-function googleCalendarUrl({ title, startsAt, durationHours = 3, location = "", details = "" }) {
-  const start = new Date(startsAt || Date.now());
-  const end = new Date(start.getTime() + durationHours * 3600_000);
+/* helpers (same as before, trimmed) */
+const currency = (n) => new Intl.NumberFormat([], { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n ?? 0));
+const fmtDayTime = (iso) => new Date(iso || Date.now()).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const pinIcon = L.divIcon({ className: "", iconSize: [40, 40], iconAnchor: [20, 38], popupAnchor: [0, -34], html: `<div style="width:40px;height:40px;border-radius:9999px;background:linear-gradient(135deg,#f0abfc 0%,#7c3aed 100%);display:flex;align-items:center;justify-content:center;color:#fff;border:2px solid #fff;box-shadow:0 10px 24px rgba(124,58,237,0.35);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 21s-7-4.35-7-10a7 7 0 1114 0c0 5.65-7 10-7 10z" fill="rgba(255,255,255,0.25)"/><circle cx="12" cy="10" r="3" fill="#fff"/></svg></div>` });
+
+function googleCalendarUrl({ title, startsAt, endsAt, location = "", details = "" }) {
   const fmt = (dt) => dt.toISOString().replace(/[-:]|\.\d{3}/g, "");
-  const qs = new URLSearchParams({
-    action: "TEMPLATE",
-    text: title || "Event",
-    dates: `${fmt(start)}/${fmt(end)}`,
-    location,
-    details,
-  });
-  return `https://calendar.google.com/calendar/render?${qs.toString()}`;
+  const s = new Date(startsAt);
+  const e = new Date(endsAt || s.getTime() + 2 * 3600_000);
+  const qs = new URLSearchParams({ action: "TEMPLATE", text: title || "Event", dates: `${fmt(s)}/${fmt(e)}`, location, details }).toString();
+  return `https://calendar.google.com/calendar/render?${qs}`;
+}
+function downloadICS({ title, startsAt, endsAt, location = "", details = "" }) {
+  const fmtICS = (d) => new Date(d).toISOString().replace(/[-:]|\.\d{3}/g, "");
+  const s = fmtICS(startsAt); const e = fmtICS(endsAt || new Date(new Date(startsAt).getTime() + 2 * 3600_000));
+  const body = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//YourApp//Calendar//EN
+CALSCALE:GREGORIAN
+BEGIN:VEVENT
+UID:${Date.now()}-${Math.random().toString(36).slice(2)}@app
+DTSTAMP:${fmtICS(new Date())}
+DTSTART:${s}
+DTEND:${e}
+SUMMARY:${(title || "Event").replace(/\n/g, " ")}
+LOCATION:${(location || "").replace(/\n/g, " ")}
+DESCRIPTION:${(details || "").replace(/\n/g, " ")}
+END:VEVENT
+END:VCALENDAR`.replace(/\n/g, "\r\n");
+  const blob = new Blob([body], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "event.ics"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
-// Pretty gradient pin
-const pinIcon = L.divIcon({
-  className: "",
-  iconSize: [40, 40],
-  iconAnchor: [20, 38],
-  popupAnchor: [0, -34],
-  html: `
-    <div style="
-      width:40px;height:40px;border-radius:9999px;
-      background:linear-gradient(135deg,#f0abfc 0%,#7c3aed 100%);
-      display:flex;align-items:center;justify-content:center;
-      color:#fff;border:2px solid #fff;
-      box-shadow:0 10px 24px rgba(124,58,237,0.35);
-    ">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-        <path d="M12 21s-7-4.35-7-10a7 7 0 1114 0c0 5.65-7 10-7 10z" fill="rgba(255,255,255,0.25)"/>
-        <circle cx="12" cy="10" r="3" fill="#fff"/>
-      </svg>
-    </div>
-  `,
-});
-
-/* ---------------- main ---------------- */
 export default function EventDetail({ fallbackEvent }) {
   const nav = useNavigate();
   const { state } = useLocation();
   const { id } = useParams();
-
-  // Prefer state from navigation; else fallback
   const navEvent = state?.event;
-  const initial = useMemo(() => {
-    return (
-      navEvent ||
-      fallbackEvent || {
-        id,
-        title: "Celebration Concert",
-        category: "Concert",
-        place: "245 Oceanview Blvd, Miami",
-        price: 400,
-        dateISO: "2026-07-31T20:00:00Z",
-        dateLabel: "31 Jul",
-        img: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=1600&auto=format&fit=crop",
-        short: "A night of lights, music, and energy.",
-        attendees: [
-          "https://i.pravatar.cc/80?img=1",
-          "https://i.pravatar.cc/80?img=2",
-          "https://i.pravatar.cc/80?img=3",
-        ],
-        lat: 25.7617,
-        lng: -80.1918,
-      }
-    );
-  }, [navEvent, fallbackEvent, id]);
 
-  const [e, setE] = useState(initial);
-  const [loading, setLoading] = useState(!navEvent && !fallbackEvent); // fetch if navigated directly
+  const [e, setE] = useState(
+    navEvent ||
+      fallbackEvent || {
+        id, title: "Celebration Concert", category: "Concert", city: "Miami, FL",
+        price: 120, starts_at: "2026-07-31T20:00:00Z", cover_url: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=1600&auto=format&fit=crop",
+        description: "A night of lights, music, and energy.", lat: 25.7617, lng: -80.1918, capacity: 500, attendees_count: 312, host: { name: "Wave Productions", avatar: "https://i.pravatar.cc/80?img=8" },
+      }
+  );
+  const [loading, setLoading] = useState(!navEvent && !fallbackEvent);
   const [err, setErr] = useState("");
   const [saved, setSaved] = useState(false);
 
-  // Map server row to UI shape
   const mapRow = useCallback((row) => {
     if (!row) return null;
-    const starts = row.starts_at || row.dateISO;
-    const mapped = {
+    return {
       id: row.id,
       title: row.title,
       category: row.category || "Other",
-      place: row.city || row.place || "Unknown place",
-      price: row.price || 0,
-      dateISO: starts,
-      dateLabel: dateLabelFromISO(starts),
-      ...dayMonthFromISO(starts),
-      img: row.cover_url || row.img || "",
-      about: row.about || row.description || row.short || "",
-      attendees: row.attendees || [],
-      lat: row.lat,
-      lng: row.lng,
+      city: row.city || "Unknown place",
+      price: Number(row.price ?? 0),
+      starts_at: row.starts_at || row.dateISO,
+      ends_at: row.ends_at || null,
+      cover_url: row.cover_url || row.img || "",
+      description: row.about || row.description || row.short || "",
+      lat: typeof row.lat === "number" ? row.lat : Number(row.lat ?? NaN),
+      lng: typeof row.lng === "number" ? row.lng : Number(row.lng ?? NaN),
+      capacity: row.capacity || null,
+      attendees_count: row.attendees_count || row.attendees?.length || null,
+      host: row.host || row.creator || null, // if API returns
     };
-    return mapped;
   }, []);
 
-  // Abortable fetch if user loaded detail directly
   const abortRef = useRef(null);
   useEffect(() => {
-    if (navEvent) return; // we already have data
+    if (navEvent) return;
     let mounted = true;
+    abortRef.current?.abort?.();
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-    async function fetchById() {
-      setLoading(true);
-      setErr("");
-      abortRef.current?.abort?.();
-      const ac = new AbortController();
-      abortRef.current = ac;
-
+    (async () => {
       try {
+        setLoading(true);
         let row;
-
-        // Try service first if present
-        const hasGet = typeof eventsService?.get === "function";
-        if (hasGet) {
-          // Prefer supporting signal if your service accepts it
-          try {
-            const maybeSignalAware = eventsService.get.length >= 2;
-            row = maybeSignalAware ? await eventsService.get(id, { signal: ac.signal }) : await eventsService.get(id);
-          } catch (e) {
-            const status = e?.status || e?.response?.status;
-            if (status === 401) throw Object.assign(new Error("Session expired. Please sign in again."), { status: 401 });
-            throw e;
-          }
+        if (typeof eventsService?.get === "function") {
+          const sigAware = eventsService.get.length >= 2;
+          row = sigAware ? await eventsService.get(id, { signal: ac.signal }) : await eventsService.get(id);
         } else {
-          // Fallback to direct fetch with credentials + optional bearer
           const token = localStorage.getItem("access_token");
           const r = await fetch(`/api/events/${id}`, {
             method: "GET",
             signal: ac.signal,
             credentials: "include",
-            headers: {
-              Accept: "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
+            headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
           });
           if (r.status === 401) throw Object.assign(new Error("Session expired. Please sign in again."), { status: 401 });
-          if (!r.ok) {
-            const t = await r.text().catch(() => "");
-            throw new Error(`HTTP ${r.status}${t ? ` – ${t.slice(0, 120)}` : ""}`);
-          }
-          row = await r.json().catch(() => null);
-          row = row?.item || row; // adjust if your API wraps
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          row = (await r.json())?.item || (await r.json());
         }
-
         if (!mounted) return;
         const mapped = mapRow(row);
         if (mapped) setE(mapped);
@@ -176,177 +114,163 @@ export default function EventDetail({ fallbackEvent }) {
       } finally {
         if (mounted) setLoading(false);
       }
-    }
+    })();
 
-    fetchById();
     return () => {
       mounted = false;
-      abortRef.current?.abort?.();
+      ac.abort();
     };
   }, [id, navEvent, mapRow]);
 
-  const dateTime = fmtDayTime(e?.dateISO);
+  const dt = fmtDayTime(e?.starts_at);
+  const attendFill = useMemo(() => {
+    const cap = e?.capacity || 0;
+    const cnt = e?.attendees_count || 0;
+    const pct = cap > 0 ? Math.min(100, Math.round((cnt / cap) * 100)) : 0;
+    return { cnt, cap, pct };
+  }, [e]);
 
-  const onShare = async () => {
-    try {
-      const url = window.location.href;
-      if (navigator.share) {
-        await navigator.share({ title: e.title, text: e.about || e.short || "", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        alert("Link copied");
-      }
-    } catch {}
+  const onAddToCalendar = () => {
+    const s = new Date(e.starts_at);
+    const url = googleCalendarUrl({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description });
+    if (navigator.share) {
+      navigator.share({ title: e.title, text: e.description || "", url }).catch(() =>
+        downloadICS({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description })
+      );
+    } else {
+      downloadICS({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description });
+    }
   };
-
-  const calUrl = useMemo(
-    () =>
-      googleCalendarUrl({
-        title: e?.title,
-        startsAt: e?.dateISO,
-        location: e?.place,
-        details: e?.about || e?.short || "",
-      }),
-    [e]
-  );
 
   return (
     <div className="min-h-dvh bg-white text-gray-900">
-      {/* Hero */}
-      <div className="relative overflow-hidden">
-        <div className="relative aspect-[16/10] bg-gray-100">
+      {/* HERO */}
+      <div className="relative">
+        <div className="relative aspect-[16/10] overflow-hidden">
           {loading ? (
             <div className="h-full w-full animate-pulse bg-gray-100" />
-          ) : e?.img ? (
-            <img src={e.img} alt={e.title} className="h-full w-full object-cover" draggable={false} />
+          ) : e?.cover_url ? (
+            <img src={e.cover_url} alt={e.title} className="h-full w-full object-cover" />
           ) : (
-            <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
+            <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">No cover</div>
           )}
-
-          {/* top controls (glassy) */}
+          {/* Cinematic gradients */}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
+          {/* Glass controls */}
           <div className="absolute left-3 right-3 top-3 flex items-center justify-between">
-            <button
-              onClick={() => nav(-1)}
-              className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white"
-              aria-label="Back"
-            >
+            <button onClick={() => nav(-1)} className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white">
               <i className="lni lni-chevron-left text-lg" />
             </button>
             <div className="flex items-center gap-2">
-              <button
-                onClick={onShare}
-                className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white"
-                aria-label="Share"
-              >
-                <i className="lni lni-share" />
+              <button onClick={() => setSaved((s) => !s)} className={`grid h-10 w-10 place-items-center rounded-full ${saved ? "bg-violet-600 text-white" : "bg-white/85 text-gray-800"} shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white`}>
+                <i className="lni lni-bookmark" />
               </button>
-              <button
-                onClick={() => setSaved((s) => !s)}
-                className={`grid h-10 w-10 place-items-center rounded-full ${
-                  saved ? "bg-violet-600 text-white" : "bg-white/85 text-gray-800"
-                } shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white`}
-                aria-label="Bookmark"
-              >
-                <i className={saved ? "lni lni-bookmark" : "lni lni-bookmark"} />
+              <button onClick={() => navigator.share?.({ title: e.title, url: window.location.href })} className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white">
+                <i className="lni lni-share" />
               </button>
             </div>
           </div>
 
-          {/* Date pill */}
-          {!loading && e?.dateLabel && (
-            <div className="absolute left-3 bottom-3 rounded-md bg-black/55 px-2 py-1 text-xs text-white ring-1 ring-white/10">
-              {e.dateLabel}
+          {/* Title + meta overlay */}
+          {!loading && (
+            <div className="absolute inset-x-4 bottom-4">
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-2 py-0.5 text-xs text-white ring-1 ring-white/20 backdrop-blur">
+                    <i className="lni lni-calendar" /> {dt}
+                  </div>
+                  <h1 className="mt-1 truncate text-2xl font-semibold text-white drop-shadow">{e?.title}</h1>
+                  <div className="mt-1 text-sm text-white/90">
+                    <i className="lni lni-map-marker text-white/90" /> {e?.city}
+                  </div>
+                </div>
+                <div className="shrink-0 rounded-xl bg-white/90 px-3 py-2 text-right text-sm font-semibold text-violet-700 ring-1 ring-violet-200 backdrop-blur">
+                  {currency(e?.price)} <span className="block text-[11px] font-normal text-gray-500">per person</span>
+                </div>
+              </div>
             </div>
           )}
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
         </div>
       </div>
 
-      {/* Content */}
+      {/* CONTENT */}
       <div className="mx-auto max-w-md px-4 pb-40 pt-4">
         {err ? (
-          <ErrorCard
-            err={err}
-            onBack={() => nav(-1)}
-            onSignIn={() => nav("/login", { state: { from: `/events/${id}` } })}
-          />
+          <div className="text-center">
+            <p className="text-red-600 font-medium">Failed to load</p>
+            <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
+          </div>
         ) : (
           <>
-            <div className="flex items-start gap-3">
-              <div className="flex-1">
-                <h1 className="text-xl font-semibold">{e?.title || "Event"}</h1>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
-                  <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-violet-700">
-                    <i className="lni lni-music text-sm" />
-                    {e?.category || "Other"}
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-gray-600">
-                    <i className="lni lni-calendar" />
-                    {dateTime}
-                  </span>
+            {/* Host + capacity */}
+            <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-3 shadow-card">
+              <div className="flex items-center gap-3">
+                {e?.host?.avatar ? (
+                  <img src={e.host.avatar} alt="" className="h-10 w-10 rounded-full" />
+                ) : (
+                  <div className="grid h-10 w-10 place-items-center rounded-full bg-violet-100 text-violet-600">
+                    <i className="lni lni-user" />
+                  </div>
+                )}
+                <div>
+                  <div className="text-xs text-gray-500">Hosted by</div>
+                  <div className="text-sm font-medium">{e?.host?.name || "Organizer"}</div>
                 </div>
               </div>
-              <div className="shrink-0 rounded-lg bg-violet-50 px-2.5 py-1 text-sm font-semibold text-violet-700 ring-1 ring-violet-200">
-                ${e?.price ?? 0}
-                <span className="text-xs text-gray-500">/Person</span>
-              </div>
-            </div>
-
-            {/* Location */}
-            <div className="mt-3 flex items-center gap-2 text-sm text-gray-600">
-              <i className="lni lni-map-marker text-violet-600" />
-              <span>{e?.place}</span>
-            </div>
-
-            {/* Attendees */}
-            {e?.attendees?.length ? (
-              <div className="mt-4 flex items-center gap-2">
-                <div className="flex -space-x-2">
-                  {e.attendees.slice(0, 5).map((a, i) => (
-                    <img key={a + i} src={a} className="h-8 w-8 rounded-full ring-2 ring-white" alt="" draggable={false} />
-                  ))}
+              {e?.capacity ? (
+                <div className="w-36">
+                  <div className="flex items-center justify-between text-[11px] text-gray-600">
+                    <span>{e?.attendees_count ?? 0}/{e.capacity}</span>
+                    <span>Filled</span>
+                  </div>
+                  <div className="mt-1 h-2 w-full rounded-full bg-gray-200">
+                    <div className="h-2 rounded-full bg-violet-600" style={{ width: `${attendFill.pct}%` }} />
+                  </div>
                 </div>
-                <span className="text-xs text-gray-500">Attending</span>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
 
             {/* About */}
-            {(e?.about || e?.short) && (
-              <div className="mt-6">
+            {e?.description && (
+              <div className="mt-5">
                 <h2 className="text-sm font-semibold">About</h2>
-                <p className="mt-1 text-sm leading-6 text-gray-700 line-clamp-5">
-                  {e.about || e.short}
-                </p>
-                <button className="mt-1 text-sm font-medium text-violet-700" onClick={() => alert("Expand details")}>
-                  Read more
-                </button>
+                <p className="mt-1 text-sm leading-6 text-gray-700">{e.description}</p>
               </div>
             )}
 
-            {/* Quick info cards */}
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <InfoCard icon="lni lni-timer" label="Duration" value="3h approx." />
-              <InfoCard icon="lni lni-ticket" label="Tickets" value="Limited seats" />
-              <InfoCard icon="lni lni-parking" label="Parking" value="On site" />
-              <InfoCard icon="lni lni-shield" label="Policy" value="Refundable" />
-            </div>
-
-            {/* Interactive Map */}
+            {/* Map */}
             <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white">
               <div className="relative">
-                <EventMap lat={e?.lat} lng={e?.lng} title={e?.title} place={e?.place} />
+                {typeof e?.lat === "number" && typeof e?.lng === "number" ? (
+                  <EventMap lat={e.lat} lng={e.lng} title={e.title} place={e.city} />
+                ) : (
+                  <div className="aspect-[16/9] grid place-items-center bg-gray-100 text-sm text-gray-500">Location unavailable</div>
+                )}
                 {typeof e?.lat === "number" && typeof e?.lng === "number" && (
                   <a
                     className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm text-gray-800 ring-1 ring-gray-200 shadow-sm hover:bg-white"
                     href={`https://www.google.com/maps?q=${e.lat},${e.lng}`}
-                    target="_blank"
-                    rel="noreferrer"
+                    target="_blank" rel="noreferrer"
                   >
                     Get directions
                   </a>
                 )}
               </div>
+            </div>
+
+            {/* Quick actions */}
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <Link
+                to={`/calendar?d=${encodeURIComponent(new Date(e.starts_at).toISOString().slice(0,10))}`}
+                className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm hover:bg-gray-50"
+              >
+                <div className="text-sm font-semibold text-gray-900">Open Calendar</div>
+                <div className="text-xs text-gray-500">See your day</div>
+              </Link>
+              <button onClick={onAddToCalendar} className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-center text-violet-700 shadow-sm hover:bg-violet-100">
+                <div className="text-sm font-semibold">Add to Calendar</div>
+                <div className="text-xs opacity-80">Google/ICS</div>
+              </button>
             </div>
           </>
         )}
@@ -356,20 +280,13 @@ export default function EventDetail({ fallbackEvent }) {
       {!err && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-100 bg-white/95 px-4 pb-[env(safe-area-inset-bottom)] pt-3 backdrop-blur">
           <div className="mx-auto flex max-w-md items-center gap-3">
-            <a
-              href={calUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-sm hover:bg-gray-50"
-              title="Add to Calendar"
-            >
-              <div className="text-gray-600">Add to Calendar</div>
-              <div className="font-medium text-gray-900 truncate">{e?.title}</div>
-            </a>
-            <button
-              className="shrink-0 rounded-full bg-violet-600 px-6 py-3 font-semibold text-white shadow-card hover:bg-violet-700 active:scale-[0.99]"
-              onClick={() => alert("Ticket flow")}
-            >
+            <div className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm">
+              <div className="text-gray-600">Price</div>
+              <div className="font-semibold text-violet-700">
+                {currency(e?.price)} <span className="text-xs text-gray-500">/Person</span>
+              </div>
+            </div>
+            <button className="shrink-0 rounded-full bg-violet-600 px-6 py-3 font-semibold text-white shadow-card hover:bg-violet-700 active:scale-[0.99]" onClick={() => alert("Ticket flow")}>
               Get Tickets
             </button>
           </div>
@@ -379,28 +296,12 @@ export default function EventDetail({ fallbackEvent }) {
   );
 }
 
-/* ---------------- small pieces ---------------- */
-function InfoCard({ icon, label, value }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-      <div className="flex items-center gap-2 text-sm text-gray-600">
-        <i className={`${icon} text-violet-600`} />
-        <span className="font-medium">{label}</span>
-      </div>
-      <div className="mt-1 text-sm text-gray-900">{value}</div>
-    </div>
-  );
-}
-
 function EventMap({ lat, lng, title, place }) {
-  if (typeof lat !== "number" || typeof lng !== "number") {
-    return <div className="aspect-[16/9] grid place-items-center bg-gray-100 text-sm text-gray-500">Location unavailable</div>;
-  }
-  const position = [lat, lng];
+  const pos = [lat, lng];
   return (
-    <MapContainer center={position} zoom={14} scrollWheelZoom style={{ height: 260, width: "100%" }} className="touch-pan-y" zoomControl={false}>
+    <MapContainer center={pos} zoom={14} style={{ height: 260, width: "100%" }} className="touch-pan-y" zoomControl={false}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      <Marker position={position} icon={pinIcon}>
+      <Marker position={pos} icon={pinIcon}>
         <Popup>
           <div className="text-sm">
             <div className="font-semibold">{title}</div>
@@ -408,37 +309,12 @@ function EventMap({ lat, lng, title, place }) {
           </div>
         </Popup>
       </Marker>
-      <RecenterDetail position={position} />
+      <Recenter position={pos} />
     </MapContainer>
   );
 }
-function RecenterDetail({ position }) {
+function Recenter({ position }) {
   const map = useMap();
-  useEffect(() => {
-    map.setView(position, 14, { animate: true });
-  }, [position, map]);
+  useEffect(() => { map.setView(position, 14, { animate: true }); }, [position, map]);
   return null;
-}
-
-function ErrorCard({ err, onBack, onSignIn }) {
-  const isAuth = /session expired|unauthorized|401/i.test(String(err));
-  return (
-    <div className="mt-10 text-center">
-      <p className={isAuth ? "text-amber-600 font-medium" : "text-red-600 font-medium"}>
-        {isAuth ? "You need to sign in" : "Failed to load"}
-      </p>
-      <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
-      <div className="mt-3 flex items-center justify-center gap-2">
-        <button className="btn-outline" onClick={onBack}>
-          Go back
-        </button>
-        {isAuth && (
-          <button className="btn-primary" onClick={onSignIn}>
-            <i className="lni lni-unlock mr-1" />
-            Sign in
-          </button>
-        )}
-      </div>
-    </div>
-  );
 }

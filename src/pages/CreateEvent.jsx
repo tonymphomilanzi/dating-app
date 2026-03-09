@@ -110,94 +110,167 @@ export default function CreateEvent() {
     }
   };
 
-  return (
-    <div className="min-h-dvh bg-white">
-      <TopBar title="Create event" />
-      <div className="space-y-5 p-5">
-        {err && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
+ return (
+  <div className="min-h-dvh bg-gradient-to-b from-violet-50 to-white pb-28">
 
-        {/* Cover */}
-        <div className="rounded-2xl border border-gray-200 p-4">
-          <div className="mb-2 text-sm font-semibold">Cover</div>
-          {coverPreview ? (
-            <div className="relative overflow-hidden rounded-xl border border-gray-200">
-              <img src={coverPreview} className="max-h-60 w-full object-cover" />
-            </div>
-          ) : (
-            <div className="grid h-40 place-items-center rounded-xl border border-dashed border-gray-300 text-sm text-gray-500">
-              No cover selected
-            </div>
-          )}
-          <div className="mt-3 flex gap-2">
-            <Button variant="outline" onClick={pickFile}><i className="lni lni-image mr-1" /> Choose cover</Button>
-            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
-          </div>
+    <TopBar title="Create Event" />
+
+    {/* HERO COVER */}
+    <div className="relative h-64 w-full overflow-hidden bg-gray-100">
+
+      {coverPreview ? (
+        <img
+          src={coverPreview}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center text-gray-400">
+          Add event cover
         </div>
+      )}
 
-        {/* Details */}
-        <div className="rounded-2xl border border-gray-200 p-4">
-          <div className="mb-3 text-sm font-semibold">Details</div>
+      <button
+        onClick={pickFile}
+        className="absolute bottom-4 right-4 rounded-full bg-white px-4 py-2 text-sm font-semibold shadow-lg"
+      >
+        <i className="lni lni-image mr-2"></i>
+        Upload
+      </button>
 
-          <label className="mb-3 block">
-            <span className="text-sm text-gray-600">Title</span>
-            <input value={title} onChange={(e)=>setTitle(e.target.value)} placeholder="Event title"
-              className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-          </label>
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-sm text-gray-600">Date</span>
-              <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-            </label>
-            <label className="block">
-              <span className="text-sm text-gray-600">Time</span>
-              <input type="time" value={time} onChange={(e)=>setTime(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-            </label>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <label className="block">
-              <span className="text-sm text-gray-600">Category</span>
-              <select value={category} onChange={(e)=>setCategory(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200">
-                {categories.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm text-gray-600">Price (USD)</span>
-              <input type="number" min={0} value={price} onChange={(e)=>setPrice(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-            </label>
-          </div>
-
-          <label className="mt-3 block">
-            <span className="text-sm text-gray-600">City / Place</span>
-            <input value={city} onChange={(e)=>setCity(e.target.value)} placeholder="City, Place"
-              className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-          </label>
-
-          <div className="mt-3 flex items-center gap-2">
-            <button onClick={useMyLocation} className="rounded-full border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800">
-              <i className="lni lni-map-marker text-violet-600" /> Use my location
-            </button>
-            {(lat != null && lng != null) && (
-              <span className="text-xs text-gray-600">Set: {lat.toFixed(4)}, {lng.toFixed(4)}</span>
-            )}
-          </div>
-
-          <label className="mt-3 block">
-            <span className="text-sm text-gray-600">Description (optional)</span>
-            <textarea rows={4} value={description} onChange={(e)=>setDescription(e.target.value)} placeholder="Describe your event"
-              className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200" />
-          </label>
-        </div>
-
-        <Button className="w-full" onClick={save} disabled={saving}>
-          {saving ? "Creating…" : "Create event"}
-        </Button>
-      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        onChange={onFile}
+        className="hidden"
+      />
     </div>
-  );
+
+
+    {/* FORM CARD */}
+    <div className="mx-4 mt-5 rounded-3xl bg-white p-5 shadow-xl space-y-5">
+
+      {/* TITLE */}
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Event title"
+        className="w-full text-sm font-semibold rounded-xl border p-3 placeholder-gray-600"
+      />
+
+
+      {/* DATE + TIME */}
+      <div className="grid grid-cols-2 gap-3">
+
+        <div className="flex items-center gap-2 rounded-xl border p-3">
+          <i className="lni lni-calendar text-violet-600"></i>
+          <input
+            type="date"
+            value={date}
+            onChange={(e)=>setDate(e.target.value)}
+            className="w-full outline-none"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 rounded-xl border p-3">
+          <i className="lni lni-timer text-violet-600"></i>
+          <input
+            type="time"
+            value={time}
+            onChange={(e)=>setTime(e.target.value)}
+            className="w-full outline-none"
+          />
+        </div>
+
+      </div>
+
+
+      {/* CATEGORY CHIPS */}
+      <div>
+        <p className="mb-2 text-sm font-semibold text-gray-600">
+          Category
+        </p>
+
+        <div className="flex flex-wrap gap-2">
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`rounded-full px-4 py-2 text-sm
+              ${
+                category === c
+                  ? "bg-violet-600 text-white"
+                  : "bg-gray-100 text-gray-700"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+
+      {/* PRICE */}
+      <div className="flex items-center gap-2 rounded-xl border p-3">
+        <i className="lni lni-dollar text-violet-600"></i>
+
+        <input
+          type="number"
+          placeholder="Ticket price"
+          value={price}
+          onChange={(e)=>setPrice(e.target.value)}
+          className="w-full outline-none"
+        />
+      </div>
+
+
+      {/* LOCATION */}
+      <div className="flex items-center gap-2 rounded-xl border p-3">
+        <i className="lni lni-map-marker text-violet-600"></i>
+
+        <input
+          value={city}
+          onChange={(e)=>setCity(e.target.value)}
+          placeholder="City / Location"
+          className="w-full outline-none"
+        />
+      </div>
+
+
+      <button
+        onClick={useMyLocation}
+        className="text-sm text-violet-600 font-medium"
+      >
+        Use my location
+      </button>
+
+
+      {/* DESCRIPTION */}
+      <textarea
+        rows={4}
+        value={description}
+        onChange={(e)=>setDescription(e.target.value)}
+        placeholder="Describe your event..."
+        className="w-full rounded-xl border p-3 outline-none"
+      />
+
+    </div>
+
+
+    {/* STICKY CTA */}
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4">
+
+      <Button
+        className="w-full"
+        onClick={save}
+        disabled={saving}
+      >
+        {saving ? "Creating…" : "Create Event"}
+      </Button>
+
+    </div>
+
+  </div>
+);
+
 }
