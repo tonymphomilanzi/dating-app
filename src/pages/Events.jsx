@@ -181,50 +181,32 @@ export default function Events() {
   }, []);
 
   // Map server response to UI format
-  const mapServerRowsToUIFormat = useCallback((rows) => {
-    // Debug: Log raw data to see what's coming from API
-    console.log("Raw API response:", rows);
-    
-    return rows.map((event) => {
-      // Debug: Log each event's location data
-      console.log(`Event "${event.title}" location:`, {
-        city: event.city,
-        lat: event.lat,
-        lng: event.lng,
-        location: event.location,
-        address: event.address,
-        venue: event.venue,
-      });
-      
-      // Determine the place name with multiple fallbacks
-      const placeName = 
-        event.city || 
-        event.location || 
-        event.address || 
-        event.venue || 
-        "Location TBD";
-      
-      // Parse coordinates safely
-      const latitude = event.lat != null ? Number(event.lat) : null;
-      const longitude = event.lng != null ? Number(event.lng) : null;
-      
-      return {
-        id: event.id,
-        title: event.title || "Untitled Event",
-        description: event.description || "",
-        img: event.cover_url || "",
-        dateISO: event.starts_at,
-        dateLabel: formatDateLabel(event.starts_at),
-        ...extractDayMonth(event.starts_at),
-        category: event.category || "Other",
-        place: placeName,
-        lat: latitude,
-        lng: longitude,
-        price: event.price != null ? Number(event.price) : 0,
-        created_at: event.created_at,
-      };
-    });
-  }, []);
+// In Events.jsx - update the mapServerRowsToUIFormat function
+const mapServerRowsToUIFormat = useCallback((rows) => {
+  return rows.map((event) => {
+    // City should now be populated from reverse geocoding
+    const placeName = event.city || "Location TBD";
+
+    const latitude = event.lat != null ? Number(event.lat) : null;
+    const longitude = event.lng != null ? Number(event.lng) : null;
+
+    return {
+      id: event.id,
+      title: event.title || "Untitled Event",
+      description: event.description || "",
+      img: event.cover_url || "",
+      dateISO: event.starts_at,
+      dateLabel: formatDateLabel(event.starts_at),
+      ...extractDayMonth(event.starts_at),
+      category: event.category || "Other",
+      place: placeName,
+      lat: latitude,
+      lng: longitude,
+      price: event.price != null ? Number(event.price) : 0,
+      created_at: event.created_at,
+    };
+  });
+}, []);
 
   // Fetch events from API
   const fetchEvents = useCallback(async ({ signal } = {}) => {
