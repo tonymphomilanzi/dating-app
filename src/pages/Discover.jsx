@@ -80,25 +80,33 @@ export default function Discover() {
     };
   }, []);
 
-  // Real-time location tracking with auto-save to profile
-  const handleLocationChange = useCallback(async (newLocation) => {
-    const now = Date.now();
-    const timeSinceLastSave = now - lastLocationSaveTimeRef.current;
-    
-    // Only save to profile periodically to avoid excessive writes
-    if (timeSinceLastSave > LOCATION_SAVE_INTERVAL_MS) {
-      try {
-        await updateProfileLocation(newLocation.lat, newLocation.lng);
-        lastLocationSaveTimeRef.current = now;
-        console.log("📍 Location saved to profile:", {
-          lat: newLocation.lat.toFixed(6),
-          lng: newLocation.lng.toFixed(6),
+// In Discover.jsx - update handleLocationChange callback
+
+const handleLocationChange = useCallback(async (newLocation) => {
+  const now = Date.now();
+  const timeSinceLastSave = now - lastLocationSaveTimeRef.current;
+
+  // Only save to profile periodically
+  if (timeSinceLastSave > LOCATION_SAVE_INTERVAL_MS) {
+    try {
+      await updateProfileLocation(newLocation.lat, newLocation.lng);
+      lastLocationSaveTimeRef.current = now;
+      
+      // Only log in development
+      if (process.env.NODE_ENV === "development") {
+        console.log("Location saved:", {
+          lat: newLocation.lat.toFixed(4),
+          lng: newLocation.lng.toFixed(4),
         });
-      } catch (err) {
-        console.warn("Failed to save location to profile:", err.message);
+      }
+    } catch (err) {
+      // Silently ignore - location will still work locally
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Location save skipped:", err.message);
       }
     }
-  }, []);
+  }
+}, []);
 
   const {
     location: currentLocation,

@@ -4,15 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const DEFAULT_OPTIONS = {
   enableHighAccuracy: true,
   timeout: 15000,
-  maximumAge: 30000, // Cache position for 30 seconds
+  maximumAge: 30000,
 };
 
-// Minimum distance (km) before we consider location "changed"
-const SIGNIFICANT_CHANGE_KM = 0.1; // 100 meters
+const SIGNIFICANT_CHANGE_KM = 0.1;
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
+  const toRad = (degrees) => (degrees * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
   const a =
@@ -21,18 +20,23 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export function useGeolocation({ 
-  watch = true, 
+export function useGeolocation({
+  watch = true,
   onLocationChange = null,
-  updateIntervalMs = 30000, // Check every 30 seconds
+  updateIntervalMs = 30000,
 } = {}) {
   const [location, setLocation] = useState(null);
   const [error, setError] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | loading | granted | denied | unsupported
-  
+  const [status, setStatus] = useState("idle");
+
   const lastLocationRef = useRef(null);
   const watchIdRef = useRef(null);
   const intervalIdRef = useRef(null);
+  const onLocationChangeRef = useRef(onLocationChange);
+
+  useEffect(() => {
+    onLocationChangeRef.current = onLocationChange;
+  }, [onLocationChange]);
 
   const handleSuccess = useCallback((position) => {
     const newLocation = {
@@ -42,32 +46,54 @@ export function useGeolocation({
       timestamp: position.timestamp,
     };
 
-    // Check if location changed significantly
-    const lastLoc = lastLocationRef.current;
-    let significantChange = true;
+    const lastLocation = lastLocationRef.current;
+    let isSignificantChange = true;
 
-    if (lastLoc) {
+    if (lastLocation) {
       const distance = haversineDistance(
-        lastLoc.lat, lastLoc.lng,
-        newLocation.lat, newLocation.lng
+        lastLocation.lat,
+        lastLocation.lng,
+        newLocation.lat,
+        newLocation.lng
       );
-      significantChange = distance >= SIGNIFICANT_CHANGE_KM;
+      isSignificantChange = distance >= SIGNIFICANT_CHANGE_KM;
     }
 
     setLocation(newLocation);
     setStatus("granted");
     setError(null);
 
-    // Only trigger callback if location changed significantly
-    if (significantChange) {
+    if (isSignificantChange) {
       lastLocationRef.current = newLocation;
-      onLocationChange?.(newLocation);
+      // Call the callback but don't let it break the hook
+      try {
+        onLocationChangeRef.current?.(newLocation);
+      } catch (err) {
+        console.warn("Location change callback error:", err);
+      }
     }
-  }, [onLocationChange]);
+  }, []);
 
   const handleError = useCallback((err) => {
-    setError(err.message);
-    setStatus(err.code === 1 ? "denied" : "error");
+    let errorMessage;
+    switch (err.code) {
+      case 1: // PERMISSION_DENIED
+        errorMessage = "Location permission denied";
+        setStatus("denied");
+        break;
+      case 2: // POSITION_UNAVAILABLE
+        errorMessage = "Location unavailable";
+        setStatus("error");
+        break;
+      case 3: // TIMEOUT
+        errorMessage = "Location request timed out";
+        setStatus("error");
+        break;
+      default:
+        errorMessage = err.message || "Unknown error";
+        setStatus("error");
+    }
+    setError(errorMessage);
   }, []);
 
   const getCurrentPosition = useCallback(() => {
@@ -88,24 +114,22 @@ export function useGeolocation({
   const startWatching = useCallback(() => {
     if (!("geolocation" in navigator)) {
       setStatus("unsupported");
+      setError("Geolocation not supported");
       return;
     }
 
-    // Get initial position
     getCurrentPosition();
 
-    // Watch for changes
     watchIdRef.current = navigator.geolocation.watchPosition(
       handleSuccess,
       handleError,
       DEFAULT_OPTIONS
     );
 
-    // Also poll periodically (some devices don't fire watchPosition reliably)
     intervalIdRef.current = setInterval(() => {
       navigator.geolocation.getCurrentPosition(
         handleSuccess,
-        () => {}, // Silent fail for interval checks
+        () => {},
         DEFAULT_OPTIONS
       );
     }, updateIntervalMs);
@@ -121,6 +145,10 @@ export function useGeolocation({
       intervalIdRef.current = null;
     }
   }, []);
+
+  const refresh = useCallback(() => {
+    getCurrentPosition();
+  }, [getCurrentPosition]);
 
   useEffect(() => {
     if (watch) {
@@ -138,7 +166,7 @@ export function useGeolocation({
     location,
     error,
     status,
-    refresh: getCurrentPosition,
+    refresh,
     startWatching,
     stopWatching,
   };
