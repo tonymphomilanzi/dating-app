@@ -282,22 +282,26 @@ const handleLocationChange = useCallback(async (newLocation) => {
   const storyPreviews = useMemo(() => profiles.slice(0, 6), [profiles]);
   const showLocationPrompt = activeMode === "nearby" && !hasLocation;
 
-  const locationStatusDisplay = useMemo(() => {
-    if (!hasLocation) return null;
-    
-    if (locationStatus === "loading") {
-      return { text: "Updating...", color: "text-amber-600" };
-    }
-    
-    if (currentLocation?.accuracy) {
-      const accuracyText = currentLocation.accuracy < 100
-        ? `±${Math.round(currentLocation.accuracy)}m`
-        : `±${(currentLocation.accuracy / 1000).toFixed(1)}km`;
-      return { text: accuracyText, color: "text-green-600" };
-    }
-    
-    return { text: "Location active", color: "text-green-600" };
-  }, [hasLocation, locationStatus, currentLocation]);
+// In Discover.jsx - fix the location status display
+
+const locationStatusDisplay = useMemo(() => {
+  if (!hasLocation) return null;
+
+  if (locationStatus === "loading") {
+    return { text: "Updating...", color: "text-amber-600", icon: "animate-pulse" };
+  }
+
+  if (currentLocation?.accuracy) {
+    const accuracy = Math.abs(currentLocation.accuracy);
+    const accuracyText = accuracy < 100
+      ? `±${Math.round(accuracy)}m`
+      : `±${(accuracy / 1000).toFixed(1)}km`;
+    return { text: accuracyText, color: "text-green-600", icon: "" };
+  }
+
+  return { text: "Location active", color: "text-green-600", icon: "" };
+}, [hasLocation, locationStatus, currentLocation]);
+
 
   return (
     <div className="flex min-h-[70vh] flex-col bg-white text-gray-900">
@@ -313,12 +317,13 @@ const handleLocationChange = useCallback(async (newLocation) => {
           
           <div className="text-sm leading-tight">
             <p className="text-gray-500">Discover</p>
-            {locationStatusDisplay && (
-              <p className={`text-xs flex items-center gap-1 ${locationStatusDisplay.color}`}>
-                <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-                {locationStatusDisplay.text}
-              </p>
-            )}
+           // In the JSX, update the location display:
+{locationStatusDisplay && (
+  <p className={`text-xs flex items-center gap-1 ${locationStatusDisplay.color}`}>
+    <span className={`h-1.5 w-1.5 rounded-full bg-current ${locationStatusDisplay.icon}`} />
+    {locationStatusDisplay.text}
+  </p>
+)}
           </div>
 
           {/* Location refresh button */}

@@ -27,7 +27,7 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   const [people, setPeople] = useState(initialItems);
   const [matchedPerson, setMatchedPerson] = useState(null);
   const [showMatchModal, setShowMatchModal] = useState(false);
-  const [lastAction, setLastAction] = useState(null); // For undo feature
+  const [lastAction, setLastAction] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Sync with initial items
@@ -44,6 +44,7 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
       const { lat, lng } = normalizeCoords(person);
       let distanceKm = person.distance_km;
 
+      // Calculate distance if not provided or invalid
       if (
         (distanceKm == null || Number.isNaN(Number(distanceKm))) &&
         myLat != null &&
@@ -52,14 +53,20 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
         lng != null
       ) {
         const distance = kmBetween(myLat, myLng, lat, lng);
-        distanceKm = Math.round(distance * 10) / 10;
+        // Ensure positive value and round to 1 decimal
+        distanceKm = Math.abs(Math.round(distance * 10) / 10);
+      }
+
+      // Ensure distance is always positive
+      if (distanceKm != null) {
+        distanceKm = Math.abs(distanceKm);
       }
 
       return { ...person, lat, lng, distance_km: distanceKm };
     });
   }, [people, myLoc?.lat, myLoc?.lng]);
 
-  // Open profile detail
+  // Open profile
   const handleOpenProfile = useCallback(
     (person) => {
       navigate(`/profile/${person.id}`, { state: { person } });
@@ -67,61 +74,63 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
     [navigate]
   );
 
-  // Handle swipe action
-  const handleSwipe = useCallback(
-    async (direction, person) => {
-      if (isProcessing) return;
-      setIsProcessing(true);
+  // Handle swipe
+// In SwipeDeck.jsx - update the handleSwipe function
 
-      // Optimistically remove card
-      setPeople((prev) => prev.filter((p) => p.id !== person.id));
-      setLastAction({ person, direction });
+const handleSwipe = useCallback(
+  async (direction, person) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
 
-      try {
-        const result = await swipesService.swipe({
-          targetUserId: person.id,
-          dir: direction,
+    // Optimistically remove card
+    setPeople((prev) => prev.filter((p) => p.id !== person.id));
+    setLastAction({ person, direction });
+
+    try {
+      const result = await swipesService.swipe({
+        targetUserId: person.id,
+        dir: direction,
+      });
+
+      // Check for match (only show modal for new matches)
+      if (result?.matched && result?.isNew) {
+        setMatchedPerson({
+          ...person,
+          matchId: result.match?.id,
+          conversationId: result.match?.conversationId,
         });
-
-        // Check for match
-        if (result?.matched) {
-          setMatchedPerson(person);
-          setTimeout(() => setShowMatchModal(true), 400);
-        }
-      } catch (error) {
-        console.error("[SwipeDeck] swipe error:", error);
-
-        // Restore card on error
-        setPeople((prev) => [person, ...prev]);
-        setLastAction(null);
-
-        if (error.status === 402) {
-          alert(error.message || "Premium required for this action.");
-        } else {
-          alert("Action failed. Please try again.");
-        }
-      } finally {
-        setIsProcessing(false);
+        setTimeout(() => setShowMatchModal(true), 400);
       }
-    },
-    [isProcessing]
-  );
+    } catch (error) {
+      console.error("[SwipeDeck] swipe error:", error);
 
-  // Undo last action
+      // Restore card
+      setPeople((prev) => [person, ...prev]);
+      setLastAction(null);
+
+      if (error.status === 402) {
+        alert(error.message || "Premium required for this action.");
+      } else {
+        alert("Action failed. Please try again.");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  },
+  [isProcessing]
+);
+
+  // Undo
   const handleUndo = useCallback(async () => {
     if (!lastAction || isProcessing) return;
 
     setIsProcessing(true);
     try {
-      // Add card back
       setPeople((prev) => [lastAction.person, ...prev]);
-
-      // Remove swipe from backend
       await swipesService.undo(lastAction.person.id);
       setLastAction(null);
     } catch (error) {
       console.error("[SwipeDeck] undo error:", error);
-      // Remove card again if undo failed
       setPeople((prev) => prev.filter((p) => p.id !== lastAction.person.id));
     } finally {
       setIsProcessing(false);
@@ -138,21 +147,14 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   if (!displayPeople.length) {
     return (
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="grid h-[70vh] place-items-center rounded-3xl bg-gradient-to-br from-violet-50 to-pink-50 text-center shadow-card border border-gray-100"
+        className="grid h-[70vh] place-items-center rounded-3xl bg-gradient-to-br from-violet-50 to-pink-50 text-center shadow-lg border border-gray-100"
       >
         <div className="px-6">
           <motion.div
-            animate={{
-              scale: [1, 1.1, 1],
-              rotate: [0, 5, -5, 0],
-            }}
-            transition={{
-              duration: 2,
-              repeat: Infinity,
-              repeatType: "reverse",
-            }}
+            animate={{ scale: [1, 1.1, 1] }}
+            transition={{ duration: 2, repeat: Infinity }}
             className="mx-auto mb-4 text-6xl"
           >
             🎉
@@ -169,9 +171,11 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               onClick={handleUndo}
-              className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-100 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-200 transition-colors"
+              className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-100 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-200"
             >
-              <i className="lni lni-reload" />
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              </svg>
               Undo last swipe
             </motion.button>
           )}
@@ -183,26 +187,17 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   return (
     <>
       <div className="relative h-[70vh]">
-        {/* Decorative stacked cards */}
+        {/* Background cards */}
         <div className="pointer-events-none absolute inset-x-3 top-6 -z-10">
           {displayPeople.length > 2 && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="mx-auto h-[60vh] max-w-md rotate-[8deg] rounded-3xl bg-gradient-to-br from-violet-100 to-violet-50 shadow-sm"
-            />
+            <div className="mx-auto h-[60vh] max-w-md rotate-[6deg] rounded-3xl bg-gradient-to-br from-violet-100 to-violet-50 shadow-sm" />
           )}
           {displayPeople.length > 1 && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.05 }}
-              className="mx-auto -mt-[58vh] h-[60vh] max-w-md -rotate-[4deg] rounded-3xl bg-gradient-to-br from-pink-100 to-pink-50 shadow-sm"
-            />
+            <div className="mx-auto -mt-[58vh] h-[60vh] max-w-md -rotate-[3deg] rounded-3xl bg-gradient-to-br from-pink-100 to-pink-50 shadow-sm" />
           )}
         </div>
 
-        {/* Cards stack */}
+        {/* Cards */}
         <AnimatePresence mode="popLayout">
           {displayPeople
             .slice(0, 3)
@@ -220,16 +215,8 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
                     y: stackIndex * 8,
                     opacity: 1,
                   }}
-                  exit={{
-                    opacity: 0,
-                    scale: 0.8,
-                    transition: { duration: 0.2 },
-                  }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 25,
-                  }}
+                  exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
                   className="absolute inset-0 p-2"
                   style={{ zIndex: 10 - stackIndex }}
                 >
@@ -238,25 +225,25 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
                     isActive={isTop}
                     onSwipe={(dir) => handleSwipe(dir, person)}
                     onOpen={handleOpenProfile}
-                    canUndo={!!lastAction}
-                    onUndo={handleUndo}
                   />
                 </motion.div>
               );
             })}
         </AnimatePresence>
 
-        {/* Undo button (floating) */}
+        {/* Undo button */}
         <AnimatePresence>
           {lastAction && (
             <motion.button
-              initial={{ opacity: 0, scale: 0.8, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.8, y: 20 }}
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
               onClick={handleUndo}
-              className="absolute -top-2 left-4 z-50 flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg border border-gray-100 hover:bg-gray-50"
+              className="absolute -top-2 left-4 z-50 flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg"
             >
-              <i className="lni lni-reload text-violet-600" />
+              <svg className="h-3.5 w-3.5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              </svg>
               Undo
             </motion.button>
           )}
