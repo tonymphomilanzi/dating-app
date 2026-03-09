@@ -456,32 +456,8 @@ function ExploreSection({ categories, cat, setCat, popular, upcoming, openDetail
 
   return (
     <>
-      <HeaderRow title="Popular Events" />
-      <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
-        {categories.map((c) => (
-          <button
-            key={c}
-            onClick={() => setCat(c)}
-            className={[
-              "shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm transition-colors border",
-              cat === c ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
-            ].join(" ")}
-          >
-            <span>{c}</span>
-            <span
-              className={[
-                "rounded-full px-1.5 text-[11px]",
-                cat === c ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600",
-              ].join(" ")}
-            >
-              {countsByCat[c] ?? 0}
-            </span>
-          </button>
-        ))}
-      </div>
 
-      <div className="no-scrollbar mt-4 flex gap-4 overflow-x-auto pb-1">
-        {popular[0] && (
+         {popular[0] && (
   <div className="mt-4">
     <div className="relative overflow-hidden rounded-3xl shadow-lg">
       <img
@@ -507,6 +483,32 @@ function ExploreSection({ categories, cat, setCat, popular, upcoming, openDetail
     </div>
   </div>
 )}
+      <HeaderRow title="Popular Events" />
+      <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
+        {categories.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCat(c)}
+            className={[
+              "shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm transition-colors border",
+              cat === c ? "bg-violet-600 text-white border-violet-600 shadow" : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
+            ].join(" ")}
+          >
+            <span>{c}</span>
+            <span
+              className={[
+                "rounded-full px-1.5 text-[11px]",
+                cat === c ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600",
+              ].join(" ")}
+            >
+              {countsByCat[c] ?? 0}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="no-scrollbar mt-4 flex gap-4 overflow-x-auto pb-1">
+   
         {popular.length === 0 && <div className="w-full text-sm text-gray-500">No events found.</div>}
         {popular
           .filter((e) => cat === "All" || e.category === cat)
