@@ -3,10 +3,6 @@ export default {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
-      fontFamily: {
-sans: ['Inter', ...defaultTheme.fontFamily.sans],
-display: ['Manrope', 'Inter', ...defaultTheme.fontFamily.sans],
-},
       colors: {
         brand: {
           50:"#f8f5ff",100:"#f3eaff",200:"#e6d6ff",300:"#d2b5ff",
