@@ -1,14 +1,8 @@
 // src/services/swipes.service.js
 import { api } from "../lib/api";
+import { supabase } from "../lib/supabase.client.js";
 
 export const swipesService = {
-  /**
-   * Record a swipe action and check for match
-   * @param {object} params
-   * @param {string} params.targetUserId - Target user ID
-   * @param {string} params.dir - Direction: "left" | "right" | "super"
-   * @returns {Promise<{ok: boolean, matched: boolean, isNew?: boolean, match?: object}>}
-   */
   swipe: async ({ targetUserId, dir }) => {
     const response = await api.post("/swipes", { targetUserId, dir });
     return {
@@ -25,15 +19,32 @@ export const swipesService = {
 
   /**
    * Undo last swipe
+   * Option 1: Via API (if using DELETE method)
+   * Option 2: Direct Supabase (if RLS policy is set)
    */
   undo: async (targetUserId) => {
-    const response = await api.post("/swipes/undo", { targetUserId });
-    return response?.ok ?? true;
+    // Option 1: Use existing API with action field
+    try {
+      const response = await api.post("/swipes", { targetUserId, action: "undo" });
+      return response?.ok ?? true;
+    } catch (apiError) {
+      // Option 2: Fallback to direct Supabase call
+      console.warn("API undo failed, trying direct:", apiError.message);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { error } = await supabase
+        .from("swipes")
+        .delete()
+        .eq("swiper_id", user.id)
+        .eq("swipee_id", targetUserId);
+
+      if (error) throw error;
+      return true;
+    }
   },
 
-  /**
-   * Get user's matches
-   */
   getMatches: async (limit = 50) => {
     const response = await api.get("/matches", { params: { limit } });
     return {
