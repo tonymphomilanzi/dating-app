@@ -184,11 +184,10 @@ const refresh = useCallback(
   async ({ foreground = false } = {}) => {
     const now = Date.now();
     if (inflightRef.current) return inflightRef.current;
-    if (now - lastFetchRef.current < 400) return; // throttle bursts
+    if (now - lastFetchRef.current < 400) return;
 
     if (foreground && events.length === 0) setLoading(true);
 
-    // Abort any previous request and create a new controller
     abortRef.current?.abort?.();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -202,12 +201,22 @@ const refresh = useCallback(
       } catch (e) {
         if (!mountedRef.current) return;
         if (e?.name === "AbortError") return;
+        
         const status = e?.status || e?.response?.status;
         if (status === 401 || /session expired/i.test(e?.message || "")) {
           setErr("Session expired. Please sign in again.");
           return;
         }
-        setErr(e.message || "Failed to load events");
+        
+        // Better error message extraction
+        const errorMessage = 
+          e?.message || 
+          e?.error || 
+          e?.response?.data?.message || 
+          e?.response?.data?.error ||
+          "Failed to load events";
+        
+        setErr(errorMessage);
       } finally {
         if (foreground && mountedRef.current) setLoading(false);
         lastFetchRef.current = Date.now();
