@@ -1,5 +1,5 @@
 // api/events/index.js
-import { requireUser, getPremiumFlag } from "../_supabase.js";
+import { requireUser, getPremiumFlag } from "../lib/_supabase.js";
 
 export default async function handler(req, res) {
   const ctx = await requireUser(req, res); if (!ctx) return;
