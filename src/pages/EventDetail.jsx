@@ -1,12 +1,17 @@
 import React from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+// Map libs
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
 export default function EventDetail({ fallbackEvent }) {
   const nav = useNavigate();
   const { state } = useLocation();
   const { id } = useParams();
 
-  // Prefer event passed via navigation state; else use fallback
+  // Prefer state from navigation; else fallback
   const e =
     state?.event ||
     fallbackEvent || {
@@ -24,8 +29,9 @@ export default function EventDetail({ fallbackEvent }) {
         "https://i.pravatar.cc/80?img=2",
         "https://i.pravatar.cc/80?img=3",
       ],
-      about:
-        "Join us for an unforgettable night of sound and color. Doors open at 7PM. All ages welcome. Food trucks and merch available.",
+      // Add coordinates for the interactive map (Miami)
+      lat: 25.7617,
+      lng: -80.1918,
     };
 
   const dayTime = new Date(e.dateISO || Date.now()).toLocaleString([], {
@@ -139,18 +145,25 @@ export default function EventDetail({ fallbackEvent }) {
           <InfoCard icon="lni lni-shield" label="Policy" value="Refundable" />
         </div>
 
-        {/* Map placeholder or image */}
-        <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-gray-100">
-          <div className="aspect-[16/9] relative">
-            <img
-              src="https://images.unsplash.com/photo-1502920917128-1aa500764cbd?q=80&w=1200&auto=format&fit=crop"
-              alt="Map"
-              className="absolute inset-0 h-full w-full object-cover"
-              draggable={false}
+        {/* Interactive Map */}
+        <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white">
+          <div className="relative">
+            <EventMap
+              lat={e.lat}
+              lng={e.lng}
+              title={e.title}
+              place={e.place}
             />
-            <div className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm text-gray-800 ring-1 ring-gray-200">
-              Venue map
-            </div>
+            {/* Directions pill */}
+            {e.lat && e.lng && (
+              <a
+                className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm text-gray-800 ring-1 ring-gray-200 shadow-sm hover:bg-white"
+                href={`https://www.google.com/maps?q=${e.lat},${e.lng}`}
+                target="_blank" rel="noreferrer"
+              >
+                Get directions
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -186,4 +199,78 @@ function InfoCard({ icon, label, value }) {
       <div className="mt-1 text-sm text-gray-900">{value}</div>
     </div>
   );
+}
+
+/* ---------------- Map sub-component ---------------- */
+
+function EventMap({ lat, lng, title, place }) {
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    return (
+      <div className="aspect-[16/9] grid place-items-center bg-gray-100 text-sm text-gray-500">
+        Location unavailable
+      </div>
+    );
+  }
+
+  const position = [lat, lng];
+
+  // Pretty gradient pin (DivIcon) in your palette
+  const pinIcon = React.useMemo(
+    () =>
+      L.divIcon({
+        className: "",
+        iconSize: [40, 40],
+        iconAnchor: [20, 38],
+        popupAnchor: [0, -34],
+        html: `
+          <div style="
+            width:40px;height:40px;border-radius:9999px;
+            background:linear-gradient(135deg,#f0abfc 0%,#7c3aed 100%);
+            display:flex;align-items:center;justify-content:center;
+            color:#fff;border:2px solid #fff;
+            box-shadow:0 10px 24px rgba(124,58,237,0.35);
+          ">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M12 21s-7-4.35-7-10a7 7 0 1114 0c0 5.65-7 10-7 10z" fill="rgba(255,255,255,0.25)"/>
+              <path d="M12 13a3 3 0 100-6 3 3 0 000 6z" fill="#fff"/>
+            </svg>
+          </div>
+        `,
+      }),
+    []
+  );
+
+  return (
+    <MapContainer
+      center={position}
+      zoom={14}
+      scrollWheelZoom
+      style={{ height: 260, width: "100%" }}
+      className="touch-pan-y"
+      zoomControl={false}
+    >
+      <TileLayer
+        // Free OSM tiles
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      />
+      <Marker position={position} icon={pinIcon}>
+        <Popup>
+          <div className="text-sm">
+            <div className="font-semibold">{title}</div>
+            <div className="text-gray-600">{place}</div>
+          </div>
+        </Popup>
+      </Marker>
+      <Recenter position={position} />
+    </MapContainer>
+  );
+}
+
+function Recenter({ position }) {
+  const map = useMap();
+  React.useEffect(() => {
+    map.setView(position, 14, { animate: true });
+  }, [position, map]);
+  return null;
 }

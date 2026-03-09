@@ -34,6 +34,7 @@ import StoryPage from "./pages/StoryPage.jsx";
 import Events from "./pages/Events.jsx";
 import EventDetail from "./pages/EventDetail.jsx";
 
+import CreateEvent from "./pages/CreateEvent.jsx";
 export default function App() {
   return (
     <Routes>
@@ -68,7 +69,7 @@ export default function App() {
               <Route path="/events" element={<Events />} />
          
             </Route>
-
+            <Route path="/events/:id" element={<EventDetail />} />
             <Route path="/profile" element={<ProfileYou />} />
             <Route path="/filters" element={<Filters />} />
             <Route path="/chat/:id" element={<Chat />} />
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="/match" element={<MatchSuccess />} />
             <Route path="/stories/new" element={<StoryComposer />} />
             <Route path="/stories/:userId" element={<StoryPage />} />
+            <Route path="/events/new" element={<CreateEvent />} />
          
           </Route>
           

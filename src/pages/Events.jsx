@@ -1,9 +1,30 @@
 import { useEffect, useState } from "react";
+import { useNavigate,useLocation  } from "react-router-dom";
+import { eventsService } from "../services/events.service.js";
+import { supabase } from "../lib/supabase.client.js";
+
 
 export default function Events() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [err, setErr] = useState("");
+    const nav = useNavigate();
+  const locState = useLocation();
+  const [mode, setMode] = useState("explore");
+  const [cat, setCat] = useState("All");
+  
+  // Track user-created events separately; merge into views
+  const [mine, setMine] = useState([]);
+
+  useEffect(() => {
+    const created = locState.state?.created;
+    if (created) {
+      setMine((prev) => [created, ...prev]);
+      // clear state so it doesn't re-add on back/forward
+      nav("/events", { replace: true, state: null });
+    }
+  }, [locState.state, nav]);
+
 
   useEffect(() => {
     // Wire real fetch here later (eventsService.list)
@@ -53,12 +74,12 @@ export default function Events() {
             <div className="mt-3 text-sm text-gray-700">No events yet</div>
             <p className="mt-1 text-xs text-gray-500">Create or discover events near you.</p>
             <div className="mt-4 flex justify-center">
-              <button
-                className="btn-primary"
-                // onClick={() => navigate('/events/new')}
-              >
-                <i className="lni lni-plus mr-1" /> Create event
-              </button>
+          <button
+  className="btn-primary"
+  onClick={() => nav("/events/new")}
+>
+  <i className="lni lni-plus mr-1" /> Create event
+</button>
             </div>
           </div>
         ) : (
