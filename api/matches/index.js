@@ -11,12 +11,31 @@ export default async function handler(req, res) {
   if (!ctx) return;
   const { supabase, user } = ctx;
 
-  const mode = req.query.mode || "matches";
-  const countOnly = req.query.count_only === "true";
+  const mode = String(req.query.mode || "matches");
+  const countOnly = String(req.query.count_only || "false") === "true";
+  const limit = Math.min(parseInt(req.query.limit || "50", 10), 100);
+  const offset = Math.max(parseInt(req.query.offset || "0", 10), 0);
+
   const isPremium = await getPremiumFlag(supabase, user.id);
 
+  // Helper: get all userIds that are blocked with me (either direction)
+  async function getBlockedUserIds() {
+    const { data: blk, error: blkErr } = await supabase
+      .from("blocks")
+      .select("blocker_id,blocked_id")
+      .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+
+    if (blkErr) return new Set();
+    const set = new Set();
+    for (const b of blk || []) {
+      if (b.blocker_id === user.id) set.add(b.blocked_id);
+      if (b.blocked_id === user.id) set.add(b.blocker_id);
+    }
+    return set;
+  }
+
   if (mode === "likes") {
-    // Get people who liked me but I haven't liked back
+    // People who liked me but I haven't swiped back on yet
     const { data: likedMe, error: likesError } = await supabase
       .from("swipes")
       .select(`
@@ -36,17 +55,24 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: likesError.message });
     }
 
-    // Get my swipes to filter out people I already liked back
-    const { data: mySwipes } = await supabase
+    // My swipes (to filter those I already responded to)
+    const { data: mySwipes, error: myErr } = await supabase
       .from("swipes")
       .select("swipee_id, dir")
       .eq("swiper_id", user.id);
 
-    const mySwipesMap = new Map((mySwipes || []).map((s) => [s.swipee_id, s.dir]));
+    if (myErr) {
+      return res.status(500).json({ error: myErr.message });
+    }
 
-    // Filter: only show people I haven't swiped on yet
+    const mySwipesMap = new Map((mySwipes || []).map((s) => [s.swipee_id, s.dir]));
+    const blockedIds = await getBlockedUserIds();
+
+    // Filter and map payload
     let items = (likedMe || [])
-      .filter((like) => !mySwipesMap.has(like.swiper_id))
+      .filter((like) => !!like.swiper?.id)
+      .filter((like) => !mySwipesMap.has(like.swiper_id))  // not responded yet
+      .filter((like) => !blockedIds.has(like.swiper_id))   // not blocked either way
       .map((like) => {
         const profile = like.swiper;
         let age = null;
@@ -54,7 +80,6 @@ export default async function handler(req, res) {
           const birthDate = new Date(profile.dob);
           age = Math.floor((Date.now() - birthDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
         }
-
         return {
           id: like.id,
           liked_at: like.created_at,
@@ -69,17 +94,18 @@ export default async function handler(req, res) {
         };
       });
 
+    const total = items.length;
     if (countOnly) {
-      return res.json({ count: items.length });
+      return res.json({ count: total });
     }
 
-    const total = items.length;
-    if (!isPremium) {
-      items = items.slice(0, 5);
-    }
+    // Premium gating
+    const visible = isPremium ? items : items.slice(0, 5);
+    // Optional pagination after gating
+    const paged = visible.slice(offset, offset + limit);
 
     return res.json({
-      items,
+      items: paged,
       total,
       limited: !isPremium && total > 5,
     });
@@ -96,7 +122,7 @@ export default async function handler(req, res) {
       user_b_id,
       a:profiles!matches_user_a_id_fkey(id, display_name, avatar_url, city, dob),
       b:profiles!matches_user_b_id_fkey(id, display_name, avatar_url, city, dob),
-      conversations(id)
+      conversations:conversations!conversations_match_id_fkey(id)
     `)
     .or(`user_a_id.eq.${user.id},user_b_id.eq.${user.id}`)
     .order("last_message_at", { ascending: false, nullsFirst: false })
@@ -116,9 +142,12 @@ export default async function handler(req, res) {
       age = Math.floor((Date.now() - birthDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
     }
 
+    // conversations is either an array (embed) or object—normalize to first id
+    const conv = Array.isArray(match.conversations) ? match.conversations[0] : match.conversations;
+
     return {
       id: match.id,
-      conversationId: match.conversations?.[0]?.id || match.conversations?.id || null,
+      conversationId: conv?.id || null,
       created_at: match.created_at,
       last_message_at: match.last_message_at,
       other: {
@@ -131,17 +160,16 @@ export default async function handler(req, res) {
     };
   });
 
+  const total = items.length;
   if (countOnly) {
-    return res.json({ count: items.length });
+    return res.json({ count: total });
   }
 
-  const total = items.length;
-  if (!isPremium) {
-    items = items.slice(0, 5);
-  }
+  const visible = isPremium ? items : items.slice(0, 5);
+  const paged = visible.slice(offset, offset + limit);
 
   return res.json({
-    items,
+    items: paged,
     total,
     limited: !isPremium && total > 5,
   });

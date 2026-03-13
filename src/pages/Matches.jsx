@@ -1,5 +1,5 @@
 // src/pages/Matches.jsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { matchesService } from "../services/matches.service.js";
@@ -31,9 +31,7 @@ function groupByDay(items) {
 
   for (const item of items) {
     const label = getLabelForTimestamp(getTimestamp(item));
-    if (!groups.has(label)) {
-      groups.set(label, []);
-    }
+    if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(item);
   }
 
@@ -46,7 +44,8 @@ function groupByDay(items) {
 /* ---------------- Main Component ---------------- */
 export default function Matches() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState("likes");
+
+  const [mode, setMode] = useState("likes"); // "likes" | "matches"
   const [items, setItems] = useState([]);
   const [limited, setLimited] = useState(false);
   const [total, setTotal] = useState(0);
@@ -54,52 +53,64 @@ export default function Matches() {
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(null);
 
-  // Load data
+  // For race control
+  const requestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+
   useEffect(() => {
-    let cancelled = false;
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
-    const loadData = async () => {
-      setLoading(true);
-      setError("");
+  const fetchItems = useCallback(async (nextMode = mode) => {
+    const rid = ++requestIdRef.current;
+    setLoading(true);
+    setError("");
 
-      try {
-        const response = await matchesService.list(mode);
-        if (cancelled) return;
+    try {
+      const response = await matchesService.list(nextMode); // expects { items, total, limited }
+      if (!isMountedRef.current || requestIdRef.current !== rid) return;
 
-        setItems(response.items || []);
-        setLimited(response.limited || false);
-        setTotal(response.total || 0);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err?.message || "Failed to load");
-      } finally {
-        if (!cancelled) setLoading(false);
+      setItems(response.items || []);
+      setLimited(Boolean(response.limited));
+      setTotal(Number(response.total || 0));
+    } catch (err) {
+      if (!isMountedRef.current || requestIdRef.current !== rid) return;
+      setError(err?.message || "Failed to load");
+    } finally {
+      if (isMountedRef.current && requestIdRef.current === rid) {
+        setLoading(false);
       }
-    };
-
-    loadData();
-
-    return () => {
-      cancelled = true;
-    };
+    }
   }, [mode]);
+
+  // Load data on mode change
+  useEffect(() => {
+    fetchItems(mode);
+  }, [mode, fetchItems]);
+
+  // Retry really refetches now
+  const handleRetry = useCallback(() => {
+    fetchItems(mode);
+  }, [fetchItems, mode]);
 
   // Handle like back
   const handleLikeBack = useCallback(
     async (item) => {
       const targetId = item.other?.id || item.id;
-      setActionLoading(targetId);
+      if (!targetId) return;
 
+      setActionLoading(targetId);
       try {
         const result = await matchesService.likeBack(targetId);
-
-        // Remove from list
+        // Remove from UI list
         setItems((prev) => prev.filter((i) => (i.other?.id || i.id) !== targetId));
+        // Keep total accurate locally
+        setTotal((t) => Math.max(0, t - 1));
 
-        // Show match notification if matched
         if (result?.matched) {
-          // You could show a toast or modal here
-          console.log("It's a match!");
+          // Optionally toast/modal
+          console.log("🎉 It's a match!");
         }
       } catch (err) {
         console.error("Like back failed:", err);
@@ -115,13 +126,15 @@ export default function Matches() {
   const handlePass = useCallback(
     async (item) => {
       const targetId = item.other?.id || item.id;
-      setActionLoading(targetId);
+      if (!targetId) return;
 
+      setActionLoading(targetId);
       try {
         await matchesService.pass(targetId);
-
-        // Remove from list
+        // Remove from UI list
         setItems((prev) => prev.filter((i) => (i.other?.id || i.id) !== targetId));
+        // Keep total accurate locally
+        setTotal((t) => Math.max(0, t - 1));
       } catch (err) {
         console.error("Pass failed:", err);
         alert(err?.message || "Failed to pass");
@@ -137,7 +150,8 @@ export default function Matches() {
     (item) => {
       const targetId = item.other?.id;
       const conversationId = item.conversationId;
-      
+
+      // If we already have a conversation id, use it. Otherwise, go by user id.
       if (conversationId) {
         navigate(`/chat/${conversationId}`);
       } else if (targetId) {
@@ -196,7 +210,7 @@ export default function Matches() {
         {loading ? (
           <SkeletonGrid />
         ) : error ? (
-          <ErrorState error={error} onRetry={() => setMode(mode)} />
+          <ErrorState error={error} onRetry={handleRetry} />
         ) : items.length === 0 ? (
           <EmptyState mode={mode} />
         ) : (
@@ -241,11 +255,12 @@ export default function Matches() {
                     <AnimatePresence mode="popLayout">
                       {group.items.map((item) => {
                         const other = item.other || item;
-                        const isLoading = actionLoading === (other.id || item.id);
+                        const otherId = other.id || item.id;
+                        const isLoading = actionLoading === otherId;
 
                         return (
                           <motion.div
-                            key={item.id || other.id}
+                            key={item.id || otherId}
                             layout
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
@@ -258,7 +273,7 @@ export default function Matches() {
                               city={other.city}
                               img={other.avatar_url || other.photo}
                               isSuper={item.is_super}
-                              to={`/profile/${other.id || item.id}`}
+                              to={`/profile/${otherId}`}
                               mode={mode}
                               isLoading={isLoading}
                               onPass={() => handlePass(item)}
@@ -294,7 +309,7 @@ function MatchCard({
   onLike,
   onMessage,
 }) {
-  const imgSrc = img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`;
+  const imgSrc = img || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
@@ -323,8 +338,7 @@ function MatchCard({
           {/* Info */}
           <div className="absolute left-3 right-3 bottom-14 text-white">
             <div className="truncate text-base font-semibold drop-shadow">
-              {name}
-              {age ? `, ${age}` : ""}
+              {name}{age ? `, ${age}` : ""}
             </div>
             {city && (
               <div className="flex items-center gap-1 text-xs text-white/80">
