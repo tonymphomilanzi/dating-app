@@ -26,10 +26,7 @@ export default function Onboarding(){
   return (
     <div className="relative flex min-h-dvh flex-col items-center bg-white px-6 py-8 text-gray-900">
 
-      {/* background glow */}
-      <div className="pointer-events-none absolute -top-24 -right-20 h-[45vh] w-[45vh] rounded-full bg-fuchsia-400/20 blur-3xl"/>
-      <div className="pointer-events-none absolute -bottom-24 -left-20 h-[45vh] w-[45vh] rounded-full bg-violet-500/20 blur-3xl"/>
-
+      
       {/* top controls */}
       <div className="relative z-10 flex w-full max-w-sm items-center justify-between">
 
