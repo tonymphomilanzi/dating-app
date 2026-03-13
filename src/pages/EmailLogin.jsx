@@ -60,17 +60,7 @@ export default function EmailLogin(){
         <Button className="w-full" onClick={sendEmailOTP} disabled={!valid || loading}>
           {loading ? "Sending…" : "Send 6‑digit code"}
         </Button>
-        <button
-          type="button"
-          onClick={sendMagicLink}
-          disabled={!valid || magicLoading}
-          className="w-full text-sm text-violet-600"
-        >
-          {magicLoading ? "Sending magic link…" : "Or send a magic link instead"}
-        </button>
-        <p className="text-xs text-gray-500">
-          If you only see “Confirm your signup” emails, enable Email OTP and/or use the magic link fallback.
-        </p>
+      
       </div>
     </div>
   );
