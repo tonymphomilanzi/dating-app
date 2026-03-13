@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import SwipeCard from "./SwipeCard.jsx";
 import MatchModal from "./MatchModal.jsx";
 import { swipesService } from "../services/swipes.service.js";
+import { chatService } from "../services/chat.service.js";
 
 /* ---------------- Helpers ---------------- */
 function parseNumber(value) {
@@ -187,11 +188,13 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   // Empty state
   if (!displayPeople.length) {
     return (
+
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
         className="grid h-[70vh] place-items-center rounded-3xl bg-gradient-to-br from-violet-50 to-pink-50 text-center shadow-lg border border-gray-100"
       >
+
+
+        
         <div className="px-6">
           <motion.div
             animate={{ scale: [1, 1.1, 1] }}

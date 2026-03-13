@@ -22,6 +22,26 @@ export default function ProfileYou(){
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+
+const [loggingOut, setLoggingOut] = useState(false);
+
+const handleLogout = async () => {
+  if (!confirm("Log out of this device?")) return;
+  try {
+    setLoggingOut(true);
+    const { error } = await supabase.auth.signOut({ scope: "local" }); // local device only
+    if (error) throw error;
+
+    // Hard redirect so all state is cleared (adjust path to your auth/landing route)
+    window.location.assign("/auth");
+  } catch (e) {
+    console.error("[ProfileYou] logout error:", e);
+    alert(e.message || "Failed to log out");
+  } finally {
+    setLoggingOut(false);
+  }
+};
+
   // Editable fields
   const [displayName, setDisplayName] = useState("");
   const [profession, setProfession] = useState("");
@@ -423,7 +443,21 @@ export default function ProfileYou(){
                 )}
               </>
             )}
+
+            <section className="rounded-2xl bg-white p-4 shadow-card">
+  <h2 className="text-sm font-semibold mb-3">Account</h2>
+  <Button
+    className="w-full !bg-red-50 !text-red-700 hover:!bg-red-100"
+    onClick={handleLogout}
+    disabled={loggingOut}
+  >
+    <i className="lni lni-exit mr-1" />
+    {loggingOut ? "Logging out…" : "Log out"}
+  </Button>
+</section>
           </section>
+
+          
         )}
       </div>
     </div>
