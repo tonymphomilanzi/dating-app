@@ -102,7 +102,7 @@ export default function SignUp() {
 
         <form onSubmit={handleSubmit} className="mt-6 text-left">
           {/* Display name (optional) */}
-          <label className="block text-sm font-medium text-gray-700">Display name (optional)</label>
+          <label className="block text-sm font-medium text-gray-700">Display name </label>
           <input
             type="text"
             value={displayName}
@@ -110,6 +110,7 @@ export default function SignUp() {
             placeholder="Your name"
             className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-3 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200"
             autoComplete="nickname"
+            required
           />
 
           {/* Email */}

@@ -13,19 +13,35 @@ function timeout(ms, label) {
 const REQUIRED_FIELDS = ["display_name", "dob", "gender", "avatar_url"];
 const MIN_INTERESTS = 5;
 const ALLOW_PREFIXES = ["/setup", "/auth"]; // expand if needed (e.g., "/terms", "/privacy")
+const SETUP_OK_KEY = (uid) => `SETUP_OK_${uid}`;
 
 function isOnAllowedPath(pathname) {
   return ALLOW_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
-function isLocallyComplete(profile) {
+function isLocallyComplete(profile, uid) {
   if (!profile) return false;
+
   const hasAll = REQUIRED_FIELDS.every((k) => {
     const v = profile?.[k];
     return k === "dob" ? !!v : !!String(v || "").trim();
   });
-  const flag = window.localStorage.getItem("SETUP_OK");
-  return hasAll || flag === "1" || flag === "true";
+
+  // Per-user flag (preferred), with backward-compat to global flag
+  let userFlag = null;
+  try {
+    if (uid) {
+      const f = window.localStorage.getItem(SETUP_OK_KEY(uid));
+      userFlag = f === "1" || f === "true";
+    }
+  } catch {}
+  let globalFlag = false;
+  try {
+    const g = window.localStorage.getItem("SETUP_OK");
+    globalFlag = g === "1" || g === "true";
+  } catch {}
+
+  return hasAll || userFlag || globalFlag;
 }
 
 export default function SetupGate() {
@@ -48,12 +64,10 @@ export default function SetupGate() {
     }
   }, [loc.search]);
 
-  const localComplete = useMemo(() => isLocallyComplete(profile), [
-    profile?.display_name,
-    profile?.dob,
-    profile?.gender,
-    profile?.avatar_url,
-  ]);
+  const localComplete = useMemo(
+    () => isLocallyComplete(profile, user?.id),
+    [profile?.display_name, profile?.dob, profile?.gender, profile?.avatar_url, user?.id]
+  );
 
   useEffect(() => {
     if (!ready) return; // wait for AuthContext hydration
@@ -72,7 +86,7 @@ export default function SetupGate() {
       return;
     }
 
-    // Avoid infinite loops, but re-check if profile fields change
+    // Avoid redundant re-checks for same user when nothing changed
     if (lastUserIdRef.current === user.id && !checking && localComplete === !needsSetup) {
       return;
     }
@@ -82,12 +96,15 @@ export default function SetupGate() {
 
     (async () => {
       try {
-        // If locally complete, fail-open immediately (and set a flag)
+        // If locally complete, fail-open immediately (and set flags)
         if (localComplete) {
           if (!cancelled) {
             setNeedsSetup(false);
             setChecking(false);
-            try { window.localStorage.setItem("SETUP_OK", "1"); } catch {}
+            try {
+              window.localStorage.setItem("SETUP_OK", "1"); // backward compat
+              if (user?.id) window.localStorage.setItem(SETUP_OK_KEY(user.id), "1");
+            } catch {}
           }
           return;
         }
@@ -101,14 +118,16 @@ export default function SetupGate() {
 
           if (error) throw error;
 
-          const ok =
-            isLocallyComplete(profile) && Number(count || 0) >= MIN_INTERESTS;
+          const ok = isLocallyComplete(profile, user?.id) && Number(count || 0) >= MIN_INTERESTS;
 
           if (!cancelled) {
             setNeedsSetup(!ok);
             setChecking(false);
             if (ok) {
-              try { window.localStorage.setItem("SETUP_OK", "1"); } catch {}
+              try {
+                window.localStorage.setItem("SETUP_OK", "1"); // backward compat
+                if (user?.id) window.localStorage.setItem(SETUP_OK_KEY(user.id), "1");
+              } catch {}
             }
           }
         })();
@@ -117,31 +136,35 @@ export default function SetupGate() {
           // On timeout/error: fail-closed if locally incomplete; fail-open only if locally complete
           console.warn("[SetupGate] server check skipped:", e.message);
           if (!cancelled) {
-            setNeedsSetup(!isLocallyComplete(profile));
+            const okLocal = isLocallyComplete(profile, user?.id);
+            setNeedsSetup(!okLocal);
             setChecking(false);
           }
         });
       } catch (e) {
         console.warn("[SetupGate] exception:", e);
         if (!cancelled) {
-          // Same rule: if locally incomplete, require setup
-          setNeedsSetup(!isLocallyComplete(profile));
+          const okLocal = isLocallyComplete(profile, user?.id);
+          setNeedsSetup(!okLocal);
           setChecking(false);
         }
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [
     ready,
     user?.id,
-    // re-check when these profile fields update
     profile?.display_name,
     profile?.dob,
     profile?.gender,
     profile?.avatar_url,
-    // local flags
     skipSetup,
+    checking,
+    localComplete,
+    needsSetup,
   ]);
 
   if (!ready || checking) {
