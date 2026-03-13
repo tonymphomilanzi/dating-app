@@ -26,7 +26,7 @@ export default function SwipeCard({
   const y = useMotionValue(0);
 
   const [isAnimating, setIsAnimating] = useState(false);
-  const [showSuperLike, setShowSuperLike] = useState(false);
+ // const [showSuperLike, setShowSuperLike] = useState(false);
 
 
    // Reset transforms/state whenever this card becomes active or the person changes
