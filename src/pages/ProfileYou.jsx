@@ -282,7 +282,17 @@ const handleLogout = async () => {
 
   return (
     <div className="min-h-dvh bg-white">
-      <TopBar title="Your profile" />
+      <TopBar  title="Your profile"
+  right={
+    <button
+      onClick={handleLogout}
+      disabled={loggingOut}
+      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700"
+    >
+      <i className="lni lni-exit mr-1" />
+      {loggingOut ? "…" : "Log out"}
+    </button>
+  } />
       {/* Hero */}
       <div className="relative h-[32vh] w-full overflow-hidden">
         {loading ? (
