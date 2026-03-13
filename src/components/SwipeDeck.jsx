@@ -8,11 +8,15 @@ import { swipesService } from "../services/swipes.service.js";
 import { kmBetween } from "../utils/geo.js";
 
 /* ---------------- Helpers ---------------- */
-function parseNumber(value) {
-  if (value == null) return null;
-  const num = Number.isFinite(+value) ? +value : parseFloat(String(value));
-  return Number.isNaN(num) ? null : num;
-}
+ // Add alongside helpers
+const toNum = (v) => (v == null ? null : Number(v));
+const isValidLatLng = (lat, lng) => {
+  const la = toNum(lat), ln = toNum(lng);
+  return Number.isFinite(la) && Number.isFinite(ln) &&
+         la >= -90 && la <= 90 && ln >= -180 && ln <= 180 &&
+         !(la === 0 && ln === 0);
+};
+
 
 function normalizeCoords(profile) {
   return {
@@ -56,32 +60,36 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   }, [isDragging]);
 
   // Calculate distances
-  const displayPeople = useMemo(() => {
-    const myLat = parseNumber(myLoc?.lat);
-    const myLng = parseNumber(myLoc?.lng);
 
-    return (people || []).map((person) => {
-      const { lat, lng } = normalizeCoords(person);
-      let distanceKm = person.distance_km;
+// Update displayPeople
+const displayPeople = useMemo(() => {
+  const myLat = toNum(myLoc?.lat);
+  const myLng = toNum(myLoc?.lng);
+  const hasMyLoc = isValidLatLng(myLat, myLng);
 
-      if (
-        (distanceKm == null || Number.isNaN(Number(distanceKm))) &&
-        myLat != null &&
-        myLng != null &&
-        lat != null &&
-        lng != null
-      ) {
-        const distance = kmBetween(myLat, myLng, lat, lng);
-        distanceKm = Math.abs(Math.round(distance * 10) / 10);
-      }
+  console.log("📍 Calculating distances with location:", {
+    myLat, myLng, valid: hasMyLoc
+  });
 
-      if (distanceKm != null) {
-        distanceKm = Math.abs(distanceKm);
-      }
+  return people.map((person) => {
+    const personLat = toNum(person.lat);
+    const personLng = toNum(person.lng);
+    const hasPersonLoc = isValidLatLng(personLat, personLng);
 
-      return { ...person, lat, lng, distance_km: distanceKm };
-    });
-  }, [people, myLoc?.lat, myLoc?.lng]);
+    let distanceKm = toNum(person.distance_km);
+
+    if (hasMyLoc && hasPersonLoc) {
+      distanceKm = kmBetween(myLat, myLng, personLat, personLng);
+    }
+
+    return {
+      ...person,
+      lat: hasPersonLoc ? personLat : null,
+      lng: hasPersonLoc ? personLng : null,
+      distance_km: distanceKm ?? null,
+    };
+  });
+}, [people, myLoc?.lat, myLoc?.lng]);
 
   // Open profile
   const handleOpenProfile = useCallback(

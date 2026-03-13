@@ -10,6 +10,19 @@ import { DiscoverCache } from "../lib/discoverCache.js";
 import { useRevalidate } from "../hooks/useRevalidate.js";
 import { useGeolocation } from "../hooks/useGeolocation.js";
 
+
+
+// Helpers near the top
+const toNum = (v) => (v == null ? null : Number(v));
+const isValidLatLng = (lat, lng) => {
+  const la = toNum(lat), ln = toNum(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+  if (la < -90 || la > 90 || ln < -180 || ln > 180) return false;
+  // Guard against the (0,0) sentinel commonly emitted while GPS warms up
+  if (la === 0 && ln === 0) return false;
+  return true;
+};
+
 /* ---------------- Constants ---------------- */
 const TABS = [
   { key: "matches", label: "Matches" },
@@ -51,25 +64,22 @@ export default function Discover() {
   }, []);
 
   // Real-time location tracking
-  const handleLocationChange = useCallback(async (newLocation) => {
-    if (!newLocation?.lat || !newLocation?.lng) return;
+const handleLocationChange = useCallback(async (newLocation) => {
+  const lat = toNum(newLocation?.lat);
+  const lng = toNum(newLocation?.lng);
+  if (!isValidLatLng(lat, lng)) return; // don't save invalid or (0,0)
 
-    const now = Date.now();
-    const timeSinceLastSave = now - lastLocationSaveTimeRef.current;
-
-    if (timeSinceLastSave > LOCATION_SAVE_INTERVAL_MS) {
-      try {
-        await updateProfileLocation(newLocation.lat, newLocation.lng);
-        lastLocationSaveTimeRef.current = now;
-        console.log("📍 Location saved:", {
-          lat: newLocation.lat.toFixed(4),
-          lng: newLocation.lng.toFixed(4),
-        });
-      } catch (err) {
-        console.warn("Location save failed:", err.message);
-      }
+  const now = Date.now();
+  if (now - lastLocationSaveTimeRef.current > LOCATION_SAVE_INTERVAL_MS) {
+    try {
+      await updateProfileLocation(lat, lng);
+      lastLocationSaveTimeRef.current = now;
+      console.log("📍 Location saved:", { lat: lat.toFixed(4), lng: lng.toFixed(4) });
+    } catch (err) {
+      console.warn("Location save failed:", err.message);
     }
-  }, []);
+  }
+}, []);
 
   const {
     location: currentLocation,
@@ -82,21 +92,36 @@ export default function Discover() {
     onLocationChange: handleLocationChange,
   });
 
-  // Use real-time location if available, fallback to profile
-  const myLocation = useMemo(() => {
-    const lat = currentLocation?.lat ?? profile?.lat;
-    const lng = currentLocation?.lng ?? profile?.lng;
 
-    if (lat != null && lng != null) {
-      return {
-        lat: parseFloat(lat),
-        lng: parseFloat(lng),
-        accuracy: currentLocation?.accuracy,
-        isRealtime: !!currentLocation,
-      };
-    }
-    return null;
-  }, [currentLocation, profile?.lat, profile?.lng]);
+
+  const lastGoodRealtimeRef = useRef(null);
+
+useEffect(() => {
+  const lat = toNum(currentLocation?.lat);
+  const lng = toNum(currentLocation?.lng);
+  if (isValidLatLng(lat, lng)) {
+    lastGoodRealtimeRef.current = {
+      lat,
+      lng,
+      accuracy: currentLocation?.accuracy,
+      isRealtime: true,
+    };
+  }
+}, [currentLocation?.lat, currentLocation?.lng, currentLocation?.accuracy]);
+
+
+  // Use real-time location if available, fallback to profile
+const myLocation = useMemo(() => {
+  // Prefer valid realtime
+  if (lastGoodRealtimeRef.current) return lastGoodRealtimeRef.current;
+
+  // Fallback to profile’s saved location if valid
+  if (isValidLatLng(profile?.lat, profile?.lng)) {
+    return { lat: Number(profile.lat), lng: Number(profile.lng), isRealtime: false };
+  }
+
+  return null;
+}, [profile?.lat, profile?.lng]);
 
   // Fetch profiles
   const fetchProfiles = useCallback(
@@ -310,7 +335,11 @@ export default function Discover() {
             {TABS.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setSelectedMode(tab.key)}
+                  onClick={() => {
+    setSelectedMode(tab.key);
+    setActiveMode(tab.key);   // reflect tab immediately
+    setProfiles([]);          // clear old list so we show a proper loading/empty state
+  }}
                 className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                   selectedMode === tab.key
                     ? "bg-violet-600 text-white shadow"
