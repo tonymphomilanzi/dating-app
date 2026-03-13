@@ -230,7 +230,7 @@ const displayPeople = useMemo(() => {
         </div>
 
         {/* Cards */}
- // Cards
+ 
 <AnimatePresence mode="popLayout">
   {displayPeople
     .slice(0, 3)
