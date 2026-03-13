@@ -25,7 +25,7 @@ export default function SwipeCard({
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
-  const [isAnimating, setIsAnimating] = useState(false);
+  //const [isAnimating, setIsAnimating] = useState(false);
  // const [showSuperLike, setShowSuperLike] = useState(false);
 
 
