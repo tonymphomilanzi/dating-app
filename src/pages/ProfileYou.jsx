@@ -5,7 +5,7 @@ import TextField from "../components/TextField.jsx";
 import Tag from "../components/Tag.jsx";
 import { supabase } from "../lib/supabase.client.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
-
+//
 // Skeletons
 const Sk = {
   block: ({ className = "" }) => <div className={`animate-pulse rounded bg-gray-200 ${className}`} />,
@@ -282,17 +282,7 @@ const handleLogout = async () => {
 
   return (
     <div className="min-h-dvh bg-white">
-      <TopBar  title="Your profile"
-  right={
-    <button
-      onClick={handleLogout}
-      disabled={loggingOut}
-      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700"
-    >
-      <i className="lni lni-exit mr-1" />
-      {loggingOut ? "…" : "Log out"}
-    </button>
-  } />
+      <TopBar  title="Your profile" />
       {/* Hero */}
       <div className="relative h-[32vh] w-full overflow-hidden">
         {loading ? (
