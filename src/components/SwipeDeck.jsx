@@ -230,39 +230,44 @@ const displayPeople = useMemo(() => {
         </div>
 
         {/* Cards */}
-        <AnimatePresence mode="popLayout">
-          {displayPeople
-            .slice(0, 3)
-            .reverse()
-            .map((person, index, arr) => {
-              const isTop = index === arr.length - 1;
-              const stackIndex = arr.length - 1 - index;
+ // Cards
+<AnimatePresence mode="popLayout">
+  {displayPeople
+    .slice(0, 3)
+    .reverse()
+    .map((person, index, arr) => {
+      const isTop = index === arr.length - 1;
+      const stackIndex = arr.length - 1 - index;
 
-              return (
-                <motion.div
-                  key={person.id}
-                  initial={{ scale: 0.95, opacity: 0 }}
-                  animate={{
-                    scale: 1 - stackIndex * 0.03,
-                    y: stackIndex * 8,
-                    opacity: 1,
-                  }}
-                  exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
-                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                  className="absolute inset-0 p-2"
-                  style={{ zIndex: 10 - stackIndex }}
-                >
-                  <SwipeCard
-                    person={person}
-                    isActive={isTop}
-                    onSwipe={(dir) => handleSwipe(dir, person)}
-                    onOpen={handleOpenProfile}
-                    onDragStateChange={handleDragStateChange}
-                  />
-                </motion.div>
-              );
-            })}
-        </AnimatePresence>
+      return (
+        <motion.div
+          key={person.id}
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{
+            scale: 1 - stackIndex * 0.03,
+            y: stackIndex * 8,
+            opacity: 1,
+          }}
+          exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+          transition={{ type: "spring", stiffness: 300, damping: 25 }}
+          className="absolute inset-0 p-2"
+          style={{
+            zIndex: 10 - stackIndex,
+            pointerEvents: isTop ? "auto" : "none", // only top card is interactive
+          }}
+        >
+          <SwipeCard
+            person={person}
+            isActive={isTop}
+            canSwipe={!isProcessing}          // NEW
+            onSwipe={(dir) => handleSwipe(dir, person)}
+            onOpen={handleOpenProfile}
+            onDragStateChange={handleDragStateChange}
+          />
+        </motion.div>
+      );
+    })}
+</AnimatePresence>
 
         {/* Undo button */}
         <AnimatePresence>

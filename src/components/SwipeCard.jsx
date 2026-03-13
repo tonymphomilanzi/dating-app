@@ -17,12 +17,30 @@ function formatDistance(distanceKm) {
 export default function SwipeCard({
   person,
   isActive = true,
+  canSwipe = true,         // NEW
   onSwipe,
   onOpen,
   onDragStateChange,
 }) {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
+
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showSuperLike, setShowSuperLike] = useState(false);
+
+
+   // Reset transforms/state whenever this card becomes active or the person changes
+  useEffect(() => {
+    if (isActive) {
+      x.set(0);
+      y.set(0);
+      setIsAnimating(false);
+      setShowSuperLike(false);
+    }
+  }, [isActive, person?.id, x, y]); // NEW
+
+
+
 
   // Transforms
   const rotate = useTransform(x, [-300, 0, 300], [-18, 0, 18]);
@@ -91,6 +109,7 @@ export default function SwipeCard({
   const throwOut = useCallback(
     async (direction) => {
       if (isAnimating) return;
+       if (isAnimating || !canSwipe) return; // NEW
       setIsAnimating(true);
       onDragStateChange?.(false);
 
@@ -144,6 +163,7 @@ export default function SwipeCard({
 
   // Handle drag start
   const handleDragStart = useCallback(() => {
+    if (!canSwipe) return; // NEW
     isDraggingRef.current = true;
     onDragStateChange?.(true);
   }, [onDragStateChange]);
@@ -152,6 +172,15 @@ export default function SwipeCard({
   const handleDragEnd = useCallback(
     async (_, info) => {
       isDraggingRef.current = false;
+
+        if (!canSwipe) {        // NEW: if blocked, snap back to safe state
+        onDragStateChange?.(false);
+        await Promise.all([
+          animate(x, 0, { type: "spring", stiffness: 500, damping: 30 }),
+          animate(y, 0, { type: "spring", stiffness: 500, damping: 30 }),
+        ]);
+        return;
+      }
 
       if (isAnimating) {
         onDragStateChange?.(false);
@@ -189,8 +218,8 @@ export default function SwipeCard({
     (e, action) => {
       e.preventDefault();
       e.stopPropagation();
-      
-      if (isAnimating) return;
+       if (isAnimating || !canSwipe) return; // NEW
+  
       
       if (action === "nope") {
         throwOut("left");
@@ -227,6 +256,7 @@ export default function SwipeCard({
   return (
     <motion.div
       ref={cardRef}
+       drag={canSwipe ? "x" : false}       // NEW
       drag="x"
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.9}
@@ -234,6 +264,7 @@ export default function SwipeCard({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onClick={handleCardClick}
+      style={{ x, y, rotate, scale: cardScale, cursor: canSwipe ? "grab" : "default" }} // NEW
       style={{ x, y, rotate, scale: cardScale }}
       className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-xl select-none touch-none cursor-grab active:cursor-grabbing"
     >
@@ -440,6 +471,7 @@ export default function SwipeCard({
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "nope")}
+             disabled={isAnimating || !canSwipe}  // NEW
             disabled={isAnimating}
             className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
@@ -463,7 +495,7 @@ export default function SwipeCard({
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "super")}
-            disabled={isAnimating}
+           disabled={isAnimating || !canSwipe}  // NEW
             className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
           >
@@ -481,7 +513,7 @@ export default function SwipeCard({
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "like")}
-            disabled={isAnimating}
+            disabled={isAnimating || !canSwipe}  // NEW
             className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
             style={{ touchAction: "manipulation" }}
           >
