@@ -36,6 +36,11 @@ import EventDetail from "./pages/EventDetail.jsx";
 
 import CreateEvent from "./pages/CreateEvent.jsx";
 import Calendar from "./pages/Calendar.jsx";
+
+import SignUp from "./pages/SignUp.jsx";
+
+
+
 export default function App() {
   return (
     <Routes>
@@ -49,6 +54,7 @@ export default function App() {
           <Route path="/auth" element={<AuthChoice />} />
           <Route path="/auth/email" element={<EmailLogin />} />
           <Route path="/auth/email-verify" element={<EmailVerify />} />
+          <Route path="/auth/signup" element={<SignUp />} />
         </Route>
 
         {/* Protected */}
