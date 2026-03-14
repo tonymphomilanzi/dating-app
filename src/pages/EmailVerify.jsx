@@ -6,25 +6,47 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
 
-export default function EmailVerify(){
+export default function EmailVerify() {
   const nav = useNavigate();
-  const { email } = useAuthFlow();
+  const { email, displayName, pendingPassword, clearFlow } = useAuthFlow();
   const [code, setCode] = useState("");
   const [left, setLeft] = useState(60);
   const [error, setError] = useState("");
   const [resending, setResending] = useState(false);
-  const [sendingMagic, setSendingMagic] = useState(false);
 
-  useEffect(()=>{
-    const t = setInterval(()=>setLeft(s => s>0 ? s-1 : 0), 1000);
-    return ()=>clearInterval(t);
-  },[]);
+  useEffect(() => {
+    if (!email) {
+      nav("/auth/signup", { replace: true });
+      return;
+    }
+  }, [email, nav]);
+
+  useEffect(() => {
+    const t = setInterval(() => setLeft((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const verify = async () => {
     setError("");
     try {
+      // 1) Verify the 6-digit code
       const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
       if (error) throw error;
+
+      // 2) If user provided a password on SignUp, set it now (so future sign-ins use password)
+      if (pendingPassword) {
+        const { error: pwErr } = await supabase.auth.updateUser({ password: pendingPassword });
+        if (pwErr) throw pwErr;
+      }
+
+      // 3) Ensure profile.display_name is set
+      if (displayName) {
+        await supabase
+          .from("profiles")
+          .upsert({ id: (await supabase.auth.getUser()).data.user.id, display_name: displayName }, { onConflict: "id" });
+      }
+
+      clearFlow();
       nav("/setup/basics", { replace: true });
     } catch (e) {
       setError(e.message || "Invalid code");
@@ -33,7 +55,8 @@ export default function EmailVerify(){
 
   const resend = async () => {
     if (left > 0 || resending) return;
-    setResending(true); setError("");
+    setResending(true);
+    setError("");
     try {
       const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
       if (error) throw error;
@@ -45,22 +68,6 @@ export default function EmailVerify(){
     }
   };
 
-  const sendMagicLink = async () => {
-    setSendingMagic(true); setError("");
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: true, emailRedirectTo: `${window.location.origin}/auth/callback` }
-      });
-      if (error) throw error;
-      alert("Magic link sent. Check your email to continue.");
-    } catch (e) {
-      setError(e.message || "Failed to send magic link");
-    } finally {
-      setSendingMagic(false);
-    }
-  };
-
   return (
     <div className="min-h-dvh">
       <TopBar title="Verify your email" />
@@ -69,12 +76,15 @@ export default function EmailVerify(){
         <OTPInput length={6} onChange={setCode} />
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="pt-4 space-y-3">
-          <Button className="w-full" disabled={code.length<6} onClick={verify}>Continue</Button>
-          <button onClick={resend} disabled={left>0 || resending} className={`w-full text-sm ${left>0 ? "text-gray-400" : "text-violet-600"}`}>
-            {left>0 ? `Resend in ${left}s` : (resending ? "Resending…" : "Resend code")}
-          </button>
-          <button onClick={sendMagicLink} disabled={sendingMagic} className="w-full text-sm text-violet-600">
-            {sendingMagic ? "Sending magic link…" : "Use magic link instead"}
+          <Button className="w-full" disabled={code.length < 6} onClick={verify}>
+            Continue
+          </Button>
+          <button
+            onClick={resend}
+            disabled={left > 0 || resending}
+            className={`w-full text-sm ${left > 0 ? "text-gray-400" : "text-violet-600"}`}
+          >
+            {left > 0 ? `Resend in ${left}s` : resending ? "Resending…" : "Resend code"}
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
+import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
 
 /* Small inline icons so we don't rely on lni */
 const EyeIcon = (props) => (
@@ -20,6 +21,7 @@ const EyeOffIcon = (props) => (
 
 export default function SignUp() {
   const navigate = useNavigate();
+  const { startSignupFlow } = useAuthFlow();
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -29,57 +31,40 @@ export default function SignUp() {
   const [showPw2, setShowPw2] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [info, setInfo] = useState("");
 
   const emailValid = useMemo(() => /\S+@\S+\.\S+/.test(email), [email]);
   const pwValid = useMemo(() => pw.length >= 8, [pw]);
   const pwMatch = useMemo(() => pw && pw === pw2, [pw, pw2]);
-  const canSubmit = emailValid && pwValid && pwMatch && !loading;
+  const nameValid = useMemo(() => displayName.trim().length > 0, [displayName]);
 
-  const redirectTo = `${window.location.origin}/auth/callback`;
+  const canSubmit = emailValid && pwValid && pwMatch && nameValid && !loading;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!canSubmit) return;
     setErr("");
-    setInfo("");
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signUp({
+      // Send 6-digit code and create user if needed
+      const { error } = await supabase.auth.signInWithOtp({
         email,
-        password: pw,
         options: {
-          emailRedirectTo: redirectTo,
-          data: displayName ? { display_name: displayName } : undefined, // user_metadata
+          shouldCreateUser: true,
+          // Store display_name in user_metadata (useful if you auto-create profile rows)
+          data: { display_name: displayName },
         },
       });
       if (error) throw error;
 
-      // If confirm email is ON: no session yet. Show success message.
-      if (!data.session) {
-        setInfo("We’ve sent a confirmation link to your email. Please verify to finish setting up your account.");
-        return;
-      }
+      // Keep flow state so EmailVerify can set password + name
+      startSignupFlow({ email, displayName, password: pw });
 
-      // If confirm email is OFF: we are signed in now — try to set profile name, then go
-      try {
-        if (displayName) {
-          await supabase
-            .from("profiles")
-            .upsert({ id: data.user.id, display_name: displayName }, { onConflict: "id" });
-        }
-      } catch (_) {
-        // RLS/trigger may handle this — ignore
-      }
-
-      navigate("/discover", { replace: true });
+      // Go to your OTP page
+      navigate("/auth/verify", { replace: true });
     } catch (e) {
-      if (String(e.message || "").toLowerCase().includes("already registered")) {
-        setErr("An account with this email already exists. Try ‘Continue with email’ to sign in.");
-      } else {
-        setErr(e.message || "Sign up failed. Please try again.");
-      }
+      const msg = e?.message || "Could not send verification code. Please try again.";
+      setErr(msg);
     } finally {
       setLoading(false);
     }
@@ -98,11 +83,11 @@ export default function SignUp() {
         </div>
 
         <h1 className="text-3xl font-bold tracking-tight">Create your account</h1>
-        <p className="mt-2 text-sm text-gray-600">Join Umukunzi 4.0 and start meeting people</p>
+        <p className="mt-2 text-sm text-gray-600">We’ll send a 6‑digit code to verify your email.</p>
 
         <form onSubmit={handleSubmit} className="mt-6 text-left">
-          {/* Display name (optional) */}
-          <label className="block text-sm font-medium text-gray-700">Display name </label>
+          {/* Display name (required) */}
+          <label className="block text-sm font-medium text-gray-700">Display name</label>
           <input
             type="text"
             value={displayName}
@@ -183,11 +168,6 @@ export default function SignUp() {
               {err}
             </div>
           )}
-          {info && (
-            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              {info}
-            </div>
-          )}
 
           {/* Submit */}
           <button
@@ -209,7 +189,7 @@ export default function SignUp() {
         {/* Small nav links */}
         <div className="mt-4 text-xs text-gray-600">
           Already have an account?
-          <Link to="/auth/email" className="ml-1 font-semibold text-violet-700 hover:underline">
+          <Link to="/auth/signin/email" className="ml-1 font-semibold text-violet-700 hover:underline">
             Continue with email
           </Link>
         </div>

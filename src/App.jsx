@@ -39,6 +39,7 @@ import Calendar from "./pages/Calendar.jsx";
 
 import SignUp from "./pages/SignUp.jsx";
 import SignInEmail from "./pages/SignInEmail.jsx";
+import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 
 
 export default function App() {
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/auth/callback" element={<AuthCallback />} />
 
         {/* Public (only while logged out) */}
+        
         <Route element={<GuestOnly />}>
           <Route path="/" element={<Onboarding />} />
           <Route path="/auth" element={<AuthChoice />} />
