@@ -13,6 +13,7 @@ function GoogleIcon(props) {
     </svg>
   );
 }
+
 function AppleIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -20,6 +21,7 @@ function AppleIcon(props) {
     </svg>
   );
 }
+
 function FacebookIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -72,7 +74,7 @@ export default function AuthChoice() {
 
         {/* primary action */}
         <div className="mt-8">
-          <Link to="/auth/email">
+          <Link to="/auth/signin/email" className="block">
             <button className="flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-fuchsia-600 to-violet-600 px-6 py-3.5 text-sm font-medium text-white shadow-md transition active:scale-[0.98]">
               <i className="lni lni-envelope text-lg" />
               Continue with email
