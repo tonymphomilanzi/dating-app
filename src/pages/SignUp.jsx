@@ -62,10 +62,16 @@ export default function SignUp() {
       if (error) throw error;
 
       // 2) Keep flow state so EmailVerify can set password + name
-      startSignupFlow({ email, displayName, password: pw });
+     // inside handleSubmit, after startSignupFlow(...)
+startSignupFlow({ email, displayName, password: pw });
 
-      // 3) Route to your OTP page (under /auth so SetupGate won't intercept)
-      navigate("/auth/verify", { replace: true, state: { from: "signup" } });
+// Flag OTP flow so SetupGate bypasses
+try { window.sessionStorage.setItem("AF_IN_OTP", "1"); } catch {}
+
+// Now go to your OTP page
+navigate("/auth/verify", { replace: true, state: { from: "signup" } });
+
+  
     } catch (e) {
       const msg = e?.message || "Could not send verification code. Please try again.";
       setErr(msg);

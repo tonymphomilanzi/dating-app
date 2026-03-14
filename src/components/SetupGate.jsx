@@ -12,7 +12,7 @@ function timeout(ms, label) {
 // Tune these to your onboarding expectations
 const REQUIRED_FIELDS = ["display_name", "dob", "gender", "avatar_url"];
 const MIN_INTERESTS = 5;
-const ALLOW_PREFIXES = ["/setup", "/auth"]; // expand if needed (e.g., "/terms", "/privacy")
+const ALLOW_PREFIXES = ["/setup", "/auth"]; // expand if needed
 const SETUP_OK_KEY = (uid) => `SETUP_OK_${uid}`;
 
 function isOnAllowedPath(pathname) {
@@ -21,14 +21,13 @@ function isOnAllowedPath(pathname) {
 
 function isLocallyComplete(profile, uid) {
   if (!profile) return false;
-
   const hasAll = REQUIRED_FIELDS.every((k) => {
     const v = profile?.[k];
     return k === "dob" ? !!v : !!String(v || "").trim();
   });
 
-  // Per-user flag (preferred), with backward-compat to global flag
-  let userFlag = null;
+  // Per-user flag + global fallback
+  let userFlag = false;
   try {
     if (uid) {
       const f = window.localStorage.getItem(SETUP_OK_KEY(uid));
@@ -47,6 +46,14 @@ function isLocallyComplete(profile, uid) {
 export default function SetupGate() {
   const { ready, user, profile } = useAuth();
   const loc = useLocation();
+
+  // Hard-bypass on allowed paths and during OTP flow
+  const otpFlow =
+    typeof window !== "undefined" &&
+    window.sessionStorage.getItem("AF_IN_OTP") === "1";
+  if (isOnAllowedPath(loc.pathname) || otpFlow) {
+    return <Outlet />;
+  }
 
   const [checking, setChecking] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -86,7 +93,7 @@ export default function SetupGate() {
       return;
     }
 
-    // Avoid redundant re-checks for same user when nothing changed
+    // Avoid redundant re-checks
     if (lastUserIdRef.current === user.id && !checking && localComplete === !needsSetup) {
       return;
     }
@@ -96,20 +103,20 @@ export default function SetupGate() {
 
     (async () => {
       try {
-        // If locally complete, fail-open immediately (and set flags)
+        // If locally complete, allow and set flags
         if (localComplete) {
           if (!cancelled) {
             setNeedsSetup(false);
             setChecking(false);
             try {
-              window.localStorage.setItem("SETUP_OK", "1"); // backward compat
+              window.localStorage.setItem("SETUP_OK", "1");
               if (user?.id) window.localStorage.setItem(SETUP_OK_KEY(user.id), "1");
             } catch {}
           }
           return;
         }
 
-        // Otherwise, do a quick server check for interests count with 1500ms cap
+        // Server interests count with cap
         const serverCheck = (async () => {
           const { count, error } = await supabase
             .from("user_interests")
@@ -125,7 +132,7 @@ export default function SetupGate() {
             setChecking(false);
             if (ok) {
               try {
-                window.localStorage.setItem("SETUP_OK", "1"); // backward compat
+                window.localStorage.setItem("SETUP_OK", "1");
                 if (user?.id) window.localStorage.setItem(SETUP_OK_KEY(user.id), "1");
               } catch {}
             }
@@ -133,7 +140,6 @@ export default function SetupGate() {
         })();
 
         await Promise.race([serverCheck, timeout(1500, "setup-check")]).catch((e) => {
-          // On timeout/error: fail-closed if locally incomplete; fail-open only if locally complete
           console.warn("[SetupGate] server check skipped:", e.message);
           if (!cancelled) {
             const okLocal = isLocallyComplete(profile, user?.id);
@@ -172,7 +178,6 @@ export default function SetupGate() {
   }
 
   if (needsSetup && !isOnAllowedPath(loc.pathname)) {
-    // Preserve where they came from so setup can send them back if needed
     const next = loc.pathname + (loc.search || "");
     return <Navigate to="/setup/basics" replace state={{ next }} />;
   }

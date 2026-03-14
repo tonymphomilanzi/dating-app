@@ -53,13 +53,19 @@ if (displayName) {
   );
 }
 
-      clearFlow();
-      nav("/setup/basics", { replace: true });
-    } catch (e) {
-      setError(e.message || "Invalid code");
-    }
-  };
 
+ // Done with OTP flow
+   clearFlow();
+    try { window.sessionStorage.removeItem("AF_IN_OTP"); } catch {}
+
+    nav("/setup/basics", { replace: true });
+  } catch (e) {
+    setError(e.message || "Invalid code");
+  }
+};
+
+    
+  
   const resend = async () => {
     if (left > 0 || resending) return;
     setResending(true);
