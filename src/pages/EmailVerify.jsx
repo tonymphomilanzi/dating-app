@@ -30,7 +30,11 @@ export default function EmailVerify() {
     setError("");
     try {
       // 1) Verify the 6-digit code
-      const { error } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+   const { error } = await supabase.auth.verifyOtp({
+  email,
+  token: code,
+  type: "signup", // IMPORTANT for email sign-up codes
+});
       if (error) throw error;
 
       // 2) If user provided a password on SignUp, set it now (so future sign-ins use password)
@@ -40,11 +44,14 @@ export default function EmailVerify() {
       }
 
       // 3) Ensure profile.display_name is set
-      if (displayName) {
-        await supabase
-          .from("profiles")
-          .upsert({ id: (await supabase.auth.getUser()).data.user.id, display_name: displayName }, { onConflict: "id" });
-      }
+      // ensure display_name
+if (displayName) {
+  const { data: { user } } = await supabase.auth.getUser();
+  await supabase.from("profiles").upsert(
+    { id: user.id, display_name: displayName },
+    { onConflict: "id" }
+  );
+}
 
       clearFlow();
       nav("/setup/basics", { replace: true });

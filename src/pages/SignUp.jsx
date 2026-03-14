@@ -46,22 +46,26 @@ export default function SignUp() {
     setLoading(true);
 
     try {
-      // Send 6-digit code and create user if needed
+      // 0) Make sure there is no active session that could trigger SetupGate
+      await supabase.auth.signOut().catch(() => {});
+
+      // 1) Send 6-digit code and create user if needed
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
           shouldCreateUser: true,
-          // Store display_name in user_metadata (useful if you auto-create profile rows)
+          // Store display_name in user_metadata (handy if you auto-create profiles)
           data: { display_name: displayName },
+          // No emailRedirectTo here — we want the code flow, not a magic link redirect
         },
       });
       if (error) throw error;
 
-      // Keep flow state so EmailVerify can set password + name
+      // 2) Keep flow state so EmailVerify can set password + name
       startSignupFlow({ email, displayName, password: pw });
 
-      // Go to your OTP page
-      navigate("/auth/verify", { replace: true });
+      // 3) Route to your OTP page (under /auth so SetupGate won't intercept)
+      navigate("/auth/verify", { replace: true, state: { from: "signup" } });
     } catch (e) {
       const msg = e?.message || "Could not send verification code. Please try again.";
       setErr(msg);
