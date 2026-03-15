@@ -124,48 +124,43 @@ const myLocation = useMemo(() => {
 }, [profile?.lat, profile?.lng]);
 
   // Fetch profiles
-  const fetchProfiles = useCallback(
-    async (requestedMode, options = {}) => {
-      const { background = false } = options;
-      const currentRequestId = ++requestIdRef.current;
+const fetchProfiles = useCallback(
+  async (requestedMode, options = {}) => {
+    const { background = false } = options;
+    const currentRequestId = ++requestIdRef.current;
 
-      abortControllerRef.current?.abort();
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+    // cancel previous
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
-      if (!background) {
-        setIsLoading(true);
-        setError("");
-      }
+    if (!background) {
+      setIsLoading(true);
+      setError("");
+    }
 
-      try {
-        const response = await discoverService.list(requestedMode, 20, {
-          lat: myLocation?.lat,
-          lng: myLocation?.lng,
-          signal: abortController.signal,
-          debug: false,
-        });
+try {
+  const response = await discoverService.list(requestedMode, 20, {
+    lat: myLocation?.lat,
+    lng: myLocation?.lng,
+    signal: abortController.signal,
+    debug: false,
+  });
+  if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
+  setProfiles(Array.isArray(response) ? response : []);
+  setActiveMode(requestedMode);
+  DiscoverCache.save(userId, requestedMode, Array.isArray(response) ? response : []);
+} catch (err) {
+  if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
+  if (err?.name !== "AbortError") {
+    setError(err?.message || "Failed to load profiles");
+  }
+} finally {
+  if (requestIdRef.current === currentRequestId && isMountedRef.current && !background) {
+    setIsLoading(false); 
+  }
+}
 
-        if (requestIdRef.current !== currentRequestId) return;
-        if (!isMountedRef.current) return;
-
-        const normalizedProfiles = Array.isArray(response) ? response : [];
-        setProfiles(normalizedProfiles);
-        setActiveMode(requestedMode);
-        DiscoverCache.save(userId, requestedMode, normalizedProfiles);
-      } catch (err) {
-        if (err?.name === "AbortError") return;
-        if (requestIdRef.current !== currentRequestId) return;
-        if (!isMountedRef.current) return;
-        setError(err?.message || "Failed to load profiles");
-      } finally {
-        if (!background && requestIdRef.current === currentRequestId && isMountedRef.current) {
-          setIsLoading(false);
-        }
-      }
-    },
-    [userId, myLocation?.lat, myLocation?.lng]
-  );
 
   // Load data when mode or location changes
   useEffect(() => {

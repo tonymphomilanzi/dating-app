@@ -75,7 +75,7 @@ export default function CreateEvent() {
         setLocationQuery(location.displayName);
       }
 
-      console.log("📍 Location found:", {
+      console.log(">>>Location found:", {
         lat: location.lat,
         lng: location.lng,
         city: location.city,
@@ -112,7 +112,7 @@ export default function CreateEvent() {
         setLocationSuggestions(results);
         setShowSuggestions(results.length > 0);
       } catch (err) {
-        console.warn("Location search failed:", err);
+        console.warn(">>>Location search failed:", err);
         setLocationSuggestions([]);
       } finally {
         setIsSearchingLocation(false);
@@ -129,7 +129,7 @@ export default function CreateEvent() {
     setShowSuggestions(false);
     setLocationSuggestions([]);
 
-    console.log("📍 Location selected:", {
+    console.log(">>>Location selected:", {
       city: location.city,
       lat: location.lat,
       lng: location.lng,

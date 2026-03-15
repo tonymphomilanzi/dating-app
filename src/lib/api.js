@@ -11,23 +11,24 @@ function buildUrl(url, params) {
 
 async function request(method, url, options = {}) {
   const { params, data, timeoutMs = 10000, signal: externalSignal } = options;
-  
+
   const { data: session } = await supabase.auth.getSession();
   const token = session?.session?.access_token;
 
   const fetchUrl = buildUrl(url, params);
 
-  // Use external signal if provided, otherwise create timeout controller
-  const timeoutController = new AbortController();
+  // Always enforce a timeout, even if caller passes a signal
+  const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
   let timeoutId;
-  
-  if (!externalSignal) {
-    timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-  }
-
-  const signal = externalSignal || timeoutController.signal;
 
   try {
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     const response = await fetch(fetchUrl, {
       method,
       headers: {
@@ -36,43 +37,41 @@ async function request(method, url, options = {}) {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: ["GET", "HEAD"].includes(method) ? undefined : JSON.stringify(data || {}),
-      signal,
+      signal: controller.signal,
+      // keepalive: true, // optional: helps on page unload
     });
 
-    // Handle No Content response
     if (response.status === 204) return null;
 
-    const responseText = await response.text();
-    let responseJson = null;
-    
-    try { 
-      responseJson = responseText ? JSON.parse(responseText) : null; 
-    } catch (parseError) {
-      // Ignore JSON parse errors
-    }
+    const text = await response.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
 
     if (!response.ok) {
-      const errorMessage = responseJson?.error || responseJson?.message || `HTTP ${response.status}`;
-      const error = new Error(errorMessage);
-      error.status = response.status;
-      error.body = responseJson;
-      throw error;
+      const msg = json?.error || json?.message || `HTTP ${response.status}`;
+      const err = new Error(msg);
+      err.status = response.status;
+      err.body = json;
+      throw err;
     }
-    
-    return responseJson;
+
+    return json;
   } catch (error) {
     if (error?.name === "AbortError") {
       const abortError = new Error(
-        externalSignal ? "Request aborted" : `Request timed out after ${timeoutMs}ms`
+        controller.signal.aborted && externalSignal?.aborted
+          ? "Request aborted"
+          : `Request timed out after ${timeoutMs}ms`
       );
       abortError.name = "AbortError";
-      abortError.status = externalSignal ? 0 : 408;
+      abortError.status = externalSignal?.aborted ? 0 : 408;
       throw abortError;
     }
     throw error;
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
+    if (externalSignal) {
+      try { externalSignal.removeEventListener("abort", onExternalAbort); } catch {}
     }
   }
 }
