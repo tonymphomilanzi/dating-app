@@ -41,62 +41,64 @@ import SignUp from "./pages/SignUp.jsx";
 import SignInEmail from "./pages/SignInEmail.jsx";
 import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 
-
 export default function App() {
   return (
-    <Routes>
-      <Route element={<RootLayout />}>
-        {/* Magic-link callback must be reachable unauthenticated */}
-        <Route path="/auth/callback" element={<AuthCallback />} />
+    <AuthFlowProvider>
+      <Routes>
+        <Route element={<RootLayout />}>
+          {/* OAuth / magic-link callback (reachable unauthenticated) */}
+          <Route path="/auth/callback" element={<AuthCallback />} />
 
-        {/* Public (only while logged out) */}
-        
-        <Route element={<GuestOnly />}>
-          <Route path="/" element={<Onboarding />} />
-          <Route path="/auth" element={<AuthChoice />} />
-          <Route path="/auth/email" element={<EmailLogin />} />
-          <Route path="/auth/email-verify" element={<EmailVerify />} />
-          <Route path="/auth/signup" element={<SignUp />} />
-          <Route path="/auth/signin/email" element={<SignInEmail />} />
-        </Route>
+          {/* Public (only while logged out) */}
+          <Route element={<GuestOnly />}>
+            <Route path="/" element={<Onboarding />} />
+            <Route path="/auth" element={<AuthChoice />} />
+            <Route path="/auth/email" element={<EmailLogin />} />
 
-        {/* Protected */}
-        <Route element={<RequireAuth />}>
-          {/* Setup flow (always reachable) */}
-          <Route path="/setup/basics" element={<SetupBasics />} />
-          <Route path="/setup/dob" element={<SetupDOB />} />
-          <Route path="/setup/gender" element={<SetupGender />} />
-          <Route path="/setup/interests" element={<SetupInterests />} />
-          <Route path="/setup/photo" element={<SetupPhoto />} />
+            {/* OTP verify routes (keep both, so SignUp -> /auth/verify works) */}
+            <Route path="/auth/email-verify" element={<EmailVerify />} />
+            <Route path="/auth/verify" element={<EmailVerify />} />
 
-          {/* App gated by setup completion */}
-          <Route element={<SetupGate />}>
-            <Route element={<TabsLayout />}>
-
-              <Route path="/discover" element={<Discover />} />
-              <Route path="/matches" element={<Matches />} />
-              <Route path="/messages" element={<Messages />} />
-              <Route path="/events" element={<Events />} />
-         
-            </Route>
-            <Route path="/events/:id" element={<EventDetail />} />
-            <Route path="/profile" element={<ProfileYou />} />
-            <Route path="/filters" element={<Filters />} />
-            <Route path="/chat/:id" element={<Chat />} />
-            <Route path="/profile/:id" element={<ProfileView />} />
-            <Route path="/match" element={<MatchSuccess />} />
-            <Route path="/stories/new" element={<StoryComposer />} />
-            <Route path="/stories/:userId" element={<StoryPage />} />
-            <Route path="/events/new" element={<CreateEvent />} />
-            <Route path="/calendar" element={<Calendar />} />
-         
+            <Route path="/auth/signup" element={<SignUp />} />
+            <Route path="/auth/signin/email" element={<SignInEmail />} />
           </Route>
-          
-      <Route path="/profile/:id/gallery" element={<ProfileGallery />} />
-        </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+          {/* Protected */}
+          <Route element={<RequireAuth />}>
+            {/* Setup flow (always reachable when logged in; NOT gated) */}
+            <Route path="/setup/basics" element={<SetupBasics />} />
+            <Route path="/setup/dob" element={<SetupDOB />} />
+            <Route path="/setup/gender" element={<SetupGender />} />
+            <Route path="/setup/interests" element={<SetupInterests />} />
+            <Route path="/setup/photo" element={<SetupPhoto />} />
+
+            {/* App gated by setup completion */}
+            <Route element={<SetupGate />}>
+              <Route element={<TabsLayout />}>
+                <Route path="/discover" element={<Discover />} />
+                <Route path="/matches" element={<Matches />} />
+                <Route path="/messages" element={<Messages />} />
+                <Route path="/events" element={<Events />} />
+              </Route>
+
+              {/* Non-tab protected routes (still gated) */}
+              <Route path="/events/:id" element={<EventDetail />} />
+              <Route path="/profile" element={<ProfileYou />} />
+              <Route path="/filters" element={<Filters />} />
+              <Route path="/chat/:id" element={<Chat />} />
+              <Route path="/profile/:id" element={<ProfileView />} />
+              <Route path="/profile/:id/gallery" element={<ProfileGallery />} />
+              <Route path="/match" element={<MatchSuccess />} />
+              <Route path="/stories/new" element={<StoryComposer />} />
+              <Route path="/stories/:userId" element={<StoryPage />} />
+              <Route path="/events/new" element={<CreateEvent />} />
+              <Route path="/calendar" element={<Calendar />} />
+            </Route>
+          </Route>
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </AuthFlowProvider>
   );
 }
