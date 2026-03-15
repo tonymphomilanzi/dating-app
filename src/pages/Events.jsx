@@ -1,4 +1,3 @@
-// src/pages/Events.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
@@ -25,7 +24,7 @@ function useRevalidate({
 
   const fire = useCallback(() => {
     const now = Date.now();
-    
+
     const run = () => {
       isInFlight.current = true;
       Promise.resolve(refetchRef.current?.())
@@ -44,14 +43,14 @@ function useRevalidate({
       isQueued.current = true;
       return;
     }
-    
+
     const timeSinceLastFetch = now - lastFetchTime.current;
     if (timeSinceLastFetch < cooldownMs) {
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(run, cooldownMs - timeSinceLastFetch);
       return;
     }
-    
+
     run();
   }, [cooldownMs]);
 
@@ -59,7 +58,7 @@ function useRevalidate({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") fire();
     };
-    
+
     if (onFocus) window.addEventListener("focus", fire, { passive: true });
     if (onVisibility) document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
     if (onOnline) window.addEventListener("online", fire, { passive: true });
@@ -81,34 +80,26 @@ function useRevalidate({
 const toRadians = (degrees) => (degrees * Math.PI) / 180;
 
 function calculateKmBetween(pointA, pointB) {
-  if (
-    !pointA || 
-    !pointB || 
-    pointA.lat == null || 
-    pointA.lng == null || 
-    pointB.lat == null || 
-    pointB.lng == null
-  ) {
+  if (!pointA || !pointB || pointA.lat == null || pointA.lng == null || pointB.lat == null || pointB.lng == null) {
     return Infinity;
   }
-  
+
   const EARTH_RADIUS_KM = 6371;
   const deltaLat = toRadians(pointB.lat - pointA.lat);
   const deltaLng = toRadians(pointB.lng - pointA.lng);
   const lat1Rad = toRadians(pointA.lat);
   const lat2Rad = toRadians(pointB.lat);
-  
-  const haversine = 
-    Math.sin(deltaLat / 2) ** 2 + 
-    Math.sin(deltaLng / 2) ** 2 * Math.cos(lat1Rad) * Math.cos(lat2Rad);
-  
+
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(deltaLng / 2) ** 2;
+
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 function formatDistanceLabel(km) {
-  if (km < 1) {
-    return `${Math.round(km * 1000)} m`;
-  }
+  if (!Number.isFinite(km)) return "";
+  if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(1)} km`;
 }
 
@@ -121,11 +112,17 @@ function formatDateLabel(isoString) {
 function extractDayMonth(isoString) {
   if (!isoString) return { day: "--", month: "---" };
   const date = new Date(isoString);
-  return { 
-    day: String(date.getDate()).padStart(2, "0"), 
-    month: date.toLocaleDateString([], { month: "short" }) 
+  return {
+    day: String(date.getDate()).padStart(2, "0"),
+    month: date.toLocaleDateString([], { month: "short" }),
   };
 }
+
+const isFiniteNum = (n) => Number.isFinite(Number(n));
+const isValidLatLng = (lat, lng) =>
+  isFiniteNum(lat) && isFiniteNum(lng) &&
+  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+  !(Number(lat) === 0 && Number(lng) === 0);
 
 /* ---------------- Map Pin Icon ---------------- */
 const pinIcon = L.divIcon({
@@ -172,48 +169,42 @@ export default function Events() {
   const [error, setError] = useState("");
 
   const isMountedRef = useRef(true);
-  
   useEffect(() => {
     isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, []);
 
   // Map server response to UI format
-// In Events.jsx - update the mapServerRowsToUIFormat function
-const mapServerRowsToUIFormat = useCallback((rows) => {
-  return rows.map((event) => {
-    // City should now be populated from reverse geocoding
-    const placeName = event.city || "Location TBD";
+  const mapServerRowsToUIFormat = useCallback((rows) => {
+    return rows.map((event) => {
+      const placeName = event.city || "Location TBD";
+      const latitude = event.lat != null ? Number(event.lat) : null;
+      const longitude = event.lng != null ? Number(event.lng) : null;
 
-    const latitude = event.lat != null ? Number(event.lat) : null;
-    const longitude = event.lng != null ? Number(event.lng) : null;
-
-    return {
-      id: event.id,
-      title: event.title || "Untitled Event",
-      description: event.description || "",
-      img: event.cover_url || "",
-      dateISO: event.starts_at,
-      dateLabel: formatDateLabel(event.starts_at),
-      ...extractDayMonth(event.starts_at),
-      category: event.category || "Other",
-      place: placeName,
-      lat: latitude,
-      lng: longitude,
-      price: event.price != null ? Number(event.price) : 0,
-      created_at: event.created_at,
-    };
-  });
-}, []);
+      return {
+        id: event.id,
+        title: event.title || "Untitled Event",
+        description: event.description || "",
+        img: event.cover_url || "",
+        dateISO: event.starts_at,
+        dateLabel: formatDateLabel(event.starts_at),
+        ...extractDayMonth(event.starts_at),
+        category: event.category || "Other",
+        place: placeName,
+        lat: latitude,
+        lng: longitude,
+        price: event.price != null ? Number(event.price) : 0,
+        created_at: event.created_at,
+      };
+    });
+  }, []);
 
   // Fetch events from API
   const fetchEvents = useCallback(async ({ signal } = {}) => {
     return await eventsService.list({ signal });
   }, []);
 
-  // Refresh with deduplication/abort/throttle
+  // Refresh with deduplication/abort/throttle + active-controller guard
   const inflightRequestRef = useRef(null);
   const lastFetchTimeRef = useRef(0);
   const abortControllerRef = useRef(null);
@@ -221,47 +212,51 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
   const refresh = useCallback(
     async ({ foreground = false } = {}) => {
       const now = Date.now();
-      
+
       // Prevent duplicate requests
       if (inflightRequestRef.current) return inflightRequestRef.current;
-      
+
       // Throttle rapid requests
       if (now - lastFetchTimeRef.current < 400) return;
 
+      // Show spinner only when truly foreground and no data yet
       if (foreground && events.length === 0) setIsLoading(true);
 
-      // Abort previous request
+      // Abort previous and create a new controller
       abortControllerRef.current?.abort?.();
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+      const ac = new AbortController();
+      abortControllerRef.current = ac;
 
       inflightRequestRef.current = (async () => {
         try {
-          const rows = await fetchEvents({ signal: abortController.signal });
-          if (!isMountedRef.current) return;
-          
+          const rows = await fetchEvents({ signal: ac.signal });
+          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
+
           setEvents(mapServerRowsToUIFormat(rows));
           setError("");
         } catch (err) {
-          if (!isMountedRef.current) return;
+          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
+
           if (err?.name === "AbortError") return;
-          
+
           const status = err?.status || err?.response?.status;
           if (status === 401 || /session expired/i.test(err?.message || "")) {
             setError("Session expired. Please sign in again.");
             return;
           }
-          
-          const errorMessage = 
-            err?.message || 
-            err?.error || 
-            err?.response?.data?.message || 
+
+          const errorMessage =
+            err?.message ||
+            err?.error ||
+            err?.response?.data?.message ||
             err?.response?.data?.error ||
             "Failed to load events";
-          
+
           setError(errorMessage);
         } finally {
-          if (foreground && isMountedRef.current) setIsLoading(false);
+          if (isMountedRef.current && abortControllerRef.current === ac && foreground) {
+            setIsLoading(false);
+          }
           lastFetchTimeRef.current = Date.now();
           inflightRequestRef.current = null;
         }
@@ -282,10 +277,8 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
   useEffect(() => {
     const createdEvent = location.state?.created;
     if (createdEvent) {
-      setEvents((prevEvents) => 
-        prevEvents.some((e) => e.id === createdEvent.id) 
-          ? prevEvents 
-          : [createdEvent, ...prevEvents]
+      setEvents((prev) =>
+        prev.some((e) => e.id === createdEvent.id) ? prev : [createdEvent, ...prev]
       );
       navigate("/events", { replace: true, state: null });
     }
@@ -301,21 +294,64 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
     cooldownMs: 1000,
   });
 
+  // Reverse geocode with timeout/abort
+  const geoAbortRef = useRef(null);
+  async function reverseGeocodeLocation({ lat, lng }) {
+    try {
+      geoAbortRef.current?.abort?.();
+      const ac = new AbortController();
+      geoAbortRef.current = ac;
+
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+      const t = setTimeout(() => ac.abort(), 5000);
+
+      const response = await fetch(url, {
+        headers: { "Accept-Language": "en" },
+        signal: ac.signal,
+      }).catch((e) => {
+        if (e?.name === "AbortError") return null;
+        throw e;
+      });
+
+      clearTimeout(t);
+      if (!response) return; // aborted
+
+      const data = await response.json().catch(() => ({}));
+      const cityName =
+        data?.address?.city ||
+        data?.address?.town ||
+        data?.address?.village ||
+        data?.address?.county ||
+        data?.address?.state ||
+        "";
+
+      if (isMountedRef.current && geoAbortRef.current === ac) {
+        setLocationLabel(cityName || "Your area");
+      }
+    } catch {
+      // swallow, keep previous label
+    }
+  }
+
   // Get user's geolocation
   function getUserLocation() {
     if (!("geolocation" in navigator)) {
       setLocationStatus("unsupported");
       return;
     }
-    
+
     setLocationStatus("loading");
-    
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const coords = { 
-          lat: Number(position.coords.latitude), 
-          lng: Number(position.coords.longitude) 
+        const coords = {
+          lat: Number(position.coords.latitude),
+          lng: Number(position.coords.longitude),
         };
+        if (!isValidLatLng(coords.lat, coords.lng)) {
+          setLocationStatus("denied");
+          return;
+        }
         setUserLocation(coords);
         setLocationStatus("granted");
         reverseGeocodeLocation(coords).catch(() => {});
@@ -327,25 +363,12 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
     );
   }
 
-  async function reverseGeocodeLocation({ lat, lng }) {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-    const response = await fetch(url, { headers: { "Accept-Language": "en" } });
-    const data = await response.json().catch(() => ({}));
-    
-    const cityName =
-      data?.address?.city ||
-      data?.address?.town ||
-      data?.address?.village ||
-      data?.address?.county ||
-      data?.address?.state ||
-      "";
-    
-    setLocationLabel(cityName || "Your area");
-  }
-
   // Get location on mount
   useEffect(() => {
     getUserLocation();
+    return () => {
+      geoAbortRef.current?.abort?.();
+    };
   }, []);
 
   // Categories derived from events data
@@ -357,37 +380,37 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
   // Filtered and sorted events for Explore mode
   const filteredExploreEvents = useMemo(() => {
     let result = events.slice();
-    
-    // Filter by category
+
     if (selectedCategory !== "All") {
       result = result.filter((event) => event.category === selectedCategory);
     }
-    
-    // Filter by search query
+
     if (searchQuery.trim()) {
       const query = searchQuery.trim().toLowerCase();
-      result = result.filter((event) => 
-        (event.title || "").toLowerCase().includes(query) || 
-        (event.place || "").toLowerCase().includes(query)
+      result = result.filter(
+        (event) =>
+          (event.title || "").toLowerCase().includes(query) ||
+          (event.place || "").toLowerCase().includes(query)
       );
     }
-    
-    // Sort by date, then by distance if location available
-    result.sort((a, b) => 
-      new Date(a.dateISO) - new Date(b.dateISO) || 
-      new Date(b.created_at) - new Date(a.created_at)
+
+    result.sort(
+      (a, b) =>
+        new Date(a.dateISO) - new Date(b.dateISO) ||
+        new Date(b.created_at) - new Date(a.created_at)
     );
-    
+
     if (userLocation) {
       result = result
         .map((event) => ({ ...event, _distance: calculateKmBetween(userLocation, event) }))
-        .sort((a, b) => 
-          new Date(a.dateISO) - new Date(b.dateISO) || 
-          a._distance - b._distance
+        .sort(
+          (a, b) =>
+            new Date(a.dateISO) - new Date(b.dateISO) ||
+            a._distance - b._distance
         )
         .map(({ _distance, ...rest }) => rest);
     }
-    
+
     return result;
   }, [events, selectedCategory, searchQuery, userLocation]);
 
@@ -397,35 +420,28 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
   // Events near user location
   const nearbyEvents = useMemo(() => {
     if (!userLocation) return [];
-    
-    // Only include events with valid coordinates
-    const eventsWithCoordinates = events.filter(
-      (event) => event.lat != null && event.lng != null
-    );
-    
-    // Calculate distance for each event
-    const eventsWithDistance = eventsWithCoordinates.map((event) => ({ 
-      ...event, 
-      distanceKm: calculateKmBetween(userLocation, event) 
+
+    const eventsWithCoordinates = events.filter((event) => isValidLatLng(event.lat, event.lng));
+
+    const eventsWithDistance = eventsWithCoordinates.map((event) => ({
+      ...event,
+      distanceKm: calculateKmBetween(userLocation, event),
     }));
-    
-    // Filter by radius and valid distance
+
     let result = eventsWithDistance.filter(
-      (event) => event.distanceKm <= radius && event.distanceKm !== Infinity
+      (event) => Number.isFinite(event.distanceKm) && event.distanceKm <= radius
     );
-    
-    // Filter by search query
+
     if (searchQuery.trim()) {
       const query = searchQuery.trim().toLowerCase();
-      result = result.filter((event) => 
-        (event.title || "").toLowerCase().includes(query) || 
-        (event.place || "").toLowerCase().includes(query)
+      result = result.filter(
+        (event) =>
+          (event.title || "").toLowerCase().includes(query) ||
+          (event.place || "").toLowerCase().includes(query)
       );
     }
-    
-    // Sort by distance
+
     result.sort((a, b) => a.distanceKm - b.distanceKm);
-    
     return result;
   }, [events, userLocation, radius, searchQuery]);
 
@@ -444,9 +460,7 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
                   key={modeOption}
                   onClick={() => setMode(modeOption)}
                   className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                    mode === modeOption 
-                      ? "bg-violet-600 text-white shadow" 
-                      : "text-gray-700 hover:bg-violet-50"
+                    mode === modeOption ? "bg-violet-600 text-white shadow" : "text-gray-700 hover:bg-violet-50"
                   }`}
                 >
                   {modeOption === "explore" ? "Explore" : "Near You"}
@@ -461,9 +475,12 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
               title="Update location"
             >
               <i className="lni lni-map-marker text-violet-600" />
-              {locationLabel || 
-                (locationStatus === "loading" ? "Locating…" : 
-                 locationStatus === "denied" ? "Location off" : "Change")}
+              {locationLabel ||
+                (locationStatus === "loading"
+                  ? "Locating…"
+                  : locationStatus === "denied"
+                  ? "Location off"
+                  : "Change")}
               <i className="lni lni-reload text-gray-400" />
             </button>
           </div>
@@ -487,14 +504,14 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
                 <i className="lni lni-plus" />
               </Link>
             </div>
-            
+
             {/* Status Line */}
             <div className="mt-2 flex items-center gap-2 text-xs">
               <i className="lni lni-navigation text-violet-600" />
               {mode === "near" ? (
                 <span className="text-gray-600">
-                  {locationStatus === "loading" 
-                    ? "Finding your position…" 
+                  {locationStatus === "loading"
+                    ? "Finding your position…"
                     : `${nearbyEvents.length} results within ${radius} km of `}
                   <span className="font-medium text-gray-800">
                     {locationLabel || "your area"}
@@ -515,7 +532,7 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
             <ErrorCard
               error={error}
               onRetry={() => refresh({ foreground: true })}
-              onSignIn={() => navigate("/login", { state: { from: "/events" } })}
+              onSignIn={() => navigate("/auth/signin/email", { state: { from: "/events" } })}
             />
           ) : events.length === 0 ? (
             <EmptyCreate onCreate={() => navigate("/events/new")} />
@@ -555,22 +572,22 @@ const mapServerRowsToUIFormat = useCallback((rows) => {
 }
 
 /* ---------------- Explore Section ---------------- */
-function ExploreSection({ 
-  categories, 
-  selectedCategory, 
-  setSelectedCategory, 
-  popularEvents, 
-  upcomingEvents, 
-  openEventDetail 
+function ExploreSection({
+  categories,
+  selectedCategory,
+  setSelectedCategory,
+  popularEvents,
+  upcomingEvents,
+  openEventDetail,
 }) {
   const countsByCategory = useMemo(() => {
     const allEvents = [...popularEvents, ...upcomingEvents];
     const counts = { All: allEvents.length };
-    
+
     for (const category of categories.slice(1)) {
       counts[category] = allEvents.filter((event) => event.category === category).length;
     }
-    
+
     return counts;
   }, [categories, popularEvents, upcomingEvents]);
 
@@ -579,7 +596,7 @@ function ExploreSection({
       {/* Featured Event */}
       {popularEvents[0] && (
         <div className="mt-4">
-          <div 
+          <div
             className="relative overflow-hidden rounded-3xl shadow-lg cursor-pointer"
             onClick={() => openEventDetail(popularEvents[0])}
           >
@@ -599,7 +616,7 @@ function ExploreSection({
       )}
 
       <HeaderRow title="Popular Events" />
-      
+
       {/* Category Filters */}
       <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
         {categories.map((category) => (
@@ -608,8 +625,8 @@ function ExploreSection({
             onClick={() => setSelectedCategory(category)}
             className={[
               "shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm transition-colors border",
-              selectedCategory === category 
-                ? "bg-violet-600 text-white border-violet-600 shadow" 
+              selectedCategory === category
+                ? "bg-violet-600 text-white border-violet-600 shadow"
                 : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
             ].join(" ")}
           >
@@ -617,9 +634,7 @@ function ExploreSection({
             <span
               className={[
                 "rounded-full px-1.5 text-[11px]",
-                selectedCategory === category 
-                  ? "bg-white/20 text-white" 
-                  : "bg-gray-100 text-gray-600",
+                selectedCategory === category ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600",
               ].join(" ")}
             >
               {countsByCategory[category] ?? 0}
@@ -641,7 +656,7 @@ function ExploreSection({
       </div>
 
       <HeaderRow title="Upcoming Events" />
-      
+
       {/* Upcoming Events List */}
       <div className="mt-3 space-y-3">
         {upcomingEvents.map((event) => (
@@ -661,42 +676,33 @@ function EventCard({ event, onClick }) {
     >
       <div className="relative h-44">
         {event.img ? (
-          <img 
-            src={event.img} 
-            alt={event.title} 
-            className="h-full w-full object-cover" 
-            draggable={false} 
-          />
+          <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
         ) : (
-          <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">
-            No cover
-          </div>
+          <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">No cover</div>
         )}
-        
+
         {/* Date Badge */}
         <div className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-xs text-white ring-1 ring-white/10">
           {event.dateLabel}
         </div>
-        
+
         {/* Category Badge */}
         <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs text-gray-800 ring-1 ring-gray-200">
           {event.category}
         </div>
-        
+
         {/* Gradient Overlay */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
-        
+
         {/* Title and Price */}
         <div className="absolute inset-x-2 bottom-2 flex items-end justify-between">
-          <div className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">
-            {event.title}
-          </div>
+          <div className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">{event.title}</div>
           <div className="rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
             ${event.price}
           </div>
         </div>
       </div>
-      
+
       <div className="p-3">
         <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
           <i className="lni lni-map-marker text-violet-600" />
@@ -708,40 +714,32 @@ function EventCard({ event, onClick }) {
 }
 
 /* ---------------- Near You Section ---------------- */
-function NearYouSection({ 
-  userLocation, 
-  radius, 
-  setRadius, 
-  viewType, 
-  setViewType, 
-  events, 
-  openEventDetail 
+function NearYouSection({
+  userLocation,
+  radius,
+  setRadius,
+  viewType,
+  setViewType,
+  events,
+  openEventDetail,
 }) {
   return (
     <>
       {/* Controls */}
       <div className="mt-5 flex items-center justify-between">
         <RadiusSlider value={radius} onChange={setRadius} />
-        
+
         {/* View Toggle */}
         <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
           <button
             onClick={() => setViewType("list")}
-            className={`rounded-full px-3 py-1.5 text-sm ${
-              viewType === "list" 
-                ? "bg-violet-600 text-white" 
-                : "text-gray-700 hover:bg-violet-50"
-            }`}
+            className={`rounded-full px-3 py-1.5 text-sm ${viewType === "list" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
           >
             <i className="lni lni-list" /> List
           </button>
           <button
             onClick={() => setViewType("map")}
-            className={`rounded-full px-3 py-1.5 text-sm ${
-              viewType === "map" 
-                ? "bg-violet-600 text-white" 
-                : "text-gray-700 hover:bg-violet-50"
-            }`}
+            className={`rounded-full px-3 py-1.5 text-sm ${viewType === "map" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
           >
             <i className="lni lni-map" /> Map
           </button>
@@ -752,15 +750,9 @@ function NearYouSection({
       {viewType === "map" ? (
         <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200">
           {userLocation ? (
-            <NearbyEventsMap 
-              center={userLocation} 
-              events={events} 
-              onOpenEvent={openEventDetail} 
-            />
+            <NearbyEventsMap center={userLocation} events={events} onOpenEvent={openEventDetail} />
           ) : (
-            <div className="aspect-[16/9] grid place-items-center text-sm text-gray-500">
-              Locating…
-            </div>
+            <div className="aspect-[16/9] grid place-items-center text-sm text-gray-500">Locating…</div>
           )}
         </div>
       ) : (
@@ -768,13 +760,7 @@ function NearYouSection({
           {events.length === 0 ? (
             <EmptyState message={`No events within ${radius} km. Try widening the radius.`} />
           ) : (
-            events.map((event) => (
-              <NearbyEventCard 
-                key={event.id} 
-                event={event} 
-                onClick={() => openEventDetail(event)} 
-              />
-            ))
+            events.map((event) => <NearbyEventCard key={event.id} event={event} onClick={() => openEventDetail(event)} />)
           )}
         </div>
       )}
@@ -791,25 +777,20 @@ function NearbyEventCard({ event, onClick }) {
     >
       <div className="h-20 w-28 overflow-hidden rounded-lg bg-gray-100">
         {event.img ? (
-          <img 
-            src={event.img} 
-            alt={event.title} 
-            className="h-full w-full object-cover" 
-            draggable={false} 
-          />
+          <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
         ) : (
-          <div className="grid h-full w-full place-items-center text-gray-400">
-            No cover
-          </div>
+          <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
         )}
       </div>
-      
+
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <div className="truncate text-sm font-semibold">{event.title}</div>
-          <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
-            {formatDistanceLabel(event.distanceKm)} away
-          </span>
+          {Number.isFinite(event.distanceKm) && (
+            <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+              {formatDistanceLabel(event.distanceKm)} away
+            </span>
+          )}
         </div>
         <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
           <i className="lni lni-map-marker text-violet-600" />
@@ -865,24 +846,17 @@ function UpcomingEventRow({ event, onOpen }) {
           <div className="text-[11px] text-gray-500">{event.month}</div>
         </div>
       </div>
-      
+
       <div className="flex min-w-0 flex-1 items-start gap-3">
         {/* Thumbnail */}
         <div className="h-16 w-24 overflow-hidden rounded-lg bg-gray-100">
           {event.img ? (
-            <img 
-              src={event.img} 
-              alt={event.title} 
-              className="h-full w-full object-cover" 
-              draggable={false} 
-            />
+            <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
           ) : (
-            <div className="grid h-full w-full place-items-center text-gray-400">
-              No cover
-            </div>
+            <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
           )}
         </div>
-        
+
         {/* Info */}
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{event.title}</div>
@@ -941,13 +915,13 @@ function LoadingCard() {
 
 function ErrorCard({ error, onRetry, onSignIn }) {
   const isAuthError = /session expired|unauthorized|401/i.test(
-    error?.message || error?.error || (typeof error === 'string' ? error : "")
+    error?.message || error?.error || (typeof error === "string" ? error : "")
   );
-  
-  const errorMessage = 
-    error?.message || 
-    error?.error || 
-    (typeof error === 'string' ? error : 'An unexpected error occurred');
+
+  const errorMessage =
+    error?.message ||
+    error?.error ||
+    (typeof error === "string" ? error : "An unexpected error occurred");
 
   return (
     <div className="grid h-[60vh] place-items-center text-center">
@@ -985,10 +959,10 @@ function NearbyEventsMap({ center, events, onOpenEvent }) {
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <RecenterMap position={[center.lat, center.lng]} />
       {events.map((event) => (
-        <Marker 
-          key={event.id} 
-          position={[event.lat, event.lng]} 
-          icon={pinIcon} 
+        <Marker
+          key={event.id}
+          position={[event.lat, event.lng]}
+          icon={pinIcon}
           eventHandlers={{ click: () => onOpenEvent(event) }}
         >
           <Popup>
@@ -1006,10 +980,10 @@ function NearbyEventsMap({ center, events, onOpenEvent }) {
 
 function RecenterMap({ position }) {
   const map = useMap();
-  
+
   useEffect(() => {
     map.setView(position, 12, { animate: true });
   }, [position, map]);
-  
+
   return null;
 }
