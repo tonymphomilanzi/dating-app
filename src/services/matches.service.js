@@ -2,40 +2,39 @@
 import { api } from "../lib/api";
 
 export const matchesService = {
-  /**
-   * List likes or matches
-   * @param {string} mode - "likes" | "matches"
-   */
-  list: async (mode = "matches") => {
-    const response = await api.get("/matches", { params: { mode } });
+  list: async (mode = "matches", opts = {}) => {
+    const { signal, timeoutMs = 10000, limit, offset, countOnly } = opts;
+    const params = { mode };
+    if (limit != null) params.limit = limit;
+    if (offset != null) params.offset = offset;
+    if (countOnly) params.count_only = true;
+
+    const response = await api.get("/matches", { params, signal, timeoutMs });
     return {
       items: Array.isArray(response?.items) ? response.items : [],
       limited: !!response?.limited,
       total: response?.total || 0,
+      count: response?.count,
     };
   },
 
-  /**
-   * Like back someone who liked you
-   */
-  likeBack: async (targetUserId) => {
-    const response = await api.post("/swipes", { targetUserId, dir: "right" });
-    return response;
+  likeBack: async (targetUserId, opts = {}) => {
+    const { signal, timeoutMs = 8000 } = opts;
+    return api.post("/swipes", { targetUserId, dir: "right" }, { signal, timeoutMs });
   },
 
-  /**
-   * Pass on someone who liked you
-   */
-  pass: async (targetUserId) => {
-    const response = await api.post("/swipes", { targetUserId, dir: "left" });
-    return response;
+  pass: async (targetUserId, opts = {}) => {
+    const { signal, timeoutMs = 8000 } = opts;
+    return api.post("/swipes", { targetUserId, dir: "left" }, { signal, timeoutMs });
   },
 
-  /**
-   * Get likes count (for badge)
-   */
-  getLikesCount: async () => {
-    const response = await api.get("/matches", { params: { mode: "likes", count_only: true } });
+  getLikesCount: async (opts = {}) => {
+    const { signal, timeoutMs = 7000 } = opts;
+    const response = await api.get("/matches", {
+      params: { mode: "likes", count_only: true },
+      signal,
+      timeoutMs,
+    });
     return response?.count || 0;
   },
 };

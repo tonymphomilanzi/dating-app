@@ -74,7 +74,7 @@ const handleLocationChange = useCallback(async (newLocation) => {
     try {
       await updateProfileLocation(lat, lng);
       lastLocationSaveTimeRef.current = now;
-      console.log("📍 Location saved:", { lat: lat.toFixed(4), lng: lng.toFixed(4) });
+      console.log(">>Location saved:", { lat: lat.toFixed(4), lng: lng.toFixed(4) });
     } catch (err) {
       console.warn("Location save failed:", err.message);
     }

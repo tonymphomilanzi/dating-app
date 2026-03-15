@@ -53,40 +53,84 @@ export default function Matches() {
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(null);
 
-  // For race control
-  const requestIdRef = useRef(0);
+  // For race/abort control
+  const abortRef = useRef(null);
+  const lastRefetchTsRef = useRef(0);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
     isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
+    return () => {
+      isMountedRef.current = false;
+      abortRef.current?.abort();
+    };
   }, []);
 
-  const fetchItems = useCallback(async (nextMode = mode) => {
-    const rid = ++requestIdRef.current;
-    setLoading(true);
-    setError("");
+  const fetchItems = useCallback(
+    async (nextMode = mode) => {
+      // Cancel any in-flight request
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
 
-    try {
-      const response = await matchesService.list(nextMode); // expects { items, total, limited }
-      if (!isMountedRef.current || requestIdRef.current !== rid) return;
+      setLoading(true);
+      setError("");
 
-      setItems(response.items || []);
-      setLimited(Boolean(response.limited));
-      setTotal(Number(response.total || 0));
-    } catch (err) {
-      if (!isMountedRef.current || requestIdRef.current !== rid) return;
-      setError(err?.message || "Failed to load");
-    } finally {
-      if (isMountedRef.current && requestIdRef.current === rid) {
-        setLoading(false);
+      try {
+        // Pass signal + timeout so requests never hang
+        const response = await matchesService.list(nextMode, {
+          signal: ac.signal,
+          timeoutMs: 10000,
+        });
+
+        if (!isMountedRef.current || ac.signal.aborted) return;
+
+        setItems(response.items || []);
+        setLimited(Boolean(response.limited));
+        setTotal(Number(response.total || 0));
+      } catch (err) {
+        if (!isMountedRef.current || abortRef.current?.signal.aborted) return;
+        setError(err?.message || "Failed to load");
+      } finally {
+        if (isMountedRef.current && !abortRef.current?.signal.aborted) {
+          setLoading(false);
+        }
       }
-    }
-  }, [mode]);
+    },
+    [mode]
+  );
 
   // Load data on mode change
   useEffect(() => {
     fetchItems(mode);
+    return () => abortRef.current?.abort();
+  }, [mode, fetchItems]);
+
+  // Revalidate on focus/visibility/online with a small cooldown
+  useEffect(() => {
+    const cooldownMs = 2000;
+    const maybeRefetch = () => {
+      const now = Date.now();
+      if (now - lastRefetchTsRef.current < cooldownMs) return;
+      lastRefetchTsRef.current = now;
+      fetchItems(mode);
+    };
+
+    const onFocus = () => maybeRefetch();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") maybeRefetch();
+    };
+    const onOnline = () => maybeRefetch();
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onOnline);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onOnline);
+    };
   }, [mode, fetchItems]);
 
   // Retry really refetches now
@@ -102,7 +146,7 @@ export default function Matches() {
 
       setActionLoading(targetId);
       try {
-        const result = await matchesService.likeBack(targetId);
+        const result = await matchesService.likeBack(targetId, { timeoutMs: 8000 });
         // Remove from UI list
         setItems((prev) => prev.filter((i) => (i.other?.id || i.id) !== targetId));
         // Keep total accurate locally
@@ -130,7 +174,7 @@ export default function Matches() {
 
       setActionLoading(targetId);
       try {
-        await matchesService.pass(targetId);
+        await matchesService.pass(targetId, { timeoutMs: 8000 });
         // Remove from UI list
         setItems((prev) => prev.filter((i) => (i.other?.id || i.id) !== targetId));
         // Keep total accurate locally
@@ -151,7 +195,6 @@ export default function Matches() {
       const targetId = item.other?.id;
       const conversationId = item.conversationId;
 
-      // If we already have a conversation id, use it. Otherwise, go by user id.
       if (conversationId) {
         navigate(`/chat/${conversationId}`);
       } else if (targetId) {

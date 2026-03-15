@@ -1,3 +1,5 @@
+
+// src/lib/api.js
 import { supabase } from "./supabase.client.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
@@ -17,7 +19,7 @@ async function request(method, url, options = {}) {
 
   const fetchUrl = buildUrl(url, params);
 
-  // Always enforce a timeout, even if caller passes a signal
+  // Always enforce a timeout; merge with external signal if provided
   const controller = new AbortController();
   const onExternalAbort = () => controller.abort();
   let timeoutId;
@@ -38,30 +40,27 @@ async function request(method, url, options = {}) {
       },
       body: ["GET", "HEAD"].includes(method) ? undefined : JSON.stringify(data || {}),
       signal: controller.signal,
-      // keepalive: true, // optional: helps on page unload
     });
 
     if (response.status === 204) return null;
 
-    const text = await response.text();
-    let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
+    const responseText = await response.text();
+    let responseJson = null;
+    try { responseJson = responseText ? JSON.parse(responseText) : null; } catch {}
 
     if (!response.ok) {
-      const msg = json?.error || json?.message || `HTTP ${response.status}`;
-      const err = new Error(msg);
-      err.status = response.status;
-      err.body = json;
-      throw err;
+      const errorMessage = responseJson?.error || responseJson?.message || `HTTP ${response.status}`;
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.body = responseJson;
+      throw error;
     }
 
-    return json;
+    return responseJson;
   } catch (error) {
     if (error?.name === "AbortError") {
       const abortError = new Error(
-        controller.signal.aborted && externalSignal?.aborted
-          ? "Request aborted"
-          : `Request timed out after ${timeoutMs}ms`
+        externalSignal?.aborted ? "Request aborted" : `Request timed out after ${timeoutMs}ms`
       );
       abortError.name = "AbortError";
       abortError.status = externalSignal?.aborted ? 0 : 408;
