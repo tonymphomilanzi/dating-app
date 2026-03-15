@@ -139,7 +139,7 @@ const fetchProfiles = useCallback(
       setError("");
     }
 
-try {
+    try {
   const response = await discoverService.list(requestedMode, 20, {
     lat: myLocation?.lat,
     lng: myLocation?.lng,
@@ -157,10 +157,13 @@ try {
   }
 } finally {
   if (requestIdRef.current === currentRequestId && isMountedRef.current && !background) {
-    setIsLoading(false); 
+    setIsLoading(false); // ALWAYS clear the spinner, even after AbortError
   }
-}
 
+    }
+  },
+  [userId, myLocation?.lat, myLocation?.lng]
+);
 
   // Load data when mode or location changes
   useEffect(() => {
