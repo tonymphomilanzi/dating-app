@@ -1,7 +1,7 @@
 import { api } from "../lib/api";
 import { supabase } from "../lib/supabase.client.js";
 
-/* ---------------- Utils ---------------- */
+/* ----------//------ Utils ---------------- */
 function normalizeResponse(response) {
   if (Array.isArray(response?.items)) return response.items;
   if (Array.isArray(response)) return response;
