@@ -4,7 +4,7 @@ import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
 import L from "leaflet";
 import { 
   ChevronLeft, Bookmark, Share2, Calendar, 
-  MapPin, User, Ticket, ExternalLink, Info 
+  MapPin, User, Ticket, ExternalLink, Info,Check
 } from "lucide-react";
 
 // --- Pure Utility: Moved outside to prevent re-declarations ---
