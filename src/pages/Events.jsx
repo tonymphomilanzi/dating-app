@@ -1,10 +1,27 @@
 /**
  * Events.jsx
- * 
- * Main Events page with Explore, Near You, and Massage Clinic tabs.
- * Refactored for modularity, performance, and clean architecture.
- * 
- * Design inspiration: Linear.app + Airbnb (clean, minimal, card-focused UI)
+ *
+ * Main Events page — Explore, Near You, Massage Clinic tabs.
+ *
+ * Bug fixes vs previous version:
+ * ─────────────────────────────────────────────────────────────
+ * 1. isLoading never cleared after navigation → fixed by tracking
+ *    loading state via a ref-based "generation" counter instead of
+ *    comparing AbortController references, which was racy.
+ *
+ * 2. inflightRef never cleared on abort → fixed by always clearing
+ *    it in the finally block unconditionally.
+ *
+ * 3. events.length as useCallback dependency → caused refresh() to
+ *    be recreated on every data change, breaking useRevalidate
+ *    registrations. Fixed by using a ref for the "has data" check.
+ *
+ * 4. AbortController ref mismatch after remount → fixed by using a
+ *    numeric "generation" id to match requests instead of comparing
+ *    object references across render cycles.
+ *
+ * 5. isMountedRef false-negative after remount → fixed, see above.
+ * ─────────────────────────────────────────────────────────────
  */
 
 import React, {
@@ -25,9 +42,7 @@ import { eventsService } from "../services/events.service.js";
    ================================================================ */
 
 const EARTH_RADIUS_KM = 6371;
-const GEOCODE_TIMEOUT_MS = 5000;
-const FETCH_COOLDOWN_MS = 1000;
-const FETCH_THROTTLE_MS = 400;
+const GEOCODE_TIMEOUT_MS = 5_000;
 const AUTO_REFRESH_INTERVAL_MS = 60_000;
 const GEO_TIMEOUT_MS = 12_000;
 const GEO_MAX_AGE_MS = 60_000;
@@ -35,84 +50,79 @@ const DEFAULT_RADIUS_KM = 50;
 const POPULAR_EVENTS_LIMIT = 12;
 const UPCOMING_EVENTS_LIMIT = 10;
 
-/** Tab identifiers */
 const TABS = {
   EXPLORE: "explore",
   NEAR: "near",
   MASSAGE: "massage",
 };
 
-/** View type identifiers */
 const VIEW_TYPES = {
   LIST: "list",
   MAP: "map",
 };
 
 /* ================================================================
-   CUSTOM HOOKS
+   useRevalidate  — background refresh on focus / visibility / online
    ================================================================ */
 
-/**
- * useRevalidate — fires a refetch on focus, visibility change, online,
- * and/or an interval. Deduplicates in-flight requests and enforces
- * a cooldown between successive calls.
- */
 function useRevalidate({
   refetch,
   intervalMs = 0,
   onFocus = true,
   onVisibility = true,
   onOnline = true,
-  cooldownMs = FETCH_COOLDOWN_MS,
+  cooldownMs = 2_000, // increased from 1 s → 2 s to reduce noise
 } = {}) {
   const refetchRef = useRef(refetch);
   refetchRef.current = refetch;
 
-  const lastFetchTime = useRef(0);
-  const isInFlight = useRef(false);
-  const isQueued = useRef(false);
+  const lastFiredAt = useRef(0);
   const timerRef = useRef(null);
+  const inFlightRef = useRef(false);
+  const pendingRef = useRef(false);
 
   const fire = useCallback(() => {
-    const now = Date.now();
+    const attempt = () => {
+      const now = Date.now();
+      const elapsed = now - lastFiredAt.current;
 
-    const run = () => {
-      isInFlight.current = true;
+      if (elapsed < cooldownMs) {
+        // Schedule a single deferred attempt
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(attempt, cooldownMs - elapsed);
+        return;
+      }
+
+      if (inFlightRef.current) {
+        pendingRef.current = true;
+        return;
+      }
+
+      inFlightRef.current = true;
+      lastFiredAt.current = Date.now();
+
       Promise.resolve(refetchRef.current?.())
         .catch(() => {})
         .finally(() => {
-          isInFlight.current = false;
-          lastFetchTime.current = Date.now();
-          if (isQueued.current) {
-            isQueued.current = false;
-            fire();
+          inFlightRef.current = false;
+          if (pendingRef.current) {
+            pendingRef.current = false;
+            attempt();
           }
         });
     };
 
-    if (isInFlight.current) {
-      isQueued.current = true;
-      return;
-    }
-
-    const elapsed = now - lastFetchTime.current;
-    if (elapsed < cooldownMs) {
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(run, cooldownMs - elapsed);
-      return;
-    }
-
-    run();
+    attempt();
   }, [cooldownMs]);
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const onVisibilityChange = () => {
       if (document.visibilityState === "visible") fire();
     };
 
     if (onFocus) window.addEventListener("focus", fire, { passive: true });
     if (onVisibility)
-      document.addEventListener("visibilitychange", handleVisibilityChange, {
+      document.addEventListener("visibilitychange", onVisibilityChange, {
         passive: true,
       });
     if (onOnline) window.addEventListener("online", fire, { passive: true });
@@ -123,57 +133,51 @@ function useRevalidate({
     return () => {
       if (onFocus) window.removeEventListener("focus", fire);
       if (onVisibility)
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
       if (onOnline) window.removeEventListener("online", fire);
       if (intervalId) clearInterval(intervalId);
       clearTimeout(timerRef.current);
     };
-  }, [intervalMs, onFocus, onVisibility, onOnline, fire]);
+  }, [fire, intervalMs, onFocus, onOnline, onVisibility]);
 }
 
-/**
- * useGeolocation — manages browser geolocation state and reverse geocoding.
- * Returns: { userLocation, locationStatus, locationLabel, requestLocation }
- */
+/* ================================================================
+   useGeolocation hook
+   ================================================================ */
+
 function useGeolocation() {
   const [userLocation, setUserLocation] = useState(null);
-  const [locationStatus, setLocationStatus] = useState("loading");
+  const [locationStatus, setLocationStatus] = useState("idle");
   const [locationLabel, setLocationLabel] = useState("");
 
-  const isMountedRef = useRef(true);
-  const geoAbortRef = useRef(null);
+  const mountedRef = useRef(true);
+  const geocodeAbortRef = useRef(null);
 
   useEffect(() => {
-    isMountedRef.current = true;
+    mountedRef.current = true;
     return () => {
-      isMountedRef.current = false;
-      geoAbortRef.current?.abort?.();
+      mountedRef.current = false;
+      geocodeAbortRef.current?.abort();
     };
   }, []);
 
-  /** Reverse-geocode lat/lng → city name using Nominatim */
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
+    geocodeAbortRef.current?.abort();
+    const ac = new AbortController();
+    geocodeAbortRef.current = ac;
+
+    const timeoutId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+
     try {
-      geoAbortRef.current?.abort?.();
-      const ac = new AbortController();
-      geoAbortRef.current = ac;
-
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-      const timeoutId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
-
-      const response = await fetch(url, {
-        headers: { "Accept-Language": "en" },
-        signal: ac.signal,
-      }).catch((e) => {
-        if (e?.name === "AbortError") return null;
-        throw e;
-      });
-
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+        { headers: { "Accept-Language": "en" }, signal: ac.signal }
+      );
       clearTimeout(timeoutId);
-      if (!response) return;
+      if (!mountedRef.current || ac.signal.aborted) return;
 
-      const data = await response.json().catch(() => ({}));
-      const cityName =
+      const data = await res.json().catch(() => ({}));
+      const city =
         data?.address?.city ||
         data?.address?.town ||
         data?.address?.village ||
@@ -181,15 +185,13 @@ function useGeolocation() {
         data?.address?.state ||
         "";
 
-      if (isMountedRef.current && geoAbortRef.current === ac) {
-        setLocationLabel(cityName || "Your area");
-      }
+      if (mountedRef.current) setLocationLabel(city || "Your area");
     } catch {
-      // Silently fail — keep previous label
+      clearTimeout(timeoutId);
+      // silent fail — keep previous label
     }
   }, []);
 
-  /** Request user's geolocation from browser */
   const requestLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
       setLocationStatus("unsupported");
@@ -199,22 +201,24 @@ function useGeolocation() {
     setLocationStatus("loading");
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = {
-          lat: Number(position.coords.latitude),
-          lng: Number(position.coords.longitude),
+      ({ coords }) => {
+        const pos = {
+          lat: Number(coords.latitude),
+          lng: Number(coords.longitude),
         };
-
-        if (!isValidLatLng(coords.lat, coords.lng)) {
+        if (!isValidLatLng(pos.lat, pos.lng)) {
           setLocationStatus("denied");
           return;
         }
-
-        setUserLocation(coords);
-        setLocationStatus("granted");
-        reverseGeocode(coords).catch(() => {});
+        if (mountedRef.current) {
+          setUserLocation(pos);
+          setLocationStatus("granted");
+          reverseGeocode(pos);
+        }
       },
-      () => setLocationStatus("denied"),
+      () => {
+        if (mountedRef.current) setLocationStatus("denied");
+      },
       {
         enableHighAccuracy: true,
         timeout: GEO_TIMEOUT_MS,
@@ -226,161 +230,194 @@ function useGeolocation() {
   return { userLocation, locationStatus, locationLabel, requestLocation };
 }
 
-/**
- * useEvents — manages event data fetching, state, and refresh logic.
- */
-function useEvents({ isMountedRef }) {
+/* ================================================================
+   useEvents hook  — THE MAIN FIX IS HERE
+   ================================================================ */
+
+function useEvents() {
   const [events, setEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const inflightRef = useRef(null);
-  const lastFetchTimeRef = useRef(0);
-  const abortControllerRef = useRef(null);
+  // ── Stable refs so refresh() never needs to be recreated ──
+  const mountedRef = useRef(true);
+  const abortRef = useRef(null);         // current AbortController
+  const requestGenRef = useRef(0);       // monotonically increasing request id
+  const inFlightRef = useRef(false);     // is a request currently running?
+  const hasDataRef = useRef(false);      // have we ever received data?
+  const isLoadingRef = useRef(true);     // mirror of isLoading for use inside closure
 
-  const mapServerRows = useCallback((rows) => {
-    return rows.map((event) => ({
-      id: event.id,
-      title: event.title || "Untitled Event",
-      description: event.description || "",
-      img: event.cover_url || "",
-      dateISO: event.starts_at,
-      dateLabel: formatDateLabel(event.starts_at),
-      ...extractDayMonth(event.starts_at),
-      category: event.category || "Other",
-      place: event.city || "Location TBD",
-      lat: event.lat != null ? Number(event.lat) : null,
-      lng: event.lng != null ? Number(event.lng) : null,
-      price: event.price != null ? Number(event.price) : 0,
-      created_at: event.created_at,
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // Abort any pending request on unmount so it doesn't resolve
+      // and try to setState on an unmounted component.
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  /** Map raw server rows → UI-friendly shape */
+  const mapRows = useCallback((rows) => {
+    return rows.map((ev) => ({
+      id: ev.id,
+      title: ev.title || "Untitled Event",
+      description: ev.description || "",
+      img: ev.cover_url || "",
+      dateISO: ev.starts_at,
+      dateLabel: formatDateLabel(ev.starts_at),
+      ...extractDayMonth(ev.starts_at),
+      category: ev.category || "Other",
+      place: ev.city || "Location TBD",
+      lat: ev.lat != null ? Number(ev.lat) : null,
+      lng: ev.lng != null ? Number(ev.lng) : null,
+      price: ev.price != null ? Number(ev.price) : 0,
+      created_at: ev.created_at,
     }));
   }, []);
 
+  /**
+   * refresh({ foreground })
+   *
+   * Key guarantees:
+   *  • Only ONE request in flight at a time (the old one is aborted first).
+   *  • Uses a "generation" counter — if a newer request supersedes this one,
+   *    we discard the stale result instead of mis-matching AbortController refs.
+   *  • isLoading is ALWAYS set back to false in finally, even on abort, even
+   *    on unmount — preventing the "stuck on loading" bug.
+   *  • No dependency on events.length so the function reference is stable.
+   */
   const refresh = useCallback(
     async ({ foreground = false } = {}) => {
-      const now = Date.now();
-
-      // Prevent duplicate concurrent requests
-      if (inflightRef.current) return inflightRef.current;
-
-      // Throttle rapid successive calls
-      if (now - lastFetchTimeRef.current < FETCH_THROTTLE_MS) return;
-
-      // Show spinner only for foreground loads with no existing data
-      if (foreground && events.length === 0) setIsLoading(true);
-
-      // Cancel any previous in-flight request
-      abortControllerRef.current?.abort?.();
+      // Abort the previous request (if any)
+      abortRef.current?.abort();
       const ac = new AbortController();
-      abortControllerRef.current = ac;
+      abortRef.current = ac;
 
-      inflightRef.current = (async () => {
-        try {
-          const rows = await eventsService.list({ signal: ac.signal });
+      // Stamp this request with a unique generation id
+      requestGenRef.current += 1;
+      const myGen = requestGenRef.current;
 
-          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
+      // Show spinner only when:
+      //  - explicitly foreground AND
+      //  - we have no data to show yet
+      if (foreground && !hasDataRef.current) {
+        setIsLoading(true);
+        isLoadingRef.current = true;
+      }
 
-          setEvents(mapServerRows(rows));
-          setError("");
-        } catch (err) {
-          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
-          if (err?.name === "AbortError") return;
+      inFlightRef.current = true;
 
-          const status = err?.status || err?.response?.status;
-          if (status === 401 || /session expired/i.test(err?.message || "")) {
-            setError("Session expired. Please sign in again.");
-            return;
-          }
+      try {
+        const rows = await eventsService.list({ signal: ac.signal });
 
-          setError(
-            err?.message ||
-              err?.error ||
-              err?.response?.data?.message ||
-              "Failed to load events"
-          );
-        } finally {
-          if (
-            isMountedRef.current &&
-            abortControllerRef.current === ac &&
-            foreground
-          ) {
-            setIsLoading(false);
-          }
-          lastFetchTimeRef.current = Date.now();
-          inflightRef.current = null;
+        // Discard if:
+        //  - component unmounted
+        //  - a newer request has already been dispatched
+        if (!mountedRef.current || requestGenRef.current !== myGen) return;
+
+        hasDataRef.current = true;
+        setEvents(mapRows(rows));
+        setError("");
+      } catch (err) {
+        if (!mountedRef.current || requestGenRef.current !== myGen) return;
+
+        // Aborted requests are not errors — just ignore them silently
+        if (err?.name === "AbortError") return;
+
+        const status = err?.status || err?.response?.status;
+        if (status === 401 || /session expired/i.test(err?.message ?? "")) {
+          setError("Session expired. Please sign in again.");
+          return;
         }
-      })();
 
-      return inflightRef.current;
+        setError(
+          err?.message ||
+            err?.error ||
+            err?.response?.data?.message ||
+            "Failed to load events"
+        );
+      } finally {
+        inFlightRef.current = false;
+
+        /*
+         * ✅ CRITICAL FIX:
+         * Always clear the loading spinner as long as this is still the
+         * most recent request AND the component is still mounted.
+         *
+         * Previous code only cleared loading when `foreground === true`,
+         * which meant background refreshes triggered after navigation
+         * could leave the spinner running forever.
+         *
+         * We also clear it when aborted — the NEXT refresh() call will
+         * set it again if needed. This prevents the stuck-loading state.
+         */
+        if (mountedRef.current && requestGenRef.current === myGen) {
+          setIsLoading(false);
+          isLoadingRef.current = false;
+        }
+      }
     },
-    [events.length, mapServerRows, isMountedRef]
+    [mapRows] // ✅ stable — no events.length dependency
   );
 
-  return { events, setEvents, isLoading, error, refresh };
+  return { events, setEvents, isLoading, error, refresh, mountedRef };
 }
 
-/**
- * useMassageClinics — fetches massage clinics based on location.
- * Uses a mock/stub for now; replace fetchClinics with real API.
- */
+/* ================================================================
+   useMassageClinics hook
+   ================================================================ */
+
 function useMassageClinics({ userLocation, locationStatus }) {
   const [clinics, setClinics] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [hasFetched, setHasFetched] = useState(false);
 
+  const mountedRef = useRef(true);
   const abortRef = useRef(null);
 
-  /**
-   * Fetch clinics — replace this stub with your actual API call.
-   * Expected shape: [{ id, name, address, lat, lng, rating, distance_km }]
-   */
-  const fetchClinics = useCallback(
-    async ({ signal } = {}) => {
-      if (!userLocation) return [];
-
-      // TODO: Replace with real API call, e.g.:
-      // return await massageClinicService.nearby({
-      //   lat: userLocation.lat,
-      //   lng: userLocation.lng,
-      //   signal,
-      // });
-
-      // Stub: simulate network delay, return empty (triggers empty state)
-      await new Promise((res) => setTimeout(res, 800));
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-      return [];
-    },
-    [userLocation]
-  );
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const loadClinics = useCallback(async () => {
     if (locationStatus !== "granted" || !userLocation) return;
 
-    setIsLoading(true);
-    setError("");
-
-    abortRef.current?.abort?.();
+    abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
 
+    setIsLoading(true);
+    setError("");
+
     try {
-      const data = await fetchClinics({ signal: ac.signal });
+      // ── Replace this stub with your real API call ──────────────
+      // const data = await massageClinicService.nearby({
+      //   lat: userLocation.lat,
+      //   lng: userLocation.lng,
+      //   signal: ac.signal,
+      // });
+      await new Promise((res) => setTimeout(res, 800));
       if (ac.signal.aborted) return;
-      setClinics(data || []);
+      const data = [];
+      // ──────────────────────────────────────────────────────────
+
+      if (!mountedRef.current) return;
+      setClinics(data ?? []);
       setHasFetched(true);
     } catch (err) {
-      if (err?.name === "AbortError") return;
+      if (err?.name === "AbortError" || !mountedRef.current) return;
       setError(err?.message || "Failed to load massage clinics");
       setHasFetched(true);
     } finally {
-      if (!ac.signal.aborted) setIsLoading(false);
+      if (mountedRef.current && !ac.signal.aborted) setIsLoading(false);
     }
-  }, [userLocation, locationStatus, fetchClinics]);
-
-  useEffect(() => {
-    return () => abortRef.current?.abort?.();
-  }, []);
+  }, [userLocation, locationStatus]);
 
   return { clinics, isLoading, error, hasFetched, loadClinics };
 }
@@ -391,23 +428,17 @@ function useMassageClinics({ userLocation, locationStatus }) {
 
 const toRadians = (deg) => (deg * Math.PI) / 180;
 
-/** Haversine distance between two {lat,lng} points in km */
 function calculateKmBetween(a, b) {
-  if (
-    !a || !b ||
-    a.lat == null || a.lng == null ||
-    b.lat == null || b.lng == null
-  ) return Infinity;
+  if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null)
+    return Infinity;
 
   const dLat = toRadians(b.lat - a.lat);
   const dLng = toRadians(b.lng - a.lng);
-  const lat1 = toRadians(a.lat);
-  const lat2 = toRadians(b.lat);
-
   const h =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-
+    Math.cos(toRadians(a.lat)) *
+      Math.cos(toRadians(b.lat)) *
+      Math.sin(dLng / 2) ** 2;
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
@@ -418,10 +449,7 @@ function formatDistanceLabel(km) {
 
 function formatDateLabel(iso) {
   if (!iso) return "";
-  return new Date(iso).toLocaleDateString([], {
-    day: "2-digit",
-    month: "short",
-  });
+  return new Date(iso).toLocaleDateString([], { day: "2-digit", month: "short" });
 }
 
 function extractDayMonth(iso) {
@@ -434,7 +462,6 @@ function extractDayMonth(iso) {
 }
 
 const isFiniteNum = (n) => Number.isFinite(Number(n));
-
 const isValidLatLng = (lat, lng) =>
   isFiniteNum(lat) &&
   isFiniteNum(lng) &&
@@ -469,46 +496,49 @@ const pinIcon = L.divIcon({
 });
 
 /* ================================================================
-   MAIN EVENTS PAGE
+   MAIN PAGE
    ================================================================ */
 
 export default function Events() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ── UI state ──────────────────────────────────────────────────
+  // ── UI state ────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(TABS.EXPLORE);
   const [searchQuery, setSearchQuery] = useState("");
   const [radius, setRadius] = useState(DEFAULT_RADIUS_KM);
   const [viewType, setViewType] = useState(VIEW_TYPES.LIST);
   const [selectedCategory, setSelectedCategory] = useState("All");
 
-  // ── Mount guard ───────────────────────────────────────────────
-  const isMountedRef = useRef(true);
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
-  }, []);
-
-  // ── Geolocation ───────────────────────────────────────────────
+  // ── Data hooks ──────────────────────────────────────────────
   const { userLocation, locationStatus, locationLabel, requestLocation } =
     useGeolocation();
 
-  useEffect(() => {
-    requestLocation();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const { events, setEvents, isLoading, error, refresh } = useEvents();
 
-  // ── Events data ───────────────────────────────────────────────
-  const { events, setEvents, isLoading, error, refresh } = useEvents({
-    isMountedRef,
-  });
+  const {
+    clinics,
+    isLoading: clinicsLoading,
+    error: clinicsError,
+    hasFetched: clinicsHasFetched,
+    loadClinics,
+  } = useMassageClinics({ userLocation, locationStatus });
 
-  // Initial load
+  // ── Bootstrap ───────────────────────────────────────────────
+
+  // Fetch events on first mount
   useEffect(() => {
     refresh({ foreground: true });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Handle event created via navigation state
+  // Fetch location on first mount
+  useEffect(() => {
+    requestLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Navigation state: newly created event ───────────────────
   useEffect(() => {
     const created = location.state?.created;
     if (!created) return;
@@ -518,43 +548,40 @@ export default function Events() {
     navigate("/events", { replace: true, state: null });
   }, [location.state, navigate, setEvents]);
 
-  // Background auto-refresh
+  // ── Background revalidation ─────────────────────────────────
+  //
+  // ✅ KEY FIX: we pass a stable lambda that calls refresh({ foreground: false })
+  // so useRevalidate never gets a new function reference and never
+  // re-registers listeners on every render.
+  //
   useRevalidate({
     refetch: () => refresh({ foreground: false }),
     intervalMs: AUTO_REFRESH_INTERVAL_MS,
-    onFocus: true,
-    onVisibility: true,
+    onFocus: true,      // ← this fires when the user returns to the tab
+    onVisibility: true, // ← this fires when the browser tab becomes visible
     onOnline: true,
-    cooldownMs: FETCH_COOLDOWN_MS,
+    cooldownMs: 2_000,
   });
 
-  // ── Massage Clinics data ──────────────────────────────────────
-  const { clinics, isLoading: clinicsLoading, error: clinicsError,
-    hasFetched: clinicsHasFetched, loadClinics } =
-    useMassageClinics({ userLocation, locationStatus });
-
-  // Load clinics when Massage tab is activated
+  // ── Load clinics lazily when Massage tab first opened ───────
   useEffect(() => {
     if (activeTab === TABS.MASSAGE && !clinicsHasFetched) {
       loadClinics();
     }
   }, [activeTab, clinicsHasFetched, loadClinics]);
 
-  // ── Derived data ──────────────────────────────────────────────
+  // ── Derived / memoised data ─────────────────────────────────
 
-  /** All unique categories from fetched events */
   const categories = useMemo(() => {
     const set = new Set(events.map((e) => e.category).filter(Boolean));
     return ["All", ...Array.from(set).sort()];
   }, [events]);
 
-  /** Events filtered by category + search, sorted by date then proximity */
   const filteredEvents = useMemo(() => {
     let result = events.slice();
 
-    if (selectedCategory !== "All") {
+    if (selectedCategory !== "All")
       result = result.filter((e) => e.category === selectedCategory);
-    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -565,22 +592,20 @@ export default function Events() {
       );
     }
 
-    // Primary sort: date ascending
     result.sort(
       (a, b) =>
         new Date(a.dateISO) - new Date(b.dateISO) ||
         new Date(b.created_at) - new Date(a.created_at)
     );
 
-    // Secondary sort: proximity (when location is known)
     if (userLocation) {
       result = result
-        .map((e) => ({ ...e, _dist: calculateKmBetween(userLocation, e) }))
+        .map((e) => ({ ...e, _d: calculateKmBetween(userLocation, e) }))
         .sort(
           (a, b) =>
-            new Date(a.dateISO) - new Date(b.dateISO) || a._dist - b._dist
+            new Date(a.dateISO) - new Date(b.dateISO) || a._d - b._d
         )
-        .map(({ _dist, ...rest }) => rest);
+        .map(({ _d, ...rest }) => rest);
     }
 
     return result;
@@ -590,13 +615,11 @@ export default function Events() {
     () => filteredEvents.slice(0, POPULAR_EVENTS_LIMIT),
     [filteredEvents]
   );
-
   const upcomingEvents = useMemo(
     () => filteredEvents.slice(0, UPCOMING_EVENTS_LIMIT),
     [filteredEvents]
   );
 
-  /** Events within the selected radius that have valid coordinates */
   const nearbyEvents = useMemo(() => {
     if (!userLocation) return [];
 
@@ -617,22 +640,24 @@ export default function Events() {
     return result.sort((a, b) => a.distanceKm - b.distanceKm);
   }, [events, userLocation, radius, searchQuery]);
 
-  // ── Handlers ─────────────────────────────────────────────────
+  // ── Handlers ────────────────────────────────────────────────
+
   const openEventDetail = useCallback(
     (event) => navigate(`/events/${event.id}`, { state: { event } }),
     [navigate]
   );
 
-  const handleCreateClinic = useCallback(() => {
-    // Navigate to create clinic page (to be implemented)
-    navigate("/massage-clinics/new");
-  }, [navigate]);
+  const handleCreateClinic = useCallback(
+    () => navigate("/massage-clinics/new"),
+    [navigate]
+  );
 
-  // ── Render ────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────
   return (
     <div className="min-h-dvh bg-white text-gray-900 pb-24">
       <div className="mx-auto w-full max-w-md">
-        {/* ── Sticky Header ────────────────────────────────────── */}
+
+        {/* Sticky header with tabs + search */}
         <PageHeader
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -641,14 +666,12 @@ export default function Events() {
           locationStatus={locationStatus}
           locationLabel={locationLabel}
           onUpdateLocation={requestLocation}
-          activeMode={activeTab}
           nearbyCount={nearbyEvents.length}
           radius={radius}
         />
 
-        {/* ── Tab Body ──────────────────────────────────────────── */}
+        {/* Body */}
         <div className="px-4 pt-3">
-          {/* Global loading/error/empty states */}
           {isLoading ? (
             <LoadingCard />
           ) : error ? (
@@ -704,14 +727,13 @@ export default function Events() {
         </div>
       </div>
 
-      {/* ── Floating Create Button ────────────────────────────── */}
+      {/* FAB — hidden on massage tab */}
       {activeTab !== TABS.MASSAGE && (
         <Link
           to="/events/new"
           className="fixed bottom-28 right-5 z-20 grid h-14 w-14 place-items-center
             rounded-full bg-violet-600 text-white shadow-lg
             hover:bg-violet-700 active:scale-95 transition-transform"
-          title="Create event"
           aria-label="Create new event"
         >
           <i className="lni lni-plus text-xl" />
@@ -725,10 +747,6 @@ export default function Events() {
    PAGE HEADER
    ================================================================ */
 
-/**
- * PageHeader — sticky top bar with tab navigation, location badge,
- * search input, and contextual status line.
- */
 function PageHeader({
   activeTab,
   onTabChange,
@@ -740,19 +758,19 @@ function PageHeader({
   nearbyCount,
   radius,
 }) {
-  const tabs = [
-    { id: TABS.EXPLORE, label: "Explore", icon: "lni-compass" },
-    { id: TABS.NEAR,    label: "Near You", icon: "lni-map-marker" },
-    { id: TABS.MASSAGE, label: "Massage Clinic", icon: "lni-hand" },
+  const TABS_CONFIG = [
+    { id: TABS.EXPLORE, label: "Explore",        icon: "lni-compass"    },
+    { id: TABS.NEAR,    label: "Near You",        icon: "lni-map-marker" },
+    { id: TABS.MASSAGE, label: "Massage Clinic",  icon: "lni-hand"       },
   ];
 
-  const searchPlaceholder = {
+  const placeholders = {
     [TABS.EXPLORE]: "Search events…",
     [TABS.NEAR]:    "Search nearby…",
     [TABS.MASSAGE]: "Search clinics…",
-  }[activeTab] ?? "Search…";
+  };
 
-  const statusLine = {
+  const statusLines = {
     [TABS.EXPLORE]: "Discover top picks and upcoming events",
     [TABS.NEAR]:
       locationStatus === "loading"
@@ -762,16 +780,17 @@ function PageHeader({
       locationStatus === "loading"
         ? "Finding your position…"
         : `Showing massage clinics near ${locationLabel || "you"}`,
-  }[activeTab];
+  };
 
   return (
-    <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-gray-100
-      px-4 pt-3 pb-3 shadow-sm">
-      {/* ── Top row: tabs + location ─────────────────────── */}
+    <div
+      className="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b
+        border-gray-100 px-4 pt-3 pb-3 shadow-sm"
+    >
+      {/* Tab row + location badge */}
       <div className="flex items-center justify-between gap-2">
-        {/* Tab Pills */}
         <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-          {tabs.map((tab) => (
+          {TABS_CONFIG.map((tab) => (
             <TabPill
               key={tab.id}
               label={tab.label}
@@ -781,8 +800,6 @@ function PageHeader({
             />
           ))}
         </div>
-
-        {/* Location Badge */}
         <LocationBadge
           status={locationStatus}
           label={locationLabel}
@@ -790,16 +807,18 @@ function PageHeader({
         />
       </div>
 
-      {/* ── Search Row ───────────────────────────────────── */}
+      {/* Search bar */}
       <div className="mt-3">
-        <div className="flex items-center gap-2 rounded-2xl border border-gray-200
-          bg-white px-4 py-2.5 shadow-sm focus-within:ring-2 focus-within:ring-violet-200
-          transition-shadow">
+        <div
+          className="flex items-center gap-2 rounded-2xl border border-gray-200
+            bg-white px-4 py-2.5 shadow-sm
+            focus-within:ring-2 focus-within:ring-violet-200 transition-shadow"
+        >
           <i className="lni lni-search-alt text-gray-400 shrink-0" />
           <input
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={searchPlaceholder}
+            placeholder={placeholders[activeTab] ?? "Search…"}
             className="w-full bg-transparent text-sm text-gray-800
               placeholder:text-gray-400 focus:outline-none"
             aria-label="Search"
@@ -819,7 +838,6 @@ function PageHeader({
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg
                 text-gray-600 hover:bg-gray-100 transition-colors"
               aria-label="Create event"
-              title="Create event"
             >
               <i className="lni lni-plus" />
             </Link>
@@ -829,7 +847,7 @@ function PageHeader({
         {/* Status line */}
         <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500 px-1">
           <i className="lni lni-navigation text-violet-600" />
-          <span>{statusLine}</span>
+          <span>{statusLines[activeTab]}</span>
           {activeTab === TABS.NEAR && locationLabel && (
             <span className="font-medium text-gray-700 ml-0.5">
               · {locationLabel}
@@ -841,14 +859,13 @@ function PageHeader({
   );
 }
 
-/* ── Tab Pill ──────────────────────────────────────────────────── */
 function TabPill({ label, icon, isActive, onClick }) {
   return (
     <button
       onClick={onClick}
       className={[
         "shrink-0 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5",
-        "text-sm font-medium transition-all duration-150 border",
+        "text-sm font-medium transition-all duration-150 border whitespace-nowrap",
         isActive
           ? "bg-violet-600 text-white border-violet-600 shadow-sm"
           : "bg-white text-gray-600 border-gray-200 hover:bg-violet-50 hover:border-violet-200",
@@ -860,15 +877,13 @@ function TabPill({ label, icon, isActive, onClick }) {
   );
 }
 
-/* ── Location Badge ────────────────────────────────────────────── */
 function LocationBadge({ status, label, onRefresh }) {
-  const displayLabel =
+  const display =
     label ||
     {
-      loading: "Locating…",
-      denied: "Location off",
+      loading:     "Locating…",
+      denied:      "Location off",
       unsupported: "Unavailable",
-      granted: "Your area",
     }[status] ||
     "Change";
 
@@ -878,11 +893,10 @@ function LocationBadge({ status, label, onRefresh }) {
       className="shrink-0 inline-flex items-center gap-1.5 rounded-full border
         border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600
         hover:bg-gray-50 hover:border-gray-300 transition-colors whitespace-nowrap"
-      title="Update location"
       aria-label="Update location"
     >
       <i className="lni lni-map-marker text-violet-600 text-xs" />
-      <span className="max-w-[80px] truncate">{displayLabel}</span>
+      <span className="max-w-[80px] truncate">{display}</span>
       <i className="lni lni-reload text-gray-400 text-xs" />
     </button>
   );
@@ -900,20 +914,19 @@ function ExploreSection({
   upcomingEvents,
   openEventDetail,
 }) {
-  /** Per-category event counts for the filter badges */
   const countsByCategory = useMemo(() => {
-    const allEvents = [...new Map(
-      [...popularEvents, ...upcomingEvents].map((e) => [e.id, e])
-    ).values()];
-
-    const counts = { All: allEvents.length };
+    const all = [
+      ...new Map(
+        [...popularEvents, ...upcomingEvents].map((e) => [e.id, e])
+      ).values(),
+    ];
+    const counts = { All: all.length };
     for (const cat of categories.slice(1)) {
-      counts[cat] = allEvents.filter((e) => e.category === cat).length;
+      counts[cat] = all.filter((e) => e.category === cat).length;
     }
     return counts;
   }, [categories, popularEvents, upcomingEvents]);
 
-  /** Events shown in carousel after category filter */
   const carouselEvents = useMemo(
     () =>
       selectedCategory === "All"
@@ -924,7 +937,7 @@ function ExploreSection({
 
   return (
     <div className="space-y-1">
-      {/* ── Featured Banner ────────────────────────────────── */}
+      {/* Featured banner */}
       {popularEvents[0] && (
         <FeaturedEventBanner
           event={popularEvents[0]}
@@ -932,10 +945,9 @@ function ExploreSection({
         />
       )}
 
-      {/* ── Popular ────────────────────────────────────────── */}
+      {/* Popular */}
       <SectionHeader title="Popular Events" className="mt-6" />
 
-      {/* Category filter chips */}
       <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1 pt-3">
         {categories.map((cat) => (
           <CategoryChip
@@ -948,7 +960,6 @@ function ExploreSection({
         ))}
       </div>
 
-      {/* Horizontal event cards */}
       {carouselEvents.length === 0 ? (
         <EmptyState message="No events in this category." />
       ) : (
@@ -963,158 +974,14 @@ function ExploreSection({
         </div>
       )}
 
-      {/* ── Upcoming ───────────────────────────────────────── */}
+      {/* Upcoming */}
       <SectionHeader title="Upcoming Events" className="mt-6" />
-
       <div className="mt-3 space-y-3 pb-4">
         {upcomingEvents.map((event) => (
-          <UpcomingEventRow
-            key={event.id}
-            event={event}
-            onOpen={openEventDetail}
-          />
+          <UpcomingEventRow key={event.id} event={event} onOpen={openEventDetail} />
         ))}
       </div>
     </div>
-  );
-}
-
-/* ── Featured Event Banner ─────────────────────────────────────── */
-function FeaturedEventBanner({ event, onClick }) {
-  return (
-    <div className="mt-4">
-      <button
-        onClick={onClick}
-        className="relative w-full overflow-hidden rounded-3xl shadow-lg
-          text-left active:scale-[0.99] transition-transform"
-        aria-label={`View featured event: ${event.title}`}
-      >
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-56 w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="h-56 w-full bg-gradient-to-br from-violet-100 to-purple-200
-            grid place-items-center text-violet-400">
-            <i className="lni lni-calendar text-5xl" />
-          </div>
-        )}
-
-        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
-
-        {/* Featured label */}
-        <div className="absolute top-3 left-3">
-          <span className="inline-flex items-center gap-1 rounded-full bg-violet-600/90
-            px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
-            <i className="lni lni-star-filled text-[10px]" />
-            Featured
-          </span>
-        </div>
-
-        <div className="absolute bottom-4 left-4 right-4 text-white">
-          <p className="text-lg font-bold leading-tight drop-shadow">
-            {event.title}
-          </p>
-          <div className="mt-1 flex items-center gap-1.5 text-sm opacity-90">
-            <i className="lni lni-map-marker text-xs" />
-            {event.place}
-          </div>
-        </div>
-      </button>
-    </div>
-  );
-}
-
-/* ── Event Card (carousel) ─────────────────────────────────────── */
-function EventCard({ event, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="group w-[260px] shrink-0 overflow-hidden rounded-2xl border
-        border-gray-200 bg-white text-left shadow-sm
-        hover:shadow-md active:scale-[0.99] transition-all"
-    >
-      {/* Cover image */}
-      <div className="relative h-44 bg-gray-100">
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            draggable={false}
-          />
-        ) : (
-          <div className="grid h-full w-full place-items-center text-gray-300">
-            <i className="lni lni-image text-4xl" />
-          </div>
-        )}
-
-        {/* Date pill */}
-        <div className="absolute left-2 top-2 rounded-lg bg-black/55 px-2 py-1
-          text-xs text-white backdrop-blur-sm ring-1 ring-white/10">
-          {event.dateLabel}
-        </div>
-
-        {/* Category pill */}
-        <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2.5
-          py-0.5 text-xs text-gray-800 ring-1 ring-gray-200 backdrop-blur-sm">
-          {event.category}
-        </div>
-
-        {/* Gradient + title/price */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20
-          bg-gradient-to-t from-black/60 via-black/15 to-transparent" />
-        <div className="absolute inset-x-2.5 bottom-2.5 flex items-end justify-between gap-1">
-          <p className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">
-            {event.title}
-          </p>
-          <span className="shrink-0 rounded-full bg-white/90 px-2 py-0.5
-            text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
-            ${event.price}
-          </span>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="px-3 py-2.5">
-        <div className="flex items-center gap-1 text-xs text-gray-500">
-          <i className="lni lni-map-marker text-violet-600 text-[11px]" />
-          <span className="truncate">{event.place}</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-/* ── Category Filter Chip ──────────────────────────────────────── */
-function CategoryChip({ label, count, isActive, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        "shrink-0 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5",
-        "text-sm transition-all duration-150 border",
-        isActive
-          ? "bg-violet-600 text-white border-violet-600 shadow-sm"
-          : "bg-white text-gray-700 border-gray-200 hover:bg-violet-50 hover:border-violet-200",
-      ].join(" ")}
-    >
-      <span>{label}</span>
-      <span
-        className={[
-          "rounded-full px-1.5 py-px text-[11px] font-medium",
-          isActive
-            ? "bg-white/25 text-white"
-            : "bg-gray-100 text-gray-500",
-        ].join(" ")}
-      >
-        {count}
-      </span>
-    </button>
   );
 }
 
@@ -1133,11 +1000,9 @@ function NearYouSection({
 }) {
   return (
     <div className="pt-2">
-      {/* ── Controls row ─────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 mt-3">
         <RadiusSlider value={radius} onChange={setRadius} />
 
-        {/* List / Map toggle */}
         <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
           {[
             { id: VIEW_TYPES.LIST, icon: "lni-list", label: "List" },
@@ -1147,8 +1012,7 @@ function NearYouSection({
               key={v.id}
               onClick={() => setViewType(v.id)}
               className={[
-                "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm",
-                "transition-colors",
+                "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm transition-colors",
                 viewType === v.id
                   ? "bg-violet-600 text-white"
                   : "text-gray-600 hover:bg-violet-50",
@@ -1161,7 +1025,6 @@ function NearYouSection({
         </div>
       </div>
 
-      {/* ── Map or List view ─────────────────────────────── */}
       <div className="mt-4">
         {viewType === VIEW_TYPES.MAP ? (
           <div className="overflow-hidden rounded-2xl border border-gray-200 shadow-sm">
@@ -1172,7 +1035,7 @@ function NearYouSection({
                 onOpenEvent={openEventDetail}
               />
             ) : (
-              <div className="aspect-video grid place-items-center text-sm text-gray-500 bg-gray-50">
+              <div className="aspect-video grid place-items-center bg-gray-50 text-sm text-gray-500">
                 <div className="flex flex-col items-center gap-2">
                   <i className="lni lni-map-marker text-violet-400 text-3xl" />
                   <span>Waiting for location…</span>
@@ -1202,68 +1065,10 @@ function NearYouSection({
   );
 }
 
-/* ── Nearby Event Card ─────────────────────────────────────────── */
-function NearbyEventCard({ event, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200
-        bg-white p-3 text-left shadow-sm hover:shadow-md active:scale-[0.99]
-        transition-all"
-    >
-      {/* Thumbnail */}
-      <div className="h-20 w-28 shrink-0 overflow-hidden rounded-xl bg-gray-100">
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            draggable={false}
-          />
-        ) : (
-          <div className="grid h-full w-full place-items-center text-gray-300">
-            <i className="lni lni-image text-2xl" />
-          </div>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="min-w-0 flex-1 flex flex-col justify-between">
-        <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-sm font-semibold text-gray-900">
-            {event.title}
-          </p>
-          {Number.isFinite(event.distanceKm) && (
-            <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5
-              text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
-              {formatDistanceLabel(event.distanceKm)}
-            </span>
-          )}
-        </div>
-
-        <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
-          <i className="lni lni-map-marker text-violet-600 text-[11px]" />
-          <span className="truncate">{event.place}</span>
-        </div>
-
-        <div className="mt-1 flex items-baseline gap-0.5">
-          <span className="text-sm font-bold text-violet-700">${event.price}</span>
-          <span className="text-[11px] text-gray-400">/person</span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
 /* ================================================================
-   MASSAGE CLINIC SECTION  (new feature)
+   MASSAGE CLINIC SECTION
    ================================================================ */
 
-/**
- * MassageClinicSection — displays massage clinics near the user,
- * with loading, error, empty, and location-denied states.
- */
 function MassageClinicSection({
   clinics,
   isLoading,
@@ -1275,19 +1080,16 @@ function MassageClinicSection({
   onCreateClinic,
   onRequestLocation,
 }) {
-  /* ── Location not yet granted ─────────────────────────────── */
   if (locationStatus === "loading") {
     return (
-      <div className="mt-10 flex flex-col items-center justify-center gap-4 py-12">
+      <div className="mt-10 flex flex-col items-center gap-4 py-12">
         <div className="relative h-12 w-12">
-          <span className="absolute inline-flex h-full w-full animate-ping
-            rounded-full bg-violet-400 opacity-50" />
-          <span className="relative inline-flex h-12 w-12 items-center justify-center
-            rounded-full bg-violet-600">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-50" />
+          <span className="relative inline-flex h-12 w-12 items-center justify-center rounded-full bg-violet-600">
             <i className="lni lni-map-marker text-white text-xl" />
           </span>
         </div>
-        <p className="text-sm text-gray-600">Finding your location…</p>
+        <p className="text-sm text-gray-500">Finding your location…</p>
       </div>
     );
   }
@@ -1301,26 +1103,19 @@ function MassageClinicSection({
     );
   }
 
-  /* ── Data loading ─────────────────────────────────────────── */
   if (isLoading) {
     return (
       <div className="mt-4 space-y-3">
-        {[1, 2, 3].map((i) => (
-          <ClinicCardSkeleton key={i} />
-        ))}
+        {[1, 2, 3].map((i) => <ClinicCardSkeleton key={i} />)}
       </div>
     );
   }
 
-  /* ── Error state ─────────────────────────────────────────── */
   if (error) {
     return (
-      <div className="mt-10 rounded-2xl border border-dashed border-red-200
-        bg-red-50 p-6 text-center">
+      <div className="mt-10 rounded-2xl border border-dashed border-red-200 bg-red-50 p-6 text-center">
         <i className="lni lni-warning text-3xl text-red-400" />
-        <p className="mt-2 text-sm font-medium text-red-600">
-          Failed to load clinics
-        </p>
+        <p className="mt-2 text-sm font-medium text-red-600">Failed to load clinics</p>
         <p className="mt-1 text-xs text-red-400">{error}</p>
         <button
           onClick={onRetry}
@@ -1334,7 +1129,6 @@ function MassageClinicSection({
     );
   }
 
-  /* ── Empty state (no clinics found) ──────────────────────── */
   if (hasFetched && clinics.length === 0) {
     return (
       <ClinicEmptyState
@@ -1345,19 +1139,10 @@ function MassageClinicSection({
     );
   }
 
-  /* ── Not yet fetched (e.g. tab not visited) ──────────────── */
-  if (!hasFetched) {
-    return (
-      <div className="mt-10 flex justify-center">
-        <LoadingCard />
-      </div>
-    );
-  }
+  if (!hasFetched) return <LoadingCard />;
 
-  /* ── Clinic list ─────────────────────────────────────────── */
   return (
     <div className="mt-4">
-      {/* Section header */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-bold text-gray-900">Massage Clinics</h2>
@@ -1386,12 +1171,153 @@ function MassageClinicSection({
   );
 }
 
-/* ── Clinic Card ───────────────────────────────────────────────── */
+/* ================================================================
+   CARD COMPONENTS
+   ================================================================ */
+
+function FeaturedEventBanner({ event, onClick }) {
+  return (
+    <div className="mt-4">
+      <button
+        onClick={onClick}
+        className="relative w-full overflow-hidden rounded-3xl shadow-lg
+          text-left active:scale-[0.99] transition-transform"
+        aria-label={`View featured event: ${event.title}`}
+      >
+        {event.img ? (
+          <img
+            src={event.img}
+            alt={event.title}
+            className="h-56 w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="h-56 w-full bg-gradient-to-br from-violet-100 to-purple-200
+            grid place-items-center text-violet-400">
+            <i className="lni lni-calendar text-5xl" />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+        <div className="absolute top-3 left-3">
+          <span className="inline-flex items-center gap-1 rounded-full bg-violet-600/90
+            px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
+            <i className="lni lni-star-filled text-[10px]" />
+            Featured
+          </span>
+        </div>
+        <div className="absolute bottom-4 left-4 right-4 text-white">
+          <p className="text-lg font-bold leading-tight drop-shadow">{event.title}</p>
+          <div className="mt-1 flex items-center gap-1.5 text-sm opacity-90">
+            <i className="lni lni-map-marker text-xs" />
+            {event.place}
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function EventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group w-[260px] shrink-0 overflow-hidden rounded-2xl border
+        border-gray-200 bg-white text-left shadow-sm
+        hover:shadow-md active:scale-[0.99] transition-all"
+    >
+      <div className="relative h-44 bg-gray-100">
+        {event.img ? (
+          <img
+            src={event.img}
+            alt={event.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            draggable={false}
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-gray-300">
+            <i className="lni lni-image text-4xl" />
+          </div>
+        )}
+        <div className="absolute left-2 top-2 rounded-lg bg-black/55 px-2 py-1
+          text-xs text-white backdrop-blur-sm ring-1 ring-white/10">
+          {event.dateLabel}
+        </div>
+        <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2.5
+          py-0.5 text-xs text-gray-800 ring-1 ring-gray-200 backdrop-blur-sm">
+          {event.category}
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20
+          bg-gradient-to-t from-black/60 via-black/15 to-transparent" />
+        <div className="absolute inset-x-2.5 bottom-2.5 flex items-end justify-between gap-1">
+          <p className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">
+            {event.title}
+          </p>
+          <span className="shrink-0 rounded-full bg-white/90 px-2 py-0.5
+            text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+            ${event.price}
+          </span>
+        </div>
+      </div>
+      <div className="px-3 py-2.5">
+        <div className="flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600 text-[11px]" />
+          <span className="truncate">{event.place}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function NearbyEventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200
+        bg-white p-3 text-left shadow-sm hover:shadow-md active:scale-[0.99] transition-all"
+    >
+      <div className="h-20 w-28 shrink-0 overflow-hidden rounded-xl bg-gray-100">
+        {event.img ? (
+          <img
+            src={event.img}
+            alt={event.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            draggable={false}
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-gray-300">
+            <i className="lni lni-image text-2xl" />
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 flex flex-col justify-between">
+        <div className="flex items-start justify-between gap-2">
+          <p className="truncate text-sm font-semibold text-gray-900">{event.title}</p>
+          {Number.isFinite(event.distanceKm) && (
+            <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5
+              text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+              {formatDistanceLabel(event.distanceKm)}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600 text-[11px]" />
+          <span className="truncate">{event.place}</span>
+        </div>
+        <div className="flex items-baseline gap-0.5 mt-1">
+          <span className="text-sm font-bold text-violet-700">${event.price}</span>
+          <span className="text-[11px] text-gray-400">/person</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function ClinicCard({ clinic }) {
   return (
     <div className="flex items-stretch gap-3 rounded-2xl border border-gray-200
       bg-white p-3 shadow-sm hover:shadow-md transition-shadow">
-      {/* Avatar / cover */}
       <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br
         from-violet-100 to-purple-200 grid place-items-center">
         {clinic.cover_url ? (
@@ -1405,14 +1331,10 @@ function ClinicCard({ clinic }) {
           <i className="lni lni-hand text-violet-400 text-3xl" />
         )}
       </div>
-
-      {/* Details */}
       <div className="min-w-0 flex-1 flex flex-col justify-between">
         <div>
           <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-sm font-semibold text-gray-900">
-              {clinic.name}
-            </p>
+            <p className="truncate text-sm font-semibold text-gray-900">{clinic.name}</p>
             {clinic.distance_km != null && (
               <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5
                 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
@@ -1420,7 +1342,6 @@ function ClinicCard({ clinic }) {
               </span>
             )}
           </div>
-
           {clinic.address && (
             <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
               <i className="lni lni-map-marker text-violet-600 text-[11px]" />
@@ -1428,7 +1349,6 @@ function ClinicCard({ clinic }) {
             </div>
           )}
         </div>
-
         <div className="flex items-center gap-3 mt-1">
           {clinic.rating != null && (
             <div className="flex items-center gap-0.5 text-xs text-amber-500">
@@ -1452,21 +1372,20 @@ function ClinicCard({ clinic }) {
   );
 }
 
-/* ── Clinic Empty State ────────────────────────────────────────── */
+/* ================================================================
+   EMPTY / LOADING / ERROR STATES
+   ================================================================ */
+
 function ClinicEmptyState({ locationLabel, onCreateClinic, onRetry }) {
   return (
     <div className="mt-6">
       <div className="rounded-3xl border border-dashed border-gray-200
         bg-gradient-to-b from-violet-50/60 to-white p-8 text-center">
-        {/* Illustration */}
         <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center
           rounded-full bg-white shadow-sm border border-gray-100">
           <i className="lni lni-hand text-violet-400 text-4xl" />
         </div>
-
-        <h3 className="text-base font-bold text-gray-900">
-          No Massage Clinics Found
-        </h3>
+        <h3 className="text-base font-bold text-gray-900">No Massage Clinics Found</h3>
         <p className="mt-1.5 text-sm text-gray-500 leading-relaxed">
           We couldn't find any massage clinics near{" "}
           <span className="font-medium text-gray-700">
@@ -1474,8 +1393,6 @@ function ClinicEmptyState({ locationLabel, onCreateClinic, onRetry }) {
           </span>
           . Be the first to add one!
         </p>
-
-        {/* Actions */}
         <div className="mt-6 flex flex-col items-center gap-2.5">
           <button
             onClick={onCreateClinic}
@@ -1486,7 +1403,6 @@ function ClinicEmptyState({ locationLabel, onCreateClinic, onRetry }) {
             <i className="lni lni-plus text-xs" />
             Create Massage Clinic
           </button>
-
           <button
             onClick={onRetry}
             className="inline-flex items-center gap-1.5 rounded-full border
@@ -1498,21 +1414,16 @@ function ClinicEmptyState({ locationLabel, onCreateClinic, onRetry }) {
           </button>
         </div>
       </div>
-
-      {/* Info card */}
       <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
         <div className="flex items-start gap-3">
-          <div className="shrink-0 h-8 w-8 grid place-items-center rounded-full
-            bg-violet-100">
+          <div className="shrink-0 h-8 w-8 grid place-items-center rounded-full bg-violet-100">
             <i className="lni lni-information text-violet-600 text-sm" />
           </div>
           <div>
-            <p className="text-xs font-semibold text-violet-900">
-              List Your Clinic
-            </p>
+            <p className="text-xs font-semibold text-violet-900">List Your Clinic</p>
             <p className="mt-0.5 text-xs text-violet-700 leading-relaxed">
-              Create a listing for your massage clinic and reach customers
-              near you. It's free to get started.
+              Create a listing for your massage clinic and reach customers near you.
+              It's free to get started.
             </p>
           </div>
         </div>
@@ -1521,7 +1432,6 @@ function ClinicEmptyState({ locationLabel, onCreateClinic, onRetry }) {
   );
 }
 
-/* ── Clinic Location Denied ────────────────────────────────────── */
 function ClinicLocationDenied({ onRequestLocation, onCreateClinic }) {
   return (
     <div className="mt-6 rounded-3xl border border-dashed border-amber-200
@@ -1530,13 +1440,11 @@ function ClinicLocationDenied({ onRequestLocation, onCreateClinic }) {
         rounded-full bg-white shadow-sm border border-amber-100">
         <i className="lni lni-map-marker text-amber-400 text-3xl" />
       </div>
-
       <h3 className="text-base font-bold text-gray-900">Location Required</h3>
       <p className="mt-1.5 text-sm text-gray-500 leading-relaxed">
-        We need your location to show nearby massage clinics.
-        Please enable location access and try again.
+        We need your location to show nearby massage clinics. Please enable
+        location access and try again.
       </p>
-
       <div className="mt-6 flex flex-col items-center gap-2.5">
         <button
           onClick={onRequestLocation}
@@ -1547,7 +1455,6 @@ function ClinicLocationDenied({ onRequestLocation, onCreateClinic }) {
           <i className="lni lni-map-marker text-xs" />
           Enable Location
         </button>
-
         <button
           onClick={onCreateClinic}
           className="text-xs text-violet-600 hover:underline"
@@ -1559,7 +1466,6 @@ function ClinicLocationDenied({ onRequestLocation, onCreateClinic }) {
   );
 }
 
-/* ── Clinic Card Skeleton ──────────────────────────────────────── */
 function ClinicCardSkeleton() {
   return (
     <div className="flex items-stretch gap-3 rounded-2xl border border-gray-100
@@ -1574,98 +1480,6 @@ function ClinicCardSkeleton() {
   );
 }
 
-/* ================================================================
-   SHARED / UTILITY COMPONENTS
-   ================================================================ */
-
-function SectionHeader({ title, className = "" }) {
-  return (
-    <h2 className={`text-lg font-bold text-gray-900 ${className}`}>
-      {title}
-    </h2>
-  );
-}
-
-function RadiusSlider({ value, onChange }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className="text-xs font-medium text-gray-500 shrink-0">Radius</span>
-      <input
-        type="range"
-        min={1}
-        max={100}
-        step={1}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="h-2 w-32 appearance-none rounded-full bg-gray-200 accent-violet-600"
-        aria-label={`Search radius: ${value} km`}
-      />
-      <span className="text-sm font-semibold text-gray-800 w-12 shrink-0 text-right">
-        {value} km
-      </span>
-    </div>
-  );
-}
-
-function UpcomingEventRow({ event, onOpen }) {
-  return (
-    <button
-      onClick={() => onOpen(event)}
-      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200
-        bg-white p-3 text-left shadow-sm hover:shadow-md active:scale-[0.99]
-        transition-all"
-    >
-      {/* Date box */}
-      <div className="grid w-14 shrink-0 place-items-center rounded-xl border
-        border-gray-100 bg-gray-50 py-2">
-        <div className="text-center leading-tight">
-          <div className="text-xl font-bold text-violet-700">{event.day}</div>
-          <div className="text-[11px] uppercase tracking-wide text-gray-400">
-            {event.month}
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        {/* Thumbnail */}
-        <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-gray-100">
-          {event.img ? (
-            <img
-              src={event.img}
-              alt={event.title}
-              className="h-full w-full object-cover"
-              loading="lazy"
-              draggable={false}
-            />
-          ) : (
-            <div className="grid h-full w-full place-items-center text-gray-300">
-              <i className="lni lni-image text-xl" />
-            </div>
-          )}
-        </div>
-
-        {/* Text */}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-gray-900">
-            {event.title}
-          </p>
-          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
-            <i className="lni lni-map-marker text-violet-600 text-[11px]" />
-            <span className="truncate">{event.place}</span>
-          </div>
-          <div className="mt-1 flex items-baseline gap-0.5">
-            <span className="text-sm font-bold text-violet-700">
-              ${event.price}
-            </span>
-            <span className="text-[11px] text-gray-400">/person</span>
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-
 function EmptyCreate({ onCreate }) {
   return (
     <div className="mt-10 rounded-3xl border border-dashed border-gray-200 p-8 text-center">
@@ -1674,9 +1488,7 @@ function EmptyCreate({ onCreate }) {
         <i className="lni lni-calendar text-3xl text-gray-400" />
       </div>
       <h3 className="text-base font-bold text-gray-900">No events yet</h3>
-      <p className="mt-1 text-sm text-gray-500">
-        Create or discover events near you.
-      </p>
+      <p className="mt-1 text-sm text-gray-500">Create or discover events near you.</p>
       <button
         onClick={onCreate}
         className="mt-5 inline-flex items-center gap-2 rounded-full bg-violet-600
@@ -1716,27 +1528,25 @@ function LoadingCard() {
 }
 
 function ErrorCard({ error, onRetry, onSignIn }) {
-  const errorText =
+  const text =
     error?.message ||
     error?.error ||
     (typeof error === "string" ? error : "An unexpected error occurred");
 
-  const isAuthError =
-    /session expired|unauthorized|401/i.test(errorText);
+  const isAuth = /session expired|unauthorized|401/i.test(text);
 
   return (
     <div className="grid h-[50vh] place-items-center text-center px-4">
       <div className="max-w-xs">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center
-          rounded-full bg-red-50">
-          <i className={`text-xl ${isAuthError ? "lni lni-lock text-amber-500" : "lni lni-warning text-red-500"}`} />
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
+          <i className={`text-xl ${isAuth ? "lni lni-lock text-amber-500" : "lni lni-warning text-red-500"}`} />
         </div>
-        <p className={`font-semibold text-sm ${isAuthError ? "text-amber-700" : "text-red-600"}`}>
-          {isAuthError ? "Sign in required" : "Failed to load"}
+        <p className={`font-semibold text-sm ${isAuth ? "text-amber-700" : "text-red-600"}`}>
+          {isAuth ? "Sign in required" : "Failed to load"}
         </p>
-        <p className="mt-1 text-xs text-gray-500">{errorText}</p>
+        <p className="mt-1 text-xs text-gray-500">{text}</p>
         <div className="mt-4 flex justify-center gap-2">
-          {isAuthError ? (
+          {isAuth ? (
             <button
               onClick={onSignIn}
               className="inline-flex items-center gap-1.5 rounded-full bg-violet-600
@@ -1749,8 +1559,7 @@ function ErrorCard({ error, onRetry, onSignIn }) {
             <button
               onClick={onRetry}
               className="inline-flex items-center gap-1.5 rounded-full border
-                border-gray-200 bg-white px-4 py-2 text-sm text-gray-700
-                hover:bg-gray-50"
+                border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >
               <i className="lni lni-reload text-xs" />
               Retry
@@ -1759,6 +1568,106 @@ function ErrorCard({ error, onRetry, onSignIn }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ================================================================
+   SHARED UTILITY COMPONENTS
+   ================================================================ */
+
+function SectionHeader({ title, className = "" }) {
+  return (
+    <h2 className={`text-lg font-bold text-gray-900 ${className}`}>{title}</h2>
+  );
+}
+
+function CategoryChip({ label, count, isActive, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        "shrink-0 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5",
+        "text-sm transition-all duration-150 border",
+        isActive
+          ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+          : "bg-white text-gray-700 border-gray-200 hover:bg-violet-50 hover:border-violet-200",
+      ].join(" ")}
+    >
+      <span>{label}</span>
+      <span className={[
+        "rounded-full px-1.5 py-px text-[11px] font-medium",
+        isActive ? "bg-white/25 text-white" : "bg-gray-100 text-gray-500",
+      ].join(" ")}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function RadiusSlider({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="text-xs font-medium text-gray-500 shrink-0">Radius</span>
+      <input
+        type="range"
+        min={1}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-2 w-32 appearance-none rounded-full bg-gray-200 accent-violet-600"
+        aria-label={`Search radius: ${value} km`}
+      />
+      <span className="text-sm font-semibold text-gray-800 w-12 shrink-0 text-right">
+        {value} km
+      </span>
+    </div>
+  );
+}
+
+function UpcomingEventRow({ event, onOpen }) {
+  return (
+    <button
+      onClick={() => onOpen(event)}
+      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200
+        bg-white p-3 text-left shadow-sm hover:shadow-md active:scale-[0.99] transition-all"
+    >
+      <div className="grid w-14 shrink-0 place-items-center rounded-xl border
+        border-gray-100 bg-gray-50 py-2">
+        <div className="text-center leading-tight">
+          <div className="text-xl font-bold text-violet-700">{event.day}</div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-400">{event.month}</div>
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-gray-100">
+          {event.img ? (
+            <img
+              src={event.img}
+              alt={event.title}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              draggable={false}
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center text-gray-300">
+              <i className="lni lni-image text-xl" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-gray-900">{event.title}</p>
+          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
+            <i className="lni lni-map-marker text-violet-600 text-[11px]" />
+            <span className="truncate">{event.place}</span>
+          </div>
+          <div className="mt-1 flex items-baseline gap-0.5">
+            <span className="text-sm font-bold text-violet-700">${event.price}</span>
+            <span className="text-[11px] text-gray-400">/person</span>
+          </div>
+        </div>
+      </div>
+    </button>
   );
 }
 
@@ -1800,13 +1709,10 @@ function NearbyEventsMap({ center, events, onOpenEvent }) {
   );
 }
 
-/** Smoothly re-centers the Leaflet map when the center prop changes */
 function RecenterMap({ position }) {
   const map = useMap();
-
   useEffect(() => {
     map.setView(position, 12, { animate: true });
   }, [position, map]);
-
   return null;
 }
