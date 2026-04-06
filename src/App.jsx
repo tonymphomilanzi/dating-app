@@ -43,8 +43,6 @@ import SignInEmail from "./pages/SignInEmail.jsx";
 import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 
 import Notifications from "./pages/Notifications.jsx";
-
-// NEW: placeholder Streams page (we’ll implement later)
 import Streams from "./pages/Streams.jsx";
 
 export default function App() {
@@ -52,44 +50,36 @@ export default function App() {
     <AuthFlowProvider>
       <Routes>
         <Route element={<RootLayout />}>
-          {/* OAuth / magic-link callback (reachable unauthenticated) */}
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Public (only while logged out) */}
           <Route element={<GuestOnly />}>
             <Route path="/" element={<Onboarding />} />
             <Route path="/auth" element={<AuthChoice />} />
             <Route path="/auth/email" element={<EmailLogin />} />
-
-            {/* OTP verify routes (keep both, so SignUp -> /auth/verify works) */}
             <Route path="/auth/email-verify" element={<EmailVerify />} />
             <Route path="/auth/verify" element={<EmailVerify />} />
-
             <Route path="/auth/signup" element={<SignUp />} />
             <Route path="/auth/signin/email" element={<SignInEmail />} />
           </Route>
 
-          {/* Protected */}
           <Route element={<RequireAuth />}>
-            {/* Setup flow (always reachable when logged in; NOT gated) */}
             <Route path="/setup/basics" element={<SetupBasics />} />
             <Route path="/setup/dob" element={<SetupDOB />} />
             <Route path="/setup/gender" element={<SetupGender />} />
             <Route path="/setup/interests" element={<SetupInterests />} />
             <Route path="/setup/photo" element={<SetupPhoto />} />
 
-            {/* App gated by setup completion */}
             <Route element={<SetupGate />}>
               <Route element={<TabsLayout />}>
                 <Route path="/discover" element={<Discover />} />
                 <Route path="/matches" element={<Matches />} />
                 <Route path="/messages" element={<Messages />} />
                 <Route path="/events" element={<Events />} />
-                {/* NEW tab route */}
-                <Route path="/streams" element={<Streams />} />
+                {/* NOTE: streams removed from tab layout */}
               </Route>
 
               {/* Non-tab protected routes (still gated) */}
+              <Route path="/streams" element={<Streams />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/events/:id" element={<EventDetail />} />
               <Route path="/profile" element={<ProfileYou />} />
