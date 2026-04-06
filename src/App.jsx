@@ -1,3 +1,4 @@
+// src/App.jsx
 import { Routes, Route, Navigate } from "react-router-dom";
 import RootLayout from "./layouts/RootLayout.jsx";
 import TabsLayout from "./layouts/TabsLayout.jsx";
@@ -41,6 +42,11 @@ import SignUp from "./pages/SignUp.jsx";
 import SignInEmail from "./pages/SignInEmail.jsx";
 import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 
+import Notifications from "./pages/Notifications.jsx";
+
+// NEW: placeholder Streams page (we’ll implement later)
+import Streams from "./pages/Streams.jsx";
+
 export default function App() {
   return (
     <AuthFlowProvider>
@@ -79,9 +85,12 @@ export default function App() {
                 <Route path="/matches" element={<Matches />} />
                 <Route path="/messages" element={<Messages />} />
                 <Route path="/events" element={<Events />} />
+                {/* NEW tab route */}
+                <Route path="/streams" element={<Streams />} />
               </Route>
 
               {/* Non-tab protected routes (still gated) */}
+              <Route path="/notifications" element={<Notifications />} />
               <Route path="/events/:id" element={<EventDetail />} />
               <Route path="/profile" element={<ProfileYou />} />
               <Route path="/filters" element={<Filters />} />

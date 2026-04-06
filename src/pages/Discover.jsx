@@ -17,7 +17,6 @@ const isValidLatLng = (lat, lng) => {
     ln = toNum(lng);
   if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
   if (la < -90 || la > 90 || ln < -180 || ln > 180) return false;
-  // Guard against the (0,0) sentinel commonly emitted while GPS warms up
   if (la === 0 && ln === 0) return false;
   return true;
 };
@@ -45,7 +44,7 @@ export default function Discover() {
   const [error, setError] = useState("");
 
   // Notifications (placeholder for now; wire to API later)
-  const [unreadCount] = useState(3); // TODO: replace with real unread count from API/store
+  const [unreadCount] = useState(3);
 
   // Stories state
   const [storyUsers, setStoryUsers] = useState([]);
@@ -126,7 +125,6 @@ export default function Discover() {
       const { background = false } = options;
       const currentRequestId = ++requestIdRef.current;
 
-      // cancel previous
       abortControllerRef.current?.abort();
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
@@ -260,63 +258,76 @@ export default function Discover() {
   return (
     <div className="flex min-h-[70vh] flex-col bg-white text-gray-900">
       <header className="px-4 pt-4">
-        <div className="mb-3 flex items-center gap-3">
-          <img
-            src={profile?.avatar_url || "/me.jpg"}
-            alt="My profile"
-            className="h-9 w-9 rounded-full object-cover ring-2 ring-violet-600 ring-offset-2"
-          />
+        {/* Redesigned top bar */}
+        <div className="mb-3 flex items-center justify-between">
+          {/* LEFT: notifications + filters */}
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => navigate("/notifications")}
+              className="relative rounded-full p-2 hover:bg-gray-100 transition-colors"
+              title="Notifications"
+              aria-label="Notifications"
+            >
+              <svg className="h-5 w-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V4a2 2 0 10-4 0v1.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0m6 0H9"
+                />
+              </svg>
 
-          <div className="text-sm leading-tight">
+              {unreadCount > 0 && (
+                <span
+                  className={[
+                    "absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1",
+                    "inline-flex items-center justify-center",
+                    "rounded-full bg-violet-600 text-white text-[10px] font-bold",
+                    "ring-2 ring-white",
+                  ].join(" ")}
+                >
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            <Link
+              to="/filters"
+              className="rounded-full p-2 hover:bg-gray-100 transition-colors"
+              title="Filters"
+              aria-label="Filters"
+            >
+              <svg className="h-5 w-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+                />
+              </svg>
+            </Link>
+          </div>
+
+          {/* CENTER: title + location status */}
+          <div className="text-center text-sm leading-tight">
             <p className="text-gray-500">Discover</p>
             {locationStatusDisplay && (
-              <p className={`text-xs flex items-center gap-1 ${locationStatusDisplay.color}`}>
+              <p className={`text-xs inline-flex items-center justify-center gap-1 ${locationStatusDisplay.color}`}>
                 <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
                 {locationStatusDisplay.text}
               </p>
             )}
           </div>
 
-          {/* Notifications (replaces the old location icon/button) */}
-          <button
-            type="button"
-            onClick={() => navigate("/notifications")} // implement page/route later
-            className="ml-auto relative rounded-full p-2 hover:bg-gray-100 transition-colors"
-            title="Notifications"
-            aria-label="Notifications"
-          >
-            <svg className="h-5 w-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V4a2 2 0 10-4 0v1.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0m6 0H9"
-              />
-            </svg>
-
-            {unreadCount > 0 && (
-              <span
-                className={[
-                  "absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1",
-                  "inline-flex items-center justify-center",
-                  "rounded-full bg-violet-600 text-white text-[10px] font-bold",
-                  "ring-2 ring-white",
-                ].join(" ")}
-              >
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
-          </button>
-
-          <Link to="/filters" className="rounded-full p-2 hover:bg-gray-100" title="Filters" aria-label="Filters">
-            <svg className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-              />
-            </svg>
+          {/* RIGHT: avatar links to profile */}
+          <Link to="/profile" className="shrink-0" title="Profile" aria-label="Profile">
+            <img
+              src={profile?.avatar_url || "/me.jpg"}
+              alt="My profile"
+              className="h-9 w-9 rounded-full object-cover ring-2 ring-violet-600 ring-offset-2"
+              draggable={false}
+            />
           </Link>
         </div>
 
@@ -405,14 +416,20 @@ function StoriesRow({ storyUsers, hasMyStory, onMyStoryClick, onUserStoryClick }
       </div>
 
       {storyUsers.map((user) => (
-        <button key={user.user_id} onClick={() => onUserStoryClick(user.user_id)} className="flex w-16 flex-col items-center">
+        <button
+          key={user.user_id}
+          onClick={() => onUserStoryClick(user.user_id)}
+          className="flex w-16 flex-col items-center"
+        >
           <img
             src={user.avatar || "/me.jpg"}
             alt={user.name}
             className="h-14 w-14 rounded-full object-cover ring-2 ring-violet-200"
             draggable={false}
           />
-          <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">{String(user.name).split(" ")[0]}</span>
+          <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
+            {String(user.name).split(" ")[0]}
+          </span>
         </button>
       ))}
     </div>
@@ -466,7 +483,12 @@ function LocationPrompt({ onEnable, isLoading, error }) {
       <div className="flex items-start gap-3">
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-amber-100">
           <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+            />
           </svg>
         </div>
         <div className="flex-1 min-w-0">

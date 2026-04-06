@@ -1,3 +1,4 @@
+// src/components/BottomTabs.jsx  (or wherever your BottomTabs lives)
 import { NavLink } from "react-router-dom";
 
 const Tab = ({ to, icon, label }) => (
@@ -22,7 +23,8 @@ export default function BottomTabs() {
         <Tab to="/matches" icon="lni-heart" label="Matches" />
         <Tab to="/messages" icon="lni-comments" label="Messages" />
         <Tab to="/events" icon="lni-calendar" label="Events" />
-        <Tab to="/profile" icon="lni-user" label="Profile" />
+        {/* Replaces Profile tab */}
+        <Tab to="/streams" icon="lni-video" label="Streams" />
       </div>
     </nav>
   );
