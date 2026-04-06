@@ -1,262 +1,989 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
-import { 
-  Search, Sliders, MapPin, ChevronRight, 
-  Calendar, Plus, Flower2, Zap, Navigation2, 
-  Compass, ShieldCheck, Heart, LayoutGrid
-} from "lucide-react";
+import "leaflet/dist/leaflet.css";
+import { eventsService } from "../services/events.service.js";
 
-// --- Configuration ---
-const MANGOCHI = { lat: -14.4783, lng: 35.2645 };
+/* ---------------- Revalidate Hook (dedup/abort/cooldown) ---------------- */
+function useRevalidate({
+  refetch,
+  intervalMs = 0,
+  onFocus = true,
+  onVisibility = true,
+  onOnline = true,
+  cooldownMs = 1000,
+} = {}) {
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
 
-const markerIcon = L.divIcon({
-  className: 'custom-div-icon',
-  html: `<div class="w-5 h-5 bg-violet-600 border-4 border-white rounded-full shadow-2xl"></div>`,
-  iconSize: [20, 20]
+  const lastFetchTime = useRef(0);
+  const isInFlight = useRef(false);
+  const isQueued = useRef(false);
+  const timerRef = useRef(null);
+
+  const fire = useCallback(() => {
+    const now = Date.now();
+
+    const run = () => {
+      isInFlight.current = true;
+      Promise.resolve(refetchRef.current?.())
+        .catch(() => {})
+        .finally(() => {
+          isInFlight.current = false;
+          lastFetchTime.current = Date.now();
+          if (isQueued.current) {
+            isQueued.current = false;
+            fire();
+          }
+        });
+    };
+
+    if (isInFlight.current) {
+      isQueued.current = true;
+      return;
+    }
+
+    const timeSinceLastFetch = now - lastFetchTime.current;
+    if (timeSinceLastFetch < cooldownMs) {
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(run, cooldownMs - timeSinceLastFetch);
+      return;
+    }
+
+    run();
+  }, [cooldownMs]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") fire();
+    };
+
+    if (onFocus) window.addEventListener("focus", fire, { passive: true });
+    if (onVisibility) document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
+    if (onOnline) window.addEventListener("online", fire, { passive: true });
+
+    let intervalId = null;
+    if (intervalMs > 0) intervalId = setInterval(fire, intervalMs);
+
+    return () => {
+      if (onFocus) window.removeEventListener("focus", fire);
+      if (onVisibility) document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (onOnline) window.removeEventListener("online", fire);
+      if (intervalId) clearInterval(intervalId);
+      clearTimeout(timerRef.current);
+    };
+  }, [intervalMs, onFocus, onVisibility, onOnline, fire]);
+}
+
+/* ---------------- Geo and Date Helpers ---------------- */
+const toRadians = (degrees) => (degrees * Math.PI) / 180;
+
+function calculateKmBetween(pointA, pointB) {
+  if (!pointA || !pointB || pointA.lat == null || pointA.lng == null || pointB.lat == null || pointB.lng == null) {
+    return Infinity;
+  }
+
+  const EARTH_RADIUS_KM = 6371;
+  const deltaLat = toRadians(pointB.lat - pointA.lat);
+  const deltaLng = toRadians(pointB.lng - pointA.lng);
+  const lat1Rad = toRadians(pointA.lat);
+  const lat2Rad = toRadians(pointB.lat);
+
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(deltaLng / 2) ** 2;
+
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function formatDistanceLabel(km) {
+  if (!Number.isFinite(km)) return "";
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+function formatDateLabel(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  return date.toLocaleDateString([], { day: "2-digit", month: "short" });
+}
+
+function extractDayMonth(isoString) {
+  if (!isoString) return { day: "--", month: "---" };
+  const date = new Date(isoString);
+  return {
+    day: String(date.getDate()).padStart(2, "0"),
+    month: date.toLocaleDateString([], { month: "short" }),
+  };
+}
+
+const isFiniteNum = (n) => Number.isFinite(Number(n));
+const isValidLatLng = (lat, lng) =>
+  isFiniteNum(lat) && isFiniteNum(lng) &&
+  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+  !(Number(lat) === 0 && Number(lng) === 0);
+
+/* ---------------- Map Pin Icon ---------------- */
+const pinIcon = L.divIcon({
+  className: "",
+  iconSize: [40, 40],
+  iconAnchor: [20, 38],
+  popupAnchor: [0, -34],
+  html: `
+    <div style="
+      width:40px;height:40px;border-radius:9999px;
+      background:linear-gradient(135deg,#f0abfc 0%,#7c3aed 100%);
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;border:2px solid #fff;
+      box-shadow:0 10px 24px rgba(124,58,237,0.35);
+    ">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <path d="M12 21s-7-4.35-7-10a7 7 0 1114 0c0 5.65-7 10-7 10z" fill="rgba(255,255,255,0.25)"/>
+        <circle cx="12" cy="10" r="3" fill="#fff"/>
+      </svg>
+    </div>
+  `,
 });
 
-export default function EventsHome() {
+/* ---------------- Main Events Page ---------------- */
+export default function Events() {
   const navigate = useNavigate();
-  
-  // Tabs: 'explore' | 'massage' | 'nearby'
-  const [activeTab, setActiveTab] = useState("explore"); 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [userLoc, setUserLoc] = useState(null);
-  const [placeName, setPlaceName] = useState("Locating...");
-  const [radius, setRadius] = useState(50);
+  const location = useLocation();
 
-  // Geolocation Setup
+  // Mode and filters
+  const [mode, setMode] = useState("explore"); // explore | near
+  const [searchQuery, setSearchQuery] = useState("");
+  const [radius, setRadius] = useState(50);
+  const [viewType, setViewType] = useState("list"); // list | map
+  const [selectedCategory, setSelectedCategory] = useState("All");
+
+  // User location
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationStatus, setLocationStatus] = useState("loading");
+  const [locationLabel, setLocationLabel] = useState("");
+
+  // Data
+  const [events, setEvents] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const isMountedRef = useRef(true);
   useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setUserLoc(coords);
-          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`)
-            .then(res => res.json())
-            .then(data => setPlaceName(data.address.city || data.address.town || "Nearby"));
-        },
-        () => { setUserLoc(MANGOCHI); setPlaceName("Mangochi"); }
-      );
-    }
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
   }, []);
 
-  // Filter Logic
-  const displayData = useMemo(() => {
-    let source = activeTab === "massage" ? massageClinics : [...popularEvents, ...localEvents];
-    
-    return source
-      .map(item => ({ ...item, dist: userLoc ? calculateDistance(userLoc, item) : 0 }))
-      .filter(item => {
-        const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase());
-        const withinRadius = (activeTab === "nearby" || activeTab === "massage") ? item.dist <= radius : true;
-        return matchesSearch && withinRadius;
-      })
-      .sort((a, b) => (activeTab !== "explore" ? a.dist - b.dist : 0));
-  }, [activeTab, searchQuery, userLoc, radius]);
+  // Map server response to UI format
+  const mapServerRowsToUIFormat = useCallback((rows) => {
+    return rows.map((event) => {
+      const placeName = event.city || "Location TBD";
+      const latitude = event.lat != null ? Number(event.lat) : null;
+      const longitude = event.lng != null ? Number(event.lng) : null;
+
+      return {
+        id: event.id,
+        title: event.title || "Untitled Event",
+        description: event.description || "",
+        img: event.cover_url || "",
+        dateISO: event.starts_at,
+        dateLabel: formatDateLabel(event.starts_at),
+        ...extractDayMonth(event.starts_at),
+        category: event.category || "Other",
+        place: placeName,
+        lat: latitude,
+        lng: longitude,
+        price: event.price != null ? Number(event.price) : 0,
+        created_at: event.created_at,
+      };
+    });
+  }, []);
+
+  // Fetch events from API
+  const fetchEvents = useCallback(async ({ signal } = {}) => {
+    return await eventsService.list({ signal });
+  }, []);
+
+  // Refresh with deduplication/abort/throttle + active-controller guard
+  const inflightRequestRef = useRef(null);
+  const lastFetchTimeRef = useRef(0);
+  const abortControllerRef = useRef(null);
+
+  const refresh = useCallback(
+    async ({ foreground = false } = {}) => {
+      const now = Date.now();
+
+      // Prevent duplicate requests
+      if (inflightRequestRef.current) return inflightRequestRef.current;
+
+      // Throttle rapid requests
+      if (now - lastFetchTimeRef.current < 400) return;
+
+      // Show spinner only when truly foreground and no data yet
+      if (foreground && events.length === 0) setIsLoading(true);
+
+      // Abort previous and create a new controller
+      abortControllerRef.current?.abort?.();
+      const ac = new AbortController();
+      abortControllerRef.current = ac;
+
+      inflightRequestRef.current = (async () => {
+        try {
+          const rows = await fetchEvents({ signal: ac.signal });
+          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
+
+          setEvents(mapServerRowsToUIFormat(rows));
+          setError("");
+        } catch (err) {
+          if (!isMountedRef.current || abortControllerRef.current !== ac) return;
+
+          if (err?.name === "AbortError") return;
+
+          const status = err?.status || err?.response?.status;
+          if (status === 401 || /session expired/i.test(err?.message || "")) {
+            setError("Session expired. Please sign in again.");
+            return;
+          }
+
+          const errorMessage =
+            err?.message ||
+            err?.error ||
+            err?.response?.data?.message ||
+            err?.response?.data?.error ||
+            "Failed to load events";
+
+          setError(errorMessage);
+        } finally {
+          if (isMountedRef.current && abortControllerRef.current === ac && foreground) {
+            setIsLoading(false);
+          }
+          lastFetchTimeRef.current = Date.now();
+          inflightRequestRef.current = null;
+        }
+      })();
+
+      return inflightRequestRef.current;
+    },
+    [events.length, fetchEvents, mapServerRowsToUIFormat]
+  );
+
+  // Initial load
+  useEffect(() => {
+    refresh({ foreground: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handle newly created event from navigation state
+  useEffect(() => {
+    const createdEvent = location.state?.created;
+    if (createdEvent) {
+      setEvents((prev) =>
+        prev.some((e) => e.id === createdEvent.id) ? prev : [createdEvent, ...prev]
+      );
+      navigate("/events", { replace: true, state: null });
+    }
+  }, [location.state, navigate]);
+
+  // Auto-refresh in background
+  useRevalidate({
+    refetch: () => refresh({ foreground: false }),
+    intervalMs: 60_000,
+    onFocus: true,
+    onVisibility: true,
+    onOnline: true,
+    cooldownMs: 1000,
+  });
+
+  // Reverse geocode with timeout/abort
+  const geoAbortRef = useRef(null);
+  async function reverseGeocodeLocation({ lat, lng }) {
+    try {
+      geoAbortRef.current?.abort?.();
+      const ac = new AbortController();
+      geoAbortRef.current = ac;
+
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+      const t = setTimeout(() => ac.abort(), 5000);
+
+      const response = await fetch(url, {
+        headers: { "Accept-Language": "en" },
+        signal: ac.signal,
+      }).catch((e) => {
+        if (e?.name === "AbortError") return null;
+        throw e;
+      });
+
+      clearTimeout(t);
+      if (!response) return; // aborted
+
+      const data = await response.json().catch(() => ({}));
+      const cityName =
+        data?.address?.city ||
+        data?.address?.town ||
+        data?.address?.village ||
+        data?.address?.county ||
+        data?.address?.state ||
+        "";
+
+      if (isMountedRef.current && geoAbortRef.current === ac) {
+        setLocationLabel(cityName || "Your area");
+      }
+    } catch {
+      // swallow, keep previous label
+    }
+  }
+
+  // Get user's geolocation
+  function getUserLocation() {
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("unsupported");
+      return;
+    }
+
+    setLocationStatus("loading");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const coords = {
+          lat: Number(position.coords.latitude),
+          lng: Number(position.coords.longitude),
+        };
+        if (!isValidLatLng(coords.lat, coords.lng)) {
+          setLocationStatus("denied");
+          return;
+        }
+        setUserLocation(coords);
+        setLocationStatus("granted");
+        reverseGeocodeLocation(coords).catch(() => {});
+      },
+      () => {
+        setLocationStatus("denied");
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60_000 }
+    );
+  }
+
+  // Get location on mount
+  useEffect(() => {
+    getUserLocation();
+    return () => {
+      geoAbortRef.current?.abort?.();
+    };
+  }, []);
+
+  // Categories derived from events data
+  const categories = useMemo(() => {
+    const categorySet = new Set(events.map((event) => event.category).filter(Boolean));
+    return ["All", ...Array.from(categorySet).sort()];
+  }, [events]);
+
+  // Filtered and sorted events for Explore mode
+  const filteredExploreEvents = useMemo(() => {
+    let result = events.slice();
+
+    if (selectedCategory !== "All") {
+      result = result.filter((event) => event.category === selectedCategory);
+    }
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (event) =>
+          (event.title || "").toLowerCase().includes(query) ||
+          (event.place || "").toLowerCase().includes(query)
+      );
+    }
+
+    result.sort(
+      (a, b) =>
+        new Date(a.dateISO) - new Date(b.dateISO) ||
+        new Date(b.created_at) - new Date(a.created_at)
+    );
+
+    if (userLocation) {
+      result = result
+        .map((event) => ({ ...event, _distance: calculateKmBetween(userLocation, event) }))
+        .sort(
+          (a, b) =>
+            new Date(a.dateISO) - new Date(b.dateISO) ||
+            a._distance - b._distance
+        )
+        .map(({ _distance, ...rest }) => rest);
+    }
+
+    return result;
+  }, [events, selectedCategory, searchQuery, userLocation]);
+
+  const popularEvents = useMemo(() => filteredExploreEvents.slice(0, 12), [filteredExploreEvents]);
+  const upcomingEvents = useMemo(() => filteredExploreEvents.slice(0, 10), [filteredExploreEvents]);
+
+  // Events near user location
+  const nearbyEvents = useMemo(() => {
+    if (!userLocation) return [];
+
+    const eventsWithCoordinates = events.filter((event) => isValidLatLng(event.lat, event.lng));
+
+    const eventsWithDistance = eventsWithCoordinates.map((event) => ({
+      ...event,
+      distanceKm: calculateKmBetween(userLocation, event),
+    }));
+
+    let result = eventsWithDistance.filter(
+      (event) => Number.isFinite(event.distanceKm) && event.distanceKm <= radius
+    );
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (event) =>
+          (event.title || "").toLowerCase().includes(query) ||
+          (event.place || "").toLowerCase().includes(query)
+      );
+    }
+
+    result.sort((a, b) => a.distanceKm - b.distanceKm);
+    return result;
+  }, [events, userLocation, radius, searchQuery]);
+
+  const openEventDetail = (event) => navigate(`/events/${event.id}`, { state: { event } });
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20 font-sans">
-      
-      {/* --- PREMIUM STICKY HEADER --- */}
-      <div className="bg-white px-6 pt-12 pb-6 border-b border-slate-100 sticky top-0 z-50 backdrop-blur-xl bg-white/95">
-        <div className="max-w-xl mx-auto">
-          <div className="flex justify-between items-center mb-8">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-black rounded-2xl flex items-center justify-center text-white rotate-3 shadow-lg">
-                <Zap size={20} fill="currentColor" />
-              </div>
-              <span className="font-black text-xl tracking-tighter uppercase italic">Vibe.</span>
-            </div>
-            <div className="flex items-center gap-2 bg-violet-50 py-2 px-4 rounded-full border border-violet-100">
-               <MapPin size={14} className="text-violet-600" />
-               <span className="text-[11px] font-black uppercase text-violet-700 tracking-wider">{placeName}</span>
-            </div>
-          </div>
-
-          <h1 className="text-5xl font-black tracking-tighter leading-[0.8] mb-10 text-slate-900">
-            {activeTab === 'explore' && "Discover \nNew Events"}
-            {activeTab === 'massage' && "Wellness \nCenters"}
-            {activeTab === 'nearby' && "Around \nYou Now"}
-          </h1>
-
-          {/* --- THE NAVIGATION TABS (THE CHANGE IS HERE) --- */}
-          <div className="flex gap-2 bg-slate-100 p-2 rounded-[2rem] mb-8 shadow-inner">
-            <button 
-              onClick={() => setActiveTab("explore")}
-              className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[1.5rem] transition-all duration-300 ${
-                activeTab === "explore" ? "bg-white text-violet-600 shadow-xl scale-105" : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Compass size={18} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Explore</span>
-            </button>
-
-            <button 
-              onClick={() => setActiveTab("massage")}
-              className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[1.5rem] transition-all duration-300 ${
-                activeTab === "massage" ? "bg-white text-violet-600 shadow-xl scale-105" : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Heart size={18} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Massage</span>
-            </button>
-
-            <button 
-              onClick={() => setActiveTab("nearby")}
-              className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-[1.5rem] transition-all duration-300 ${
-                activeTab === "nearby" ? "bg-white text-violet-600 shadow-xl scale-105" : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              <Navigation2 size={18} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Nearby</span>
-            </button>
-          </div>
-
-          {/* Search Area */}
-          <div className="relative group">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-violet-600 transition-colors" size={20} />
-            <input 
-              placeholder={`Find ${activeTab}...`}
-              className="w-full bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] py-5 pl-14 pr-6 text-sm font-bold focus:border-violet-600/20 focus:bg-white transition-all shadow-sm"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* --- DYNAMIC CONTENT --- */}
-      <main className="max-w-xl mx-auto px-6 mt-10">
-        
-        {/* CASE 1: EXPLORE */}
-        {activeTab === "explore" && (
-          <div className="grid gap-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {displayData.map(event => (
-              <div key={event.id} className="group bg-white rounded-[3rem] overflow-hidden border border-slate-100 shadow-sm hover:shadow-2xl transition-all">
-                <div className="h-64 relative overflow-hidden">
-                  <img src={event.img} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt="" />
-                  <div className="absolute top-6 left-6 bg-black text-white px-5 py-2 rounded-2xl font-black text-xs shadow-2xl">
-                    ${event.price}
-                  </div>
-                </div>
-                <div className="p-8">
-                  <div className="flex items-center gap-2 text-[10px] font-black text-violet-600 uppercase tracking-widest mb-4">
-                    <Calendar size={14} /> {event.dateLabel}
-                  </div>
-                  <h3 className="text-3xl font-black mb-3 leading-none tracking-tighter">{event.title}</h3>
-                  <p className="text-slate-400 text-sm font-bold flex items-center gap-2">
-                    <MapPin size={16} className="text-slate-300" /> {event.place}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* CASE 2: MASSAGE (THE CREATE UI) */}
-        {activeTab === "massage" && (
-          <div className="animate-in fade-in zoom-in duration-500">
-            {displayData.length === 0 ? (
-              <div className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-[3.5rem] p-12 text-white shadow-2xl shadow-violet-200 relative overflow-hidden text-center">
-                <Flower2 className="absolute -right-10 -top-10 w-64 h-64 opacity-10 rotate-12" />
-                <div className="w-24 h-24 bg-white/20 backdrop-blur-md rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-inner">
-                   <Plus size={40} strokeWidth={3} />
-                </div>
-                <h2 className="text-4xl font-black leading-[0.9] mb-6">No Wellness <br/>Clinics Found.</h2>
-                <p className="text-violet-100 font-medium mb-10 max-w-xs mx-auto opacity-80">Be the first to list your clinic in {placeName} and reach local clients today.</p>
-                <button 
-                  onClick={() => navigate("/create-massage-clinic")}
-                  className="bg-white text-indigo-700 w-full py-6 rounded-[2rem] font-black text-xs tracking-[0.2em] uppercase hover:scale-105 transition-all shadow-xl shadow-black/10 active:scale-95"
+    <div className="min-h-dvh bg-white text-gray-900 pb-24">
+      <div className="mx-auto w-full max-w-md">
+        {/* Sticky Header */}
+        <div className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-gray-100 px-4 pt-3 pb-3">
+          <div className="flex items-center justify-between">
+            {/* Mode Toggle */}
+            <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
+              {["explore", "near"].map((modeOption) => (
+                <button
+                  key={modeOption}
+                  onClick={() => setMode(modeOption)}
+                  className={`rounded-full px-4 py-2 text-sm transition-colors ${
+                    mode === modeOption ? "bg-violet-600 text-white shadow" : "text-gray-700 hover:bg-violet-50"
+                  }`}
                 >
-                  Create Clinic Page
+                  {modeOption === "explore" ? "Explore" : "Near You"}
                 </button>
-              </div>
-            ) : (
-              <div className="grid gap-6">
-                {displayData.map(clinic => <ClinicRow key={clinic.id} clinic={clinic} />)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* CASE 3: NEARBY (MAP + LIST) */}
-        {activeTab === "nearby" && (
-          <div className="space-y-10 animate-in fade-in duration-500">
-            <div className="h-80 rounded-[3rem] overflow-hidden border-8 border-white shadow-2xl relative">
-              <MapContainer center={userLoc || MANGOCHI} zoom={13} style={{ height: '100%' }} zoomControl={false}>
-                <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
-                <MapCenterer coords={userLoc || MANGOCHI} />
-                {displayData.map(item => (
-                  <Marker key={item.id} position={[item.lat, item.lng]} icon={markerIcon} />
-                ))}
-              </MapContainer>
-            </div>
-            <div className="space-y-6">
-              <h3 className="font-black text-2xl tracking-tighter">Locals in {placeName}</h3>
-              {displayData.map(item => (
-                <div key={item.id} className="flex items-center gap-6 p-4 bg-white rounded-[2rem] border border-slate-50 hover:shadow-xl transition-all cursor-pointer group">
-                  <img src={item.img} className="w-20 h-20 rounded-[1.5rem] object-cover" alt="" />
-                  <div className="flex-1">
-                    <h4 className="font-black text-lg group-hover:text-violet-600 transition-colors">{item.title}</h4>
-                    <p className="text-[11px] text-slate-400 font-black uppercase tracking-tighter mt-1">{item.dist.toFixed(1)} km away</p>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-2xl text-slate-300 group-hover:bg-violet-600 group-hover:text-white transition-all">
-                    <ChevronRight size={20}/>
-                  </div>
-                </div>
               ))}
             </div>
+
+            {/* Location Button */}
+            <button
+              onClick={getUserLocation}
+              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+              title="Update location"
+            >
+              <i className="lni lni-map-marker text-violet-600" />
+              {locationLabel ||
+                (locationStatus === "loading"
+                  ? "Locating…"
+                  : locationStatus === "denied"
+                  ? "Location off"
+                  : "Change")}
+              <i className="lni lni-reload text-gray-400" />
+            </button>
           </div>
-        )}
 
-      </main>
-    </div>
-  );
-}
+          {/* Search + Create */}
+          <div className="mt-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+              <i className="lni lni-search-alt text-gray-400" />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={mode === "explore" ? "Search for event" : "Search nearby events"}
+                className="w-full bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none"
+              />
+              <Link
+                to="/events/new"
+                className="grid h-9 w-9 place-items-center rounded-lg text-gray-700 hover:bg-gray-100"
+                aria-label="Create event"
+                title="Create event"
+              >
+                <i className="lni lni-plus" />
+              </Link>
+            </div>
 
-// --- Internal Helper UI ---
+            {/* Status Line */}
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <i className="lni lni-navigation text-violet-600" />
+              {mode === "near" ? (
+                <span className="text-gray-600">
+                  {locationStatus === "loading"
+                    ? "Finding your position…"
+                    : `${nearbyEvents.length} results within ${radius} km of `}
+                  <span className="font-medium text-gray-800">
+                    {locationLabel || "your area"}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-gray-600">Discover top picks and upcoming events</span>
+              )}
+            </div>
+          </div>
+        </div>
 
-function ClinicRow({ clinic }) {
-  return (
-    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 flex items-center gap-6 shadow-sm hover:shadow-xl transition-all group cursor-pointer">
-      <div className="w-20 h-20 bg-violet-50 rounded-[1.5rem] flex items-center justify-center text-violet-600 shadow-inner group-hover:bg-violet-600 group-hover:text-white transition-colors">
-        <Flower2 size={32} />
-      </div>
-      <div className="flex-1">
-        <h4 className="font-black text-xl mb-1">{clinic.title}</h4>
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={14} className="text-green-500" />
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Verified Expert</span>
+        {/* Body Content */}
+        <div className="px-4 pt-3">
+          {isLoading ? (
+            <LoadingCard />
+          ) : error ? (
+            <ErrorCard
+              error={error}
+              onRetry={() => refresh({ foreground: true })}
+              onSignIn={() => navigate("/auth/signin/email", { state: { from: "/events" } })}
+            />
+          ) : events.length === 0 ? (
+            <EmptyCreate onCreate={() => navigate("/events/new")} />
+          ) : mode === "explore" ? (
+            <ExploreSection
+              categories={categories}
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              popularEvents={popularEvents}
+              upcomingEvents={upcomingEvents}
+              openEventDetail={openEventDetail}
+            />
+          ) : (
+            <NearYouSection
+              userLocation={userLocation}
+              radius={radius}
+              setRadius={setRadius}
+              viewType={viewType}
+              setViewType={setViewType}
+              events={nearbyEvents}
+              openEventDetail={openEventDetail}
+            />
+          )}
         </div>
       </div>
-      <ChevronRight size={24} className="text-slate-200 group-hover:text-violet-600" />
+
+      {/* Floating Create Button */}
+      <Link
+        to="/events/new"
+        className="fixed bottom-28 right-5 z-20 grid h-14 w-14 place-items-center rounded-full bg-violet-600 text-white shadow-lg hover:bg-violet-700"
+        title="Create"
+      >
+        <i className="lni lni-plus" />
+      </Link>
     </div>
   );
 }
 
-function calculateDistance(a, b) {
-  const R = 6371; 
-  const dLat = (b.lat - a.lat) * Math.PI / 180;
-  const dLng = (b.lng - a.lng) * Math.PI / 180;
-  const v = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(a.lat * Math.PI/180) * Math.cos(b.lat * Math.PI/180) * Math.sin(dLng/2) * Math.sin(dLng/2);
-  return R * 2 * Math.atan2(Math.sqrt(v), Math.sqrt(1-v));
+/* ---------------- Explore Section ---------------- */
+function ExploreSection({
+  categories,
+  selectedCategory,
+  setSelectedCategory,
+  popularEvents,
+  upcomingEvents,
+  openEventDetail,
+}) {
+  const countsByCategory = useMemo(() => {
+    const allEvents = [...popularEvents, ...upcomingEvents];
+    const counts = { All: allEvents.length };
+
+    for (const category of categories.slice(1)) {
+      counts[category] = allEvents.filter((event) => event.category === category).length;
+    }
+
+    return counts;
+  }, [categories, popularEvents, upcomingEvents]);
+
+  return (
+    <>
+      {/* Featured Event */}
+      {popularEvents[0] && (
+        <div className="mt-4">
+          <div
+            className="relative overflow-hidden rounded-3xl shadow-lg cursor-pointer"
+            onClick={() => openEventDetail(popularEvents[0])}
+          >
+            <img
+              src={popularEvents[0].img}
+              alt={popularEvents[0].title}
+              className="h-56 w-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+            <div className="absolute bottom-4 left-4 right-4 text-white">
+              <div className="text-xs opacity-80">Featured Event</div>
+              <div className="text-xl font-bold">{popularEvents[0].title}</div>
+              <div className="text-sm opacity-90">{popularEvents[0].place}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <HeaderRow title="Popular Events" />
+
+      {/* Category Filters */}
+      <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
+        {categories.map((category) => (
+          <button
+            key={category}
+            onClick={() => setSelectedCategory(category)}
+            className={[
+              "shrink-0 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm transition-colors border",
+              selectedCategory === category
+                ? "bg-violet-600 text-white border-violet-600 shadow"
+                : "bg-white text-gray-800 border-gray-200 hover:bg-violet-50",
+            ].join(" ")}
+          >
+            <span>{category}</span>
+            <span
+              className={[
+                "rounded-full px-1.5 text-[11px]",
+                selectedCategory === category ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600",
+              ].join(" ")}
+            >
+              {countsByCategory[category] ?? 0}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Popular Events Carousel */}
+      <div className="no-scrollbar mt-4 flex gap-4 overflow-x-auto pb-1">
+        {popularEvents.length === 0 && (
+          <div className="w-full text-sm text-gray-500">No events found.</div>
+        )}
+        {popularEvents
+          .filter((event) => selectedCategory === "All" || event.category === selectedCategory)
+          .map((event) => (
+            <EventCard key={event.id} event={event} onClick={() => openEventDetail(event)} />
+          ))}
+      </div>
+
+      <HeaderRow title="Upcoming Events" />
+
+      {/* Upcoming Events List */}
+      <div className="mt-3 space-y-3">
+        {upcomingEvents.map((event) => (
+          <UpcomingEventRow key={event.id} event={event} onOpen={openEventDetail} />
+        ))}
+      </div>
+    </>
+  );
 }
 
-function MapCenterer({ coords }) {
+/* ---------------- Event Card (Popular Section) ---------------- */
+function EventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group w-[265px] shrink-0 overflow-hidden rounded-2xl border border-gray-200 bg-white text-left shadow-card hover:shadow-md active:scale-[0.99]"
+    >
+      <div className="relative h-44">
+        {event.img ? (
+          <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
+        ) : (
+          <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">No cover</div>
+        )}
+
+        {/* Date Badge */}
+        <div className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-xs text-white ring-1 ring-white/10">
+          {event.dateLabel}
+        </div>
+
+        {/* Category Badge */}
+        <div className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-xs text-gray-800 ring-1 ring-gray-200">
+          {event.category}
+        </div>
+
+        {/* Gradient Overlay */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
+
+        {/* Title and Price */}
+        <div className="absolute inset-x-2 bottom-2 flex items-end justify-between">
+          <div className="max-w-[70%] truncate text-sm font-semibold text-white drop-shadow">{event.title}</div>
+          <div className="rounded-full bg-white/90 px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-violet-200">
+            ${event.price}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-3">
+        <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600" />
+          {event.place}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ---------------- Near You Section ---------------- */
+function NearYouSection({
+  userLocation,
+  radius,
+  setRadius,
+  viewType,
+  setViewType,
+  events,
+  openEventDetail,
+}) {
+  return (
+    <>
+      {/* Controls */}
+      <div className="mt-5 flex items-center justify-between">
+        <RadiusSlider value={radius} onChange={setRadius} />
+
+        {/* View Toggle */}
+        <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
+          <button
+            onClick={() => setViewType("list")}
+            className={`rounded-full px-3 py-1.5 text-sm ${viewType === "list" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
+          >
+            <i className="lni lni-list" /> List
+          </button>
+          <button
+            onClick={() => setViewType("map")}
+            className={`rounded-full px-3 py-1.5 text-sm ${viewType === "map" ? "bg-violet-600 text-white" : "text-gray-700 hover:bg-violet-50"}`}
+          >
+            <i className="lni lni-map" /> Map
+          </button>
+        </div>
+      </div>
+
+      {/* Map or List View */}
+      {viewType === "map" ? (
+        <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200">
+          {userLocation ? (
+            <NearbyEventsMap center={userLocation} events={events} onOpenEvent={openEventDetail} />
+          ) : (
+            <div className="aspect-[16/9] grid place-items-center text-sm text-gray-500">Locating…</div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {events.length === 0 ? (
+            <EmptyState message={`No events within ${radius} km. Try widening the radius.`} />
+          ) : (
+            events.map((event) => <NearbyEventCard key={event.id} event={event} onClick={() => openEventDetail(event)} />)
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---------------- Nearby Event Card ---------------- */
+function NearbyEventCard({ event, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-card hover:shadow-md active:scale-[0.99]"
+    >
+      <div className="h-20 w-28 overflow-hidden rounded-lg bg-gray-100">
+        {event.img ? (
+          <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="truncate text-sm font-semibold">{event.title}</div>
+          {Number.isFinite(event.distanceKm) && (
+            <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+              {formatDistanceLabel(event.distanceKm)} away
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+          <i className="lni lni-map-marker text-violet-600" />
+          {event.place}
+        </div>
+        <div className="mt-1 text-sm font-semibold text-violet-700">
+          ${event.price}
+          <span className="text-[11px] text-gray-500">/Person</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ---------------- Shared Components ---------------- */
+function RadiusSlider({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-gray-600">Radius</span>
+      <input
+        type="range"
+        min={1}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-2 w-40 appearance-none rounded-full bg-gray-200 accent-violet-600"
+        aria-label="Search radius"
+      />
+      <span className="text-sm font-medium text-gray-800 w-12 text-right">{value} km</span>
+    </div>
+  );
+}
+
+function HeaderRow({ title }) {
+  return (
+    <div className="mt-6 flex items-center">
+      <h2 className="text-lg font-semibold">{title}</h2>
+    </div>
+  );
+}
+
+function UpcomingEventRow({ event, onOpen }) {
+  return (
+    <button
+      onClick={() => onOpen(event)}
+      className="flex w-full items-stretch gap-3 rounded-2xl border border-gray-200 bg-white p-3 text-left shadow-card hover:shadow-md active:scale-[0.99]"
+    >
+      {/* Date Box */}
+      <div className="grid w-14 place-items-center rounded-xl border border-gray-200 bg-white">
+        <div className="text-center leading-tight">
+          <div className="text-lg font-bold text-violet-700">{event.day}</div>
+          <div className="text-[11px] text-gray-500">{event.month}</div>
+        </div>
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {/* Thumbnail */}
+        <div className="h-16 w-24 overflow-hidden rounded-lg bg-gray-100">
+          {event.img ? (
+            <img src={event.img} alt={event.title} className="h-full w-full object-cover" draggable={false} />
+          ) : (
+            <div className="grid h-full w-full place-items-center text-gray-400">No cover</div>
+          )}
+        </div>
+
+        {/* Info */}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">{event.title}</div>
+          <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+            <i className="lni lni-map-marker text-violet-600" />
+            {event.place}
+          </div>
+          <div className="mt-1 text-sm font-semibold text-violet-700">
+            ${event.price}
+            <span className="text-[11px] text-gray-500">/Person</span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function EmptyCreate({ onCreate }) {
+  return (
+    <div className="mt-10 rounded-2xl border border-dashed border-gray-300 p-6 text-center">
+      <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-gray-100 text-gray-500">
+        <i className="lni lni-calendar text-2xl" />
+      </div>
+      <div className="mt-3 text-sm text-gray-700">No events yet</div>
+      <p className="mt-1 text-xs text-gray-500">Create or discover events near you.</p>
+      <div className="mt-4 flex justify-center">
+        <button className="btn-primary" onClick={onCreate}>
+          <i className="lni lni-plus mr-1" /> Create event
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ message }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600">
+      {message}
+    </div>
+  );
+}
+
+function LoadingCard() {
+  return (
+    <div className="grid h-[60vh] place-items-center">
+      <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-card">
+        <span className="relative inline-block h-4 w-4">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-500 opacity-75" />
+          <span className="relative inline-flex h-4 w-4 rounded-full bg-violet-600" />
+        </span>
+        <span className="text-sm font-medium text-gray-700">Loading…</span>
+      </div>
+    </div>
+  );
+}
+
+function ErrorCard({ error, onRetry, onSignIn }) {
+  const isAuthError = /session expired|unauthorized|401/i.test(
+    error?.message || error?.error || (typeof error === "string" ? error : "")
+  );
+
+  const errorMessage =
+    error?.message ||
+    error?.error ||
+    (typeof error === "string" ? error : "An unexpected error occurred");
+
+  return (
+    <div className="grid h-[60vh] place-items-center text-center">
+      <div>
+        <p className={isAuthError ? "text-amber-600 font-medium" : "text-red-600 font-medium"}>
+          {isAuthError ? "You need to sign in" : "Failed to load"}
+        </p>
+        <p className="mt-1 text-xs text-gray-500">{errorMessage}</p>
+        <div className="mt-3 flex items-center justify-center gap-2">
+          {isAuthError ? (
+            <button className="btn-primary" onClick={onSignIn}>
+              <i className="lni lni-unlock mr-1" />
+              Sign in
+            </button>
+          ) : (
+            <button className="btn-outline" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NearbyEventsMap({ center, events, onOpenEvent }) {
+  return (
+    <MapContainer
+      center={[center.lat, center.lng]}
+      zoom={12}
+      style={{ height: 340, width: "100%" }}
+      className="touch-pan-y"
+      zoomControl={false}
+    >
+      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <RecenterMap position={[center.lat, center.lng]} />
+      {events.map((event) => (
+        <Marker
+          key={event.id}
+          position={[event.lat, event.lng]}
+          icon={pinIcon}
+          eventHandlers={{ click: () => onOpenEvent(event) }}
+        >
+          <Popup>
+            <div className="text-sm">
+              <div className="font-semibold">{event.title}</div>
+              <div className="text-gray-600">{event.place}</div>
+              <div className="mt-1 text-violet-700 font-semibold">${event.price}</div>
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+    </MapContainer>
+  );
+}
+
+function RecenterMap({ position }) {
   const map = useMap();
-  useEffect(() => { if(coords) map.setView([coords.lat, coords.lng], 13, { animate: true }); }, [coords, map]);
+
+  useEffect(() => {
+    map.setView(position, 12, { animate: true });
+  }, [position, map]);
+
   return null;
 }
-
-// --- Mock Data ---
-const massageClinics = []; // KEEP EMPTY TO SEE THE 'CREATE CLINIC' GRADIENT BOX
-const popularEvents = [
-  { id: 1, title: "Lake of Stars", price: 150, category: "Music", dateLabel: "OCT 24", img: "https://images.unsplash.com/photo-1459749411177-042180ce673c?w=800", place: "Senga Bay", lat: -13.72, lng: 34.61 },
-  { id: 2, title: "Sunday Grill", price: 25, category: "Social", dateLabel: "EVERY SUN", img: "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=800", place: "Lilongwe Area 10", lat: -13.95, lng: 33.79 }
-];
-const localEvents = [
-  { id: 3, title: "Morning Yoga", price: 10, category: "Social", dateLabel: "07:00 AM", img: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?w=800", place: "Mangochi Main", lat: -14.47, lng: 35.26 }
-];
