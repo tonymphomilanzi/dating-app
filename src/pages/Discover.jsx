@@ -10,12 +10,11 @@ import { DiscoverCache } from "../lib/discoverCache.js";
 import { useRevalidate } from "../hooks/useRevalidate.js";
 import { useGeolocation } from "../hooks/useGeolocation.js";
 
-
-
 // Helpers near the top
 const toNum = (v) => (v == null ? null : Number(v));
 const isValidLatLng = (lat, lng) => {
-  const la = toNum(lat), ln = toNum(lng);
+  const la = toNum(lat),
+    ln = toNum(lng);
   if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
   if (la < -90 || la > 90 || ln < -180 || ln > 180) return false;
   // Guard against the (0,0) sentinel commonly emitted while GPS warms up
@@ -35,7 +34,7 @@ const LOCATION_SAVE_INTERVAL_MS = 5 * 60 * 1000;
 /* ---------------- Main Component ---------------- */
 export default function Discover() {
   const navigate = useNavigate();
-  const { profile, reloadProfile } = useAuth();
+  const { profile } = useAuth();
   const userId = profile?.id || "me";
 
   // Mode and UI state
@@ -44,6 +43,9 @@ export default function Discover() {
   const [profiles, setProfiles] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Notifications (placeholder for now; wire to API later)
+  const [unreadCount] = useState(3); // TODO: replace with real unread count from API/store
 
   // Stories state
   const [storyUsers, setStoryUsers] = useState([]);
@@ -64,22 +66,22 @@ export default function Discover() {
   }, []);
 
   // Real-time location tracking
-const handleLocationChange = useCallback(async (newLocation) => {
-  const lat = toNum(newLocation?.lat);
-  const lng = toNum(newLocation?.lng);
-  if (!isValidLatLng(lat, lng)) return; // don't save invalid or (0,0)
+  const handleLocationChange = useCallback(async (newLocation) => {
+    const lat = toNum(newLocation?.lat);
+    const lng = toNum(newLocation?.lng);
+    if (!isValidLatLng(lat, lng)) return;
 
-  const now = Date.now();
-  if (now - lastLocationSaveTimeRef.current > LOCATION_SAVE_INTERVAL_MS) {
-    try {
-      await updateProfileLocation(lat, lng);
-      lastLocationSaveTimeRef.current = now;
-      console.log(">>Location saved:", { lat: lat.toFixed(4), lng: lng.toFixed(4) });
-    } catch (err) {
-      console.warn("Location save failed:", err.message);
+    const now = Date.now();
+    if (now - lastLocationSaveTimeRef.current > LOCATION_SAVE_INTERVAL_MS) {
+      try {
+        await updateProfileLocation(lat, lng);
+        lastLocationSaveTimeRef.current = now;
+        console.log(">>Location saved:", { lat: lat.toFixed(4), lng: lng.toFixed(4) });
+      } catch (err) {
+        console.warn("Location save failed:", err.message);
+      }
     }
-  }
-}, []);
+  }, []);
 
   const {
     location: currentLocation,
@@ -92,78 +94,75 @@ const handleLocationChange = useCallback(async (newLocation) => {
     onLocationChange: handleLocationChange,
   });
 
-
-
   const lastGoodRealtimeRef = useRef(null);
 
-useEffect(() => {
-  const lat = toNum(currentLocation?.lat);
-  const lng = toNum(currentLocation?.lng);
-  if (isValidLatLng(lat, lng)) {
-    lastGoodRealtimeRef.current = {
-      lat,
-      lng,
-      accuracy: currentLocation?.accuracy,
-      isRealtime: true,
-    };
-  }
-}, [currentLocation?.lat, currentLocation?.lng, currentLocation?.accuracy]);
-
+  useEffect(() => {
+    const lat = toNum(currentLocation?.lat);
+    const lng = toNum(currentLocation?.lng);
+    if (isValidLatLng(lat, lng)) {
+      lastGoodRealtimeRef.current = {
+        lat,
+        lng,
+        accuracy: currentLocation?.accuracy,
+        isRealtime: true,
+      };
+    }
+  }, [currentLocation?.lat, currentLocation?.lng, currentLocation?.accuracy]);
 
   // Use real-time location if available, fallback to profile
-const myLocation = useMemo(() => {
-  // Prefer valid realtime
-  if (lastGoodRealtimeRef.current) return lastGoodRealtimeRef.current;
+  const myLocation = useMemo(() => {
+    if (lastGoodRealtimeRef.current) return lastGoodRealtimeRef.current;
 
-  // Fallback to profile’s saved location if valid
-  if (isValidLatLng(profile?.lat, profile?.lng)) {
-    return { lat: Number(profile.lat), lng: Number(profile.lng), isRealtime: false };
-  }
+    if (isValidLatLng(profile?.lat, profile?.lng)) {
+      return { lat: Number(profile.lat), lng: Number(profile.lng), isRealtime: false };
+    }
 
-  return null;
-}, [profile?.lat, profile?.lng]);
+    return null;
+  }, [profile?.lat, profile?.lng]);
 
   // Fetch profiles
-const fetchProfiles = useCallback(
-  async (requestedMode, options = {}) => {
-    const { background = false } = options;
-    const currentRequestId = ++requestIdRef.current;
+  const fetchProfiles = useCallback(
+    async (requestedMode, options = {}) => {
+      const { background = false } = options;
+      const currentRequestId = ++requestIdRef.current;
 
-    // cancel previous
-    abortControllerRef.current?.abort();
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
+      // cancel previous
+      abortControllerRef.current?.abort();
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
 
-    if (!background) {
-      setIsLoading(true);
-      setError("");
-    }
+      if (!background) {
+        setIsLoading(true);
+        setError("");
+      }
 
-    try {
-  const response = await discoverService.list(requestedMode, 20, {
-    lat: myLocation?.lat,
-    lng: myLocation?.lng,
-    signal: abortController.signal,
-    debug: false,
-  });
-  if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
-  setProfiles(Array.isArray(response) ? response : []);
-  setActiveMode(requestedMode);
-  DiscoverCache.save(userId, requestedMode, Array.isArray(response) ? response : []);
-} catch (err) {
-  if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
-  if (err?.name !== "AbortError") {
-    setError(err?.message || "Failed to load profiles");
-  }
-} finally {
-  if (requestIdRef.current === currentRequestId && isMountedRef.current && !background) {
-    setIsLoading(false); // ALWAYS clear the spinner, even after AbortError
-  }
+      try {
+        const response = await discoverService.list(requestedMode, 20, {
+          lat: myLocation?.lat,
+          lng: myLocation?.lng,
+          signal: abortController.signal,
+          debug: false,
+        });
 
-    }
-  },
-  [userId, myLocation?.lat, myLocation?.lng]
-);
+        if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
+
+        const items = Array.isArray(response) ? response : [];
+        setProfiles(items);
+        setActiveMode(requestedMode);
+        DiscoverCache.save(userId, requestedMode, items);
+      } catch (err) {
+        if (requestIdRef.current !== currentRequestId || !isMountedRef.current) return;
+        if (err?.name !== "AbortError") {
+          setError(err?.message || "Failed to load profiles");
+        }
+      } finally {
+        if (requestIdRef.current === currentRequestId && isMountedRef.current && !background) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [userId, myLocation?.lat, myLocation?.lng]
+  );
 
   // Load data when mode or location changes
   useEffect(() => {
@@ -214,7 +213,9 @@ const fetchProfiles = useCallback(
           setStoryUsers(users);
           setHasMyStory(hasMine);
         }
-      } catch {}
+      } catch {
+        // noop
+      }
     };
 
     loadStories();
@@ -276,41 +277,45 @@ const fetchProfiles = useCallback(
             )}
           </div>
 
+          {/* Notifications (replaces the old location icon/button) */}
           <button
-            onClick={refreshLocation}
-            className="ml-auto rounded-full p-2 hover:bg-gray-100 transition-colors"
-            title="Refresh location"
+            type="button"
+            onClick={() => navigate("/notifications")} // implement page/route later
+            className="ml-auto relative rounded-full p-2 hover:bg-gray-100 transition-colors"
+            title="Notifications"
+            aria-label="Notifications"
           >
-            <svg
-              className={`h-5 w-5 ${
-                locationStatus === "loading"
-                  ? "animate-pulse text-violet-600"
-                  : myLocation
-                  ? "text-green-600"
-                  : "text-gray-400"
-              }`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
+            <svg className="h-5 w-5 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V4a2 2 0 10-4 0v1.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0m6 0H9"
               />
             </svg>
+
+            {unreadCount > 0 && (
+              <span
+                className={[
+                  "absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1",
+                  "inline-flex items-center justify-center",
+                  "rounded-full bg-violet-600 text-white text-[10px] font-bold",
+                  "ring-2 ring-white",
+                ].join(" ")}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
           </button>
 
-          <Link to="/filters" className="rounded-full p-2 hover:bg-gray-100">
+          <Link to="/filters" className="rounded-full p-2 hover:bg-gray-100" title="Filters" aria-label="Filters">
             <svg className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+              />
             </svg>
           </Link>
         </div>
@@ -333,11 +338,11 @@ const fetchProfiles = useCallback(
             {TABS.map((tab) => (
               <button
                 key={tab.key}
-                  onClick={() => {
-    setSelectedMode(tab.key);
-    setActiveMode(tab.key);   // reflect tab immediately
-    setProfiles([]);          // clear old list so we show a proper loading/empty state
-  }}
+                onClick={() => {
+                  setSelectedMode(tab.key);
+                  setActiveMode(tab.key);
+                  setProfiles([]);
+                }}
                 className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                   selectedMode === tab.key
                     ? "bg-violet-600 text-white shadow"
@@ -351,8 +356,7 @@ const fetchProfiles = useCallback(
 
           {selectedMode !== activeMode && !isLoading && (
             <p className="mt-2 text-xs text-gray-500">
-              No results in "{selectedMode.replace("_", " ")}" — showing "
-              {activeMode.replace("_", " ")}".
+              No results in "{selectedMode.replace("_", " ")}" — showing "{activeMode.replace("_", " ")}".
             </p>
           )}
         </div>
@@ -372,11 +376,7 @@ const fetchProfiles = useCallback(
                 error={locationError}
               />
             )}
-            <SwipeDeck
-              initialItems={profiles}
-              mode={activeMode}
-              myLoc={myLocation}
-            />
+            <SwipeDeck initialItems={profiles} mode={activeMode} myLoc={myLocation} />
           </>
         )}
       </main>
@@ -405,20 +405,14 @@ function StoriesRow({ storyUsers, hasMyStory, onMyStoryClick, onUserStoryClick }
       </div>
 
       {storyUsers.map((user) => (
-        <button
-          key={user.user_id}
-          onClick={() => onUserStoryClick(user.user_id)}
-          className="flex w-16 flex-col items-center"
-        >
+        <button key={user.user_id} onClick={() => onUserStoryClick(user.user_id)} className="flex w-16 flex-col items-center">
           <img
             src={user.avatar || "/me.jpg"}
             alt={user.name}
             className="h-14 w-14 rounded-full object-cover ring-2 ring-violet-200"
             draggable={false}
           />
-          <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">
-            {String(user.name).split(" ")[0]}
-          </span>
+          <span className="mt-1 w-16 truncate text-center text-xs text-gray-600">{String(user.name).split(" ")[0]}</span>
         </button>
       ))}
     </div>
@@ -445,12 +439,20 @@ function ErrorState({ error, onRetry }) {
       <div className="px-6">
         <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-red-50">
           <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
           </svg>
         </div>
         <p className="text-red-600 font-medium">Failed to load</p>
         <p className="mt-1 text-xs text-gray-500">{error}</p>
-        <button onClick={onRetry} className="mt-4 rounded-full border border-gray-200 bg-white px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+        <button
+          onClick={onRetry}
+          className="mt-4 rounded-full border border-gray-200 bg-white px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
           Try again
         </button>
       </div>
