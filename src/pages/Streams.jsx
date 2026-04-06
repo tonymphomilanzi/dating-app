@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "sonner"; //Added Sonner import
+import { toast } from "sonner";
 import {
   ArrowLeftIcon,
   ChevronDownIcon,
@@ -141,7 +141,6 @@ function StreamPage({ item, isActive, isNear, muted, toggleMute, onBack, onFollo
           <div className="absolute inset-0 h-full w-full bg-neutral-900 grid place-items-center" />
         )}
 
-        {/* Top/Bottom Overlays */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/80 to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 to-transparent" />
 
@@ -153,7 +152,6 @@ function StreamPage({ item, isActive, isNear, muted, toggleMute, onBack, onFollo
           </div>
         )}
 
-        {/* UI Overlay */}
         <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -212,7 +210,7 @@ function UploadSheet({ open, onClose, onUpload, uploading, progress, caption, se
   return (
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={uploading ? undefined : onClose} />
-      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl flex flex-col rounded-t-3xl border border-white/10 bg-neutral-900 text-white shadow-2xl h-[85dvh] overflow-hidden animate-in slide-in-from-bottom duration-300">
+      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl flex flex-col rounded-t-3xl border border-white/10 bg-neutral-950 text-white shadow-2xl h-[85dvh] overflow-hidden animate-in slide-in-from-bottom duration-300">
         <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/5">
           <p className="text-sm font-semibold">Upload Stream</p>
           <button onClick={onClose} disabled={uploading} className="p-2 hover:bg-white/5 rounded-full"><XMarkIcon className="h-5 w-5" /></button>
@@ -220,7 +218,7 @@ function UploadSheet({ open, onClose, onUpload, uploading, progress, caption, se
 
         <div className="flex-1 overflow-y-auto px-5 py-5">
           <div className="grid gap-6 md:grid-cols-[240px_1fr]">
-            <div className="aspect-[16/9] md:aspect-[9/16] bg-black rounded-xl overflow-hidden border border-white/5">
+            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden border border-white/5">
               {previewUrl ? <video className="h-full w-full object-cover" src={previewUrl} muted playsInline /> : <div className="grid h-full place-items-center text-[10px] text-neutral-500">No Preview</div>}
             </div>
 
@@ -238,11 +236,18 @@ function UploadSheet({ open, onClose, onUpload, uploading, progress, caption, se
                 disabled={uploading}
               />
 
+              {/* 🌟 PROGRESS BAR IMPLEMENTATION */}
               {uploading && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[10px] text-neutral-400"><span>Uploading...</span><span>{Math.round(progress)}%</span></div>
-                  <div className="h-1 w-full bg-neutral-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-white" style={{ width: `${progress}%` }} />
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-white/80">Uploading…</span>
+                    <span className="font-semibold text-white/80">{Math.round(progress)}%</span>
+                  </div>
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-400 transition-[width] duration-200"
+                      style={{ width: `${progress}%` }}
+                    />
                   </div>
                 </div>
               )}
@@ -279,12 +284,12 @@ export default function Streams() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const PAGE_SIZE = 10;
+  const progressTimerRef = useRef(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const data = await streamsService.listApproved(PAGE_SIZE, 0);
+        const data = await streamsService.listApproved(20);
         setItems(data);
       } catch (e) {
         toast.error("Failed to load streams");
@@ -301,30 +306,50 @@ export default function Streams() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
+  // 🌟 PROGRESS LOGIC
+  const startProgress = () => {
+    setProgress(0);
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    progressTimerRef.current = setInterval(() => {
+      setProgress((p) => {
+        // Slows down as it reaches 92% to wait for real API response
+        const next = p + Math.max(0.7, (92 - p) * 0.07);
+        return next >= 92 ? 92 : next;
+      });
+    }, 120);
+  };
+
+  const stopProgress = () => {
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    progressTimerRef.current = null;
+  };
+
+  const resetUpload = () => {
+    setFile(null);
+    setCaption("");
+    setProgress(0);
+    setUploading(false);
+  };
+
   const handleUpload = async () => {
     if (!file) return;
-    
-    // 🌟 START LOADING TOAST
     const toastId = toast.loading("Uploading your stream...");
     
     try {
       setUploading(true);
-      setProgress(10);
+      startProgress();
       
       await streamsService.createPending({ 
         caption: caption.trim().slice(0, 200), 
         file 
       });
 
+      stopProgress();
       setProgress(100);
       
       setTimeout(() => {
         setUploadOpen(false);
-        setUploading(false);
-        setFile(null);
-        setCaption("");
-        
-        // ✨ SUCCESS TOAST (Updates the existing one)
+        resetUpload();
         toast.success("Stream Uploaded Successfully!", {
           id: toastId,
           description: "Your video is in the queue and will appear shortly.",
@@ -332,16 +357,18 @@ export default function Streams() {
       }, 450);
 
     } catch (e) {
+      stopProgress();
       setUploading(false);
       setProgress(0);
-      
-      // ❌ ERROR TOAST (Updates the existing one)
       toast.error("Upload Failed", {
         id: toastId,
         description: e.message || "Please try again later.",
       });
     }
   };
+
+  // Cleanup timers on unmount
+  useEffect(() => () => stopProgress(), []);
 
   if (isLoading) return <div className="h-dvh grid place-items-center bg-black"><div className="h-10 w-10 border-4 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
@@ -355,7 +382,11 @@ export default function Streams() {
 
       <UploadSheet 
         open={uploadOpen} 
-        onClose={() => setUploadOpen(false)} 
+        onClose={() => {
+          if (uploading) return;
+          setUploadOpen(false);
+          resetUpload();
+        }} 
         onUpload={handleUpload} 
         uploading={uploading} 
         progress={progress} 
