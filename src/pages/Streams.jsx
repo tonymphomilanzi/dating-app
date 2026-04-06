@@ -27,15 +27,15 @@ function CountPill({ children }) {
 function VideoPlaceholder({ gradient }) {
   return (
     <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`}>
-      {/* subtle “shine” overlay */}
       <div className="absolute inset-0 opacity-30 mix-blend-overlay bg-[radial-gradient(circle_at_20%_10%,white,transparent_35%),radial-gradient(circle_at_80%_40%,white,transparent_40%),radial-gradient(circle_at_50%_90%,white,transparent_40%)]" />
     </div>
   );
 }
 
 /**
- * Fullscreen “page” like TikTok, but with a 16:9 stage centered in the screen.
- * Swiping up/down snaps between pages.
+ * TikTok-style page:
+ * - Full screen snap page
+ * - 9:16 stage (fills on mobile; centered phone on desktop)
  */
 function StreamPage({ item, onBack, onOpenProfile }) {
   const [liked, setLiked] = useState(false);
@@ -43,160 +43,173 @@ function StreamPage({ item, onBack, onOpenProfile }) {
 
   return (
     <section className="relative h-dvh w-full snap-start overflow-hidden bg-neutral-950 text-white">
-      {/* 16:9 video stage area */}
-      <div className="relative mx-auto flex h-dvh w-full max-w-3xl items-center justify-center px-4">
-        <div className="relative w-full overflow-hidden rounded-3xl border border-white/10 bg-black shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
-          <div className="relative aspect-video">
-            <VideoPlaceholder gradient={item.gradient} />
+      {/* Ambient background */}
+      <div className="absolute inset-0 opacity-30">
+        <VideoPlaceholder gradient={item.gradient} />
+      </div>
+      <div className="absolute inset-0 bg-black/55" />
 
-            {/* top gradient for readability */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/55 to-transparent" />
-            {/* bottom gradient for readability */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/70 to-transparent" />
+      {/* Center stage (mobile: full width/height; desktop: phone aspect) */}
+      <div className="relative z-10 mx-auto flex h-dvh w-full max-w-4xl items-center justify-center px-0 md:px-6">
+        <div
+          className={[
+            "relative w-full h-dvh md:h-[92dvh]",
+            "md:max-h-[920px]",
+            "md:rounded-[2.25rem]",
+            "overflow-hidden bg-black",
+            "md:border md:border-white/10",
+            "md:shadow-[0_30px_120px_rgba(0,0,0,0.65)]",
+            // 9:16 container on desktop; on mobile it simply fills the screen
+            "md:aspect-[9/16] md:w-auto",
+          ].join(" ")}
+        >
+          {/* The "video" */}
+          <VideoPlaceholder gradient={item.gradient} />
 
-            {/* Top bar (inside video) */}
-            <div className="absolute left-0 right-0 top-0 z-20 p-3">
-              <div className="flex items-center justify-between">
+          {/* readability gradients */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/65 to-transparent" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-52 bg-gradient-to-t from-black/75 to-transparent" />
+
+          {/* Top bar */}
+          <div className="absolute left-0 right-0 top-0 z-20 p-3">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={onBack}
+                className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55 active:scale-95 transition"
+                aria-label="Back"
+                title="Back"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
+                  {item.topic}
+                </span>
+                <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
+                  {item.length}
+                </span>
                 <button
                   type="button"
-                  onClick={onBack}
-                  className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55 active:scale-95 transition"
-                  aria-label="Back"
-                  title="Back"
+                  className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
+                  title="More"
+                  aria-label="More"
                 >
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 7a2 2 0 110-4 2 2 0 010 4zm0 7a2 2 0 110-4 2 2 0 010 4zm0 7a2 2 0 110-4 2 2 0 010 4z" />
                   </svg>
                 </button>
+              </div>
+            </div>
+          </div>
 
+          {/* Right-side actions */}
+          <div className="absolute right-3 bottom-28 z-20 space-y-3">
+            <div className="flex flex-col items-center">
+              <IconButton title={liked ? "Unlike" : "Like"} onClick={() => setLiked((v) => !v)}>
+                <svg
+                  className={`h-5 w-5 ${liked ? "text-pink-300" : "text-white"}`}
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M12 21s-6.716-4.35-9.33-8.273C.646 9.6 1.55 6.77 3.77 5.32c2.1-1.37 4.69-.86 6.23.67 1.54-1.53 4.13-2.04 6.23-.67 2.22 1.45 3.12 4.28 1.1 7.407C18.716 16.65 12 21 12 21z" />
+                </svg>
+              </IconButton>
+              <CountPill>{liked ? item.likes + 1 : item.likes}</CountPill>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <IconButton title="Comments" onClick={() => {}}>
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 2H4a2 2 0 00-2 2v14a2 2 0 002 2h4l4 3 4-3h4a2 2 0 002-2V4a2 2 0 00-2-2z" />
+                </svg>
+              </IconButton>
+              <CountPill>{item.comments}</CountPill>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <IconButton title="Share" onClick={() => {}}>
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18 8a3 3 0 10-2.83-4H15a3 3 0 00.17 1H8.82A3 3 0 006 4a3 3 0 103 3c0-.35-.06-.69-.17-1h6.35c-.11.31-.17.65-.17 1a3 3 0 103 3c0-.35-.06-.69-.17-1H13v2h4.82c-.11.31-.17.65-.17 1a3 3 0 103 3 3 3 0 00-2.83-4H13v2h2.17A3 3 0 0018 18a3 3 0 003-3 3 3 0 00-3-3 3 3 0 00-2.83 2H13V10h2.17A3 3 0 0018 8z" />
+                </svg>
+              </IconButton>
+              <CountPill>Share</CountPill>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <IconButton title={saved ? "Saved" : "Save"} onClick={() => setSaved((v) => !v)}>
+                <svg
+                  className={`h-5 w-5 ${saved ? "text-amber-200" : "text-white"}`}
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M6 2h12a2 2 0 012 2v18l-8-4-8 4V4a2 2 0 012-2z" />
+                </svg>
+              </IconButton>
+              <CountPill>{saved ? "Saved" : "Save"}</CountPill>
+            </div>
+          </div>
+
+          {/* Bottom caption area */}
+          <div className="absolute bottom-0 left-0 right-0 z-20 p-4">
+            {/* Creator row */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onOpenProfile}
+                className="h-11 w-11 overflow-hidden rounded-full ring-2 ring-white/40"
+                title="Open creator"
+                aria-label="Open creator"
+              >
+                <img src={item.avatar} alt={item.creator} className="h-full w-full object-cover" draggable={false} />
+              </button>
+
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
-                    {item.topic}
+                  <p className="truncate text-sm font-semibold text-white">{item.creator}</p>
+                  <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white">
+                    {item.tag}
                   </span>
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
-                    {item.length}
-                  </span>
-                  <button
-                    type="button"
-                    className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
-                    title="More"
-                    aria-label="More"
-                  >
-                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 7a2 2 0 110-4 2 2 0 010 4zm0 7a2 2 0 110-4 2 2 0 010 4zm0 7a2 2 0 110-4 2 2 0 010 4z" />
-                    </svg>
-                  </button>
                 </div>
-              </div>
-            </div>
 
-            {/* Right actions */}
-            <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 space-y-3">
-              <div className="flex flex-col items-center">
-                <IconButton title={liked ? "Unlike" : "Like"} onClick={() => setLiked((v) => !v)}>
-                  <svg
-                    className={`h-5 w-5 ${liked ? "text-pink-300" : "text-white"}`}
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <path d="M12 21s-6.716-4.35-9.33-8.273C.646 9.6 1.55 6.77 3.77 5.32c2.1-1.37 4.69-.86 6.23.67 1.54-1.53 4.13-2.04 6.23-.67 2.22 1.45 3.12 4.28 1.1 7.407C18.716 16.65 12 21 12 21z" />
-                  </svg>
-                </IconButton>
-                <CountPill>{liked ? item.likes + 1 : item.likes}</CountPill>
-              </div>
-
-              <div className="flex flex-col items-center">
-                <IconButton title="Comments" onClick={() => {}}>
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M20 2H4a2 2 0 00-2 2v14a2 2 0 002 2h4l4 3 4-3h4a2 2 0 002-2V4a2 2 0 00-2-2z" />
-                  </svg>
-                </IconButton>
-                <CountPill>{item.comments}</CountPill>
-              </div>
-
-              <div className="flex flex-col items-center">
-                <IconButton title="Share" onClick={() => {}}>
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M18 8a3 3 0 10-2.83-4H15a3 3 0 00.17 1H8.82A3 3 0 006 4a3 3 0 103 3c0-.35-.06-.69-.17-1h6.35c-.11.31-.17.65-.17 1a3 3 0 103 3c0-.35-.06-.69-.17-1H13v2h4.82c-.11.31-.17.65-.17 1a3 3 0 103 3 3 3 0 00-2.83-4H13v2h2.17A3 3 0 0018 18a3 3 0 003-3 3 3 0 00-3-3 3 3 0 00-2.83 2H13V10h2.17A3 3 0 0018 8z" />
-                  </svg>
-                </IconButton>
-                <CountPill>Share</CountPill>
-              </div>
-
-              <div className="flex flex-col items-center">
-                <IconButton title={saved ? "Saved" : "Save"} onClick={() => setSaved((v) => !v)}>
-                  <svg
-                    className={`h-5 w-5 ${saved ? "text-amber-200" : "text-white"}`}
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <path d="M6 2h12a2 2 0 012 2v18l-8-4-8 4V4a2 2 0 012-2z" />
-                  </svg>
-                </IconButton>
-                <CountPill>{saved ? "Saved" : "Save"}</CountPill>
-              </div>
-            </div>
-
-            {/* Bottom creator + caption */}
-            <div className="absolute bottom-0 left-0 right-0 z-20 p-4">
-              <div className="rounded-2xl bg-black/35 p-3 backdrop-blur border border-white/10">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={onOpenProfile}
-                    className="h-10 w-10 overflow-hidden rounded-full ring-2 ring-white/40"
-                    title="Open creator"
-                    aria-label="Open creator"
-                  >
-                    <img
-                      src={item.avatar}
-                      alt={item.creator}
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  </button>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-white">{item.creator}</p>
-                      <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white">
-                        {item.tag}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-white/90">{item.caption}</p>
-                    <p className="mt-1 text-[11px] text-white/80">♫ {item.audio}</p>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-full bg-white px-4 py-2 text-xs font-bold text-gray-900 hover:bg-gray-100 active:scale-95 transition"
-                  >
-                    Follow
-                  </button>
+                {/* Views line (kept) */}
+                <div className="mt-0.5 flex items-center gap-3 text-[11px] text-white/75">
+                  <span>{item.timeAgo}</span>
+                  <span>{item.views} views</span>
                 </div>
               </div>
 
-              {/* Views line (you liked this) */}
-              <div className="mt-3 flex items-center justify-between px-1 text-xs text-white/70">
-                <span>{item.timeAgo}</span>
-                <span>{item.views} views</span>
-              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-full bg-white px-4 py-2 text-xs font-bold text-gray-900 hover:bg-gray-100 active:scale-95 transition"
+              >
+                Follow
+              </button>
             </div>
 
-            {/* Swipe hint */}
-            <div className="absolute left-1/2 top-[78%] z-10 -translate-x-1/2">
+            {/* Caption box */}
+            <div className="mt-3 rounded-2xl bg-black/35 p-3 backdrop-blur border border-white/10">
+              <p className="text-xs text-white/90 leading-relaxed">{item.caption}</p>
+              <p className="mt-1 text-[11px] text-white/80">♫ {item.audio}</p>
+            </div>
+
+            <div className="mt-3 flex justify-center">
               <div className="rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur">
                 Swipe up for next
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Outside stage: subtle side “ambient” on desktop */}
-      <div className="pointer-events-none absolute inset-0 hidden md:block">
-        <div className="absolute left-0 top-0 h-full w-1/3 bg-gradient-to-r from-black via-black/70 to-transparent" />
-        <div className="absolute right-0 top-0 h-full w-1/3 bg-gradient-to-l from-black via-black/70 to-transparent" />
+          {/* center play hint */}
+          <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
+            <div className="rounded-full bg-black/35 px-4 py-2 text-xs font-semibold text-white/90 backdrop-blur">
+              Tap to play (placeholder)
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -256,7 +269,6 @@ export default function Streams() {
     []
   );
 
-  // Snap + programmatic scroll (helps on desktop trackpads too)
   const scrollerRef = useRef(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const wheelLockRef = useRef(false);
@@ -266,7 +278,6 @@ export default function Streams() {
     if (!el) return;
 
     const onScroll = () => {
-      // Determine which page is closest
       const h = window.innerHeight || el.clientHeight || 1;
       const idx = Math.round(el.scrollTop / h);
       if (idx !== activeIndex) setActiveIndex(idx);
@@ -281,7 +292,7 @@ export default function Streams() {
     if (!el) return;
 
     const onWheel = (e) => {
-      // Make wheel behave like "next / previous" (TikTok-ish) on desktop
+      // Desktop: wheel goes next/prev like TikTok
       if (wheelLockRef.current) return;
       if (Math.abs(e.deltaY) < 10) return;
 
@@ -290,30 +301,23 @@ export default function Streams() {
 
       const dir = e.deltaY > 0 ? 1 : -1;
       const next = Math.max(0, Math.min(items.length - 1, activeIndex + dir));
-
       el.scrollTo({ top: next * window.innerHeight, behavior: "smooth" });
 
-      // unlock after animation-ish
       window.setTimeout(() => {
         wheelLockRef.current = false;
       }, 450);
     };
 
-    // must be non-passive to prevent default
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [activeIndex, items.length]);
 
   return (
     <div className="h-dvh bg-neutral-950">
-      {/* Fullscreen scroller with snap */}
       <div
         ref={scrollerRef}
         className="h-dvh w-full overflow-y-scroll snap-y snap-mandatory"
-        style={{
-          // nicer scrolling on iOS
-          WebkitOverflowScrolling: "touch",
-        }}
+        style={{ WebkitOverflowScrolling: "touch" }}
       >
         {items.map((item) => (
           <StreamPage
@@ -325,7 +329,7 @@ export default function Streams() {
         ))}
       </div>
 
-      {/* Minimal page indicator (bottom-right) */}
+      {/* Page indicator */}
       <div className="pointer-events-none fixed bottom-4 right-4 z-50 hidden sm:block">
         <div className="rounded-full bg-black/40 px-3 py-1 text-xs font-semibold text-white/80 backdrop-blur border border-white/10">
           {Math.min(activeIndex + 1, items.length)} / {items.length}
