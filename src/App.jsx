@@ -50,6 +50,8 @@ import { Toaster } from "@/components/ui/sonner"
 export default function App() {
   return (
     <AuthFlowProvider>
+   
+      <Toaster richColors closeButton position="top-center" />
       <Routes>
         <Route element={<RootLayout />}>
           <Route path="/auth/callback" element={<AuthCallback />} />
@@ -99,7 +101,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
-        <Toaster richColors closeButton position="top-center" />
+
       </Routes>
     </AuthFlowProvider>
   );
