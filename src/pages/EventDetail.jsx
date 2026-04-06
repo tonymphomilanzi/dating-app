@@ -1,346 +1,236 @@
-// src/pages/EventDetail.jsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, memo } from "react";
 import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, useMap } from "react-leaflet";
 import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import { eventsService } from "../services/events.service.js";
+import { 
+  ChevronLeft, Bookmark, Share2, Calendar, 
+  MapPin, User, Ticket, ExternalLink, Info 
+} from "lucide-react";
 
-/* ---------- date helpers (safe) ---------- */
-function safeDate(v) {
-  if (!v) return null;
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
-}
-function fmtDateTimeSafe(v) {
-  const d = safeDate(v);
-  return d ? d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Date TBA";
-}
-function googleCalendarUrl({ title, startsAt, endsAt, location = "", details = "" }) {
-  const fmt = (dt) => dt.toISOString().replace(/[-:]|\.\d{3}/g, "");
-  const s = safeDate(startsAt) || new Date();
-  const e = safeDate(endsAt) || new Date(s.getTime() + 2 * 3600_000);
-  const qs = new URLSearchParams({ action: "TEMPLATE", text: title || "Event", dates: `${fmt(s)}/${fmt(e)}`, location, details }).toString();
-  return `https://calendar.google.com/calendar/render?${qs}`;
-}
-function downloadICS({ title, startsAt, endsAt, location = "", details = "" }) {
-  const s = safeDate(startsAt) || new Date();
-  const e = safeDate(endsAt) || new Date(s.getTime() + 2 * 3600_000);
-  const fmtICS = (d) => d.toISOString().replace(/[-:]|\.\d{3}/g, "");
-  const body = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-/YourApp/Calendar/EN",
-    "CALSCALE:GREGORIAN",
-    "BEGIN:VEVENT",
-    `UID:${Date.now()}-${Math.random().toString(36).slice(2)}@app`,
-    `DTSTAMP:${fmtICS(new Date())}`,
-    `DTSTART:${fmtICS(s)}`,
-    `DTEND:${fmtICS(e)}`,
-    `SUMMARY:${(title || "Event").replace(/\n/g, " ")}`,
-    `LOCATION:${(location || "").replace(/\n/g, " ")}`,
-    `DESCRIPTION:${(details || "").replace(/\n/g, " ")}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-  const blob = new Blob([body], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "event.ics";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-/* ---------- normalize incoming event (nav state or API row) ---------- */
-function normalizeEvent(src, idFallback) {
-  if (!src) return null;
-  const starts = src.starts_at || src.dateISO || src.startsAt;
-  const ends = src.ends_at || src.endsAt || null;
-  const latNum = typeof src.lat === "number" ? src.lat : Number(src.lat ?? NaN);
-  const lngNum = typeof src.lng === "number" ? src.lng : Number(src.lng ?? NaN);
-  return {
-    id: src.id || idFallback,
-    title: src.title,
-    category: src.category || "Other",
-    city: src.city || src.place || "Unknown place",
-    price: Number(src.price ?? 0),
-    starts_at: starts,    // always set for UI
-    ends_at: ends,
-    cover_url: src.cover_url || src.img || "",
-    description: src.about || src.description || src.short || "",
-    lat: isFinite(latNum) ? latNum : undefined,
-    lng: isFinite(lngNum) ? lngNum : undefined,
-    capacity: src.capacity ?? null,
-    attendees_count: src.attendees_count || (Array.isArray(src.attendees) ? src.attendees.length : null),
-    host: src.host || src.creator || null,
-  };
-}
-
-/* ---------- map pin ---------- */
-const pinIcon = L.divIcon({
-  className: "",
-  iconSize: [40, 40],
-  iconAnchor: [20, 38],
-  popupAnchor: [0, -34],
-  html: `
-    <div style="width:40px;height:40px;border-radius:9999px;background:linear-gradient(135deg,#f0abfc 0%,#7c3aed 100%);display:flex;align-items:center;justify-content:center;color:#fff;border:2px solid #fff;box-shadow:0 10px 24px rgba(124,58,237,0.35);">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-        <path d="M12 21s-7-4.35-7-10a7 7 0 1114 0c0 5.65-7 10-7 10z" fill="rgba(255,255,255,0.25)"/>
-        <circle cx="12" cy="10" r="3" fill="#fff"/>
-      </svg>
-    </div>
-  `,
+// --- Pure Utility: Moved outside to prevent re-declarations ---
+const priceFmt = new Intl.NumberFormat("en-US", { 
+  style: "currency", currency: "USD", maximumFractionDigits: 0 
 });
 
-/* ---------- component ---------- */
-export default function EventDetail({ fallbackEvent }) {
-  const nav = useNavigate();
-  const { state } = useLocation();
+const customPin = L.divIcon({
+  className: "custom-pin",
+  html: `<div class="w-10 h-10 bg-violet-600 border-4 border-white rounded-full shadow-2xl animate-pulse-subtle"></div>`,
+  iconSize: [40, 40],
+  iconAnchor: [20, 20]
+});
+
+const EventMap = memo(({ lat, lng }) => (
+  <div className="h-64 w-full rounded-[2.5rem] overflow-hidden border-4 border-white shadow-inner relative group">
+    <MapContainer center={[lat, lng]} zoom={15} scrollWheelZoom={false} className="h-full w-full grayscale-[0.2] contrast-[1.1]">
+      <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+      <Marker position={[lat, lng]} icon={customPin} />
+      <MapAutoCenter pos={[lat, lng]} />
+    </MapContainer>
+    <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/5 rounded-[2.5rem]" />
+  </div>
+));
+
+export default function EventDetail() {
+  const navigate = useNavigate();
   const { id } = useParams();
-  const navEvent = state?.event;
+  const { state } = useLocation();
+  
+  // State initialization with "Nullish Coalescing" for speed
+  const [event, setEvent] = useState(() => state?.event || null);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(!!state?.event);
 
-  const [e, setE] = useState(() => normalizeEvent(navEvent, id) || normalizeEvent(fallbackEvent, id) || null);
-  const [loading, setLoading] = useState(!e);
-  const [err, setErr] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  // Fetch when opened directly (no nav state)
-  const abortRef = useRef(null);
+  // Performance: AbortController for clean unmounting
   useEffect(() => {
-    if (e) return;
-    let mounted = true;
-    abortRef.current?.abort?.();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    (async () => {
+    if (event) return;
+    const controller = new AbortController();
+    
+    const fetchEvent = async () => {
       try {
-        setLoading(true);
-        let row;
-        if (typeof eventsService?.get === "function") {
-          const sigAware = eventsService.get.length >= 2;
-          row = sigAware ? await eventsService.get(id, { signal: ac.signal }) : await eventsService.get(id);
-        } else {
-          const token = localStorage.getItem("access_token");
-          const r = await fetch(`/api/events/${id}`, {
-            method: "GET",
-            signal: ac.signal,
-            credentials: "include",
-            headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          });
-          if (r.status === 401) throw Object.assign(new Error("Session expired. Please sign in again."), { status: 401 });
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          row = await r.json().catch(() => null);
-          row = row?.item || row;
-        }
-        if (!mounted) return;
-        const mapped = normalizeEvent(row, id);
-        if (mapped) setE(mapped);
-      } catch (e) {
-        if (!mounted || e?.name === "AbortError") return;
-        setErr(e.message || "Failed to load event");
-      } finally {
-        if (mounted) setLoading(false);
+        const res = await fetch(`/api/events/${id}`, { signal: controller.signal });
+        const data = await res.json();
+        setEvent(data.item || data);
+        setIsLoaded(true);
+      } catch (err) {
+        if (err.name !== "AbortError") console.error(err);
       }
-    })();
-
-    return () => {
-      mounted = false;
-      ac.abort();
     };
-  }, [id, e]);
 
-  const dt = fmtDateTimeSafe(e?.starts_at);
+    fetchEvent();
+    return () => controller.abort();
+  }, [id, event]);
 
-  const attendFill = useMemo(() => {
-    const cap = e?.capacity || 0;
-    const cnt = e?.attendees_count || 0;
-    const pct = cap > 0 ? Math.min(100, Math.round((cnt / cap) * 100)) : 0;
-    return { cnt, cap, pct };
-  }, [e]);
+  // UI calculations moved to useMemo
+  const stats = useMemo(() => {
+    if (!event) return { pct: 0, formattedDate: "" };
+    const pct = event.capacity ? Math.round(((event.attendees_count || 0) / event.capacity) * 100) : 0;
+    const date = new Date(event.starts_at || Date.now());
+    return {
+      pct,
+      date: date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+      time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+  }, [event]);
 
-  const onAddToCalendar = () => {
-    if (!e) return;
-    const s = safeDate(e.starts_at) || new Date();
-    const url = googleCalendarUrl({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description });
-    if (navigator.share) {
-      navigator.share({ title: e.title, text: e.description || "", url }).catch(() =>
-        downloadICS({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description })
-      );
-    } else {
-      downloadICS({ title: e.title, startsAt: s, endsAt: e.ends_at, location: e.city, details: e.description });
-    }
-  };
+  if (!event && !isLoaded) return <DetailSkeleton />;
 
   return (
-    <div className="min-h-dvh bg-white text-gray-900">
-      {/* HERO */}
-      <div className="relative">
-        <div className="relative aspect-[16/10] overflow-hidden">
-          {loading ? (
-            <div className="h-full w-full animate-pulse bg-gray-100" />
-          ) : e?.cover_url ? (
-            <img src={e.cover_url} alt={e.title} className="h-full w-full object-cover" />
-          ) : (
-            <div className="grid h-full w-full place-items-center bg-gray-100 text-gray-400">No cover</div>
-          )}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
-          <div className="absolute left-3 right-3 top-3 flex items-center justify-between">
-            <button onClick={() => nav(-1)} className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white">
-              <i className="lni lni-chevron-left text-lg" />
-            </button>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setSaved((s) => !s)} className={`grid h-10 w-10 place-items-center rounded-full ${saved ? "bg-violet-600 text-white" : "bg-white/85 text-gray-800"} shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white`}>
-                <i className="lni lni-bookmark" />
-              </button>
-              <button onClick={() => navigator.share?.({ title: e?.title, url: window.location.href })} className="grid h-10 w-10 place-items-center rounded-full bg-white/85 text-gray-800 shadow-sm ring-1 ring-gray-200 backdrop-blur hover:bg-white">
-                <i className="lni lni-share" />
-              </button>
-            </div>
-          </div>
+    <div className="min-h-screen bg-slate-50 pb-32 font-sans selection:bg-violet-100">
+      {/* 1. Header Navigation (Floating Glass) */}
+      <nav className="fixed top-0 inset-x-0 z-50 p-6 flex justify-between items-center pointer-events-none">
+        <button 
+          onClick={() => navigate(-1)}
+          className="pointer-events-auto h-12 w-12 rounded-full bg-white/80 backdrop-blur-md border border-white shadow-xl flex items-center justify-center active:scale-90 transition-all"
+        >
+          <ChevronLeft size={24} className="text-slate-900" />
+        </button>
+        <div className="flex gap-3 pointer-events-auto">
+          <button 
+            onClick={() => setIsSaved(!isSaved)}
+            className={`h-12 w-12 rounded-full border shadow-xl flex items-center justify-center transition-all ${
+              isSaved ? "bg-violet-600 border-violet-600 text-white" : "bg-white/80 backdrop-blur-md border-white text-slate-900"
+            }`}
+          >
+            <Bookmark size={20} fill={isSaved ? "currentColor" : "none"} />
+          </button>
+          <button className="h-12 w-12 rounded-full bg-white/80 backdrop-blur-md border border-white shadow-xl flex items-center justify-center active:scale-90 transition-all">
+            <Share2 size={20} />
+          </button>
+        </div>
+      </nav>
 
-          {!loading && (
-            <div className="absolute inset-x-4 bottom-4">
-              <div className="flex items-end justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-2 py-0.5 text-xs text-white ring-1 ring-white/20 backdrop-blur">
-                    <i className="lni lni-calendar" /> {dt}
-                  </div>
-                  <h1 className="mt-1 truncate text-2xl font-semibold text-white drop-shadow">{e?.title || "Event"}</h1>
-                  <div className="mt-1 text-sm text-white/90">
-                    <i className="lni lni-map-marker text-white/90" /> {e?.city}
-                  </div>
-                </div>
-                <div className="shrink-0 rounded-xl bg-white/90 px-3 py-2 text-right text-sm font-semibold text-violet-700 ring-1 ring-violet-200 backdrop-blur">
-                  {new Intl.NumberFormat([], { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(e?.price ?? 0))}
-                  <span className="block text-[11px] font-normal text-gray-500">per person</span>
-                </div>
-              </div>
-            </div>
-          )}
+      {/* 2. Hero Section (Editorial Style) */}
+      <div className="relative h-[60vh] w-full overflow-hidden bg-slate-900">
+        <img 
+          src={event.cover_url || event.img} 
+          className="w-full h-full object-cover opacity-90 scale-105 animate-slow-zoom" 
+          alt={event.title}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-50 via-transparent to-transparent" />
+        
+        <div className="absolute bottom-12 left-0 right-0 px-8">
+          <span className="inline-block px-4 py-1.5 rounded-full bg-violet-600 text-white text-[10px] font-black uppercase tracking-[0.2em] mb-4 shadow-lg shadow-violet-600/30">
+            {event.category || "Exclusive Event"}
+          </span>
+          <h1 className="text-5xl font-black text-slate-900 tracking-tighter leading-none mb-2">
+            {event.title}
+          </h1>
+          <div className="flex items-center gap-2 text-slate-500 font-medium">
+            <MapPin size={16} className="text-violet-500" />
+            <span>{event.city || event.place}</span>
+          </div>
         </div>
       </div>
 
-      {/* CONTENT */}
-      <div className="mx-auto max-w-md px-4 pb-40 pt-4">
-        {err ? (
-          <div className="text-center">
-            <p className="text-red-600 font-medium">Failed to load</p>
-            <p className="mt-1 text-xs text-gray-500">{String(err)}</p>
+      {/* 3. Info Grid */}
+      <main className="px-6 -mt-6 relative z-10 space-y-8 max-w-2xl mx-auto">
+        {/* Host Card */}
+        <div className="bg-white rounded-[2.5rem] p-6 shadow-2xl shadow-slate-200 border border-white flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <img 
+                src={event.host?.avatar || `https://ui-avatars.com/api/?name=${event.host?.name}`} 
+                className="h-14 w-14 rounded-full border-4 border-slate-50" 
+                alt="host"
+              />
+              <div className="absolute -bottom-1 -right-1 h-6 w-6 bg-green-500 border-2 border-white rounded-full flex items-center justify-center">
+                <Check size={12} className="text-white" />
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase">Organizer</p>
+              <h4 className="font-black text-slate-900">{event.host?.name || "Premium Host"}</h4>
+            </div>
           </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-3 shadow-card">
-              <div className="flex items-center gap-3">
-                {e?.host?.avatar ? (
-                  <img src={e.host.avatar} alt="" className="h-10 w-10 rounded-full" />
-                ) : (
-                  <div className="grid h-10 w-10 place-items-center rounded-full bg-violet-100 text-violet-600">
-                    <i className="lni lni-user" />
-                  </div>
-                )}
-                <div>
-                  <div className="text-xs text-gray-500">Hosted by</div>
-                  <div className="text-sm font-medium">{e?.host?.name || "Organizer"}</div>
-                </div>
-              </div>
-              {e?.capacity ? (
-                <div className="w-36">
-                  <div className="flex items-center justify-between text-[11px] text-gray-600">
-                    <span>{e?.attendees_count ?? 0}/{e.capacity}</span>
-                    <span>Filled</span>
-                  </div>
-                  <div className="mt-1 h-2 w-full rounded-full bg-gray-200">
-                    <div className="h-2 rounded-full bg-violet-600" style={{ width: `${Math.min(100, Math.round(((e?.attendees_count || 0) / (e?.capacity || 1)) * 100))}%` }} />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            {e?.description && (
-              <div className="mt-5">
-                <h2 className="text-sm font-semibold">About</h2>
-                <p className="mt-1 text-sm leading-6 text-gray-700">{e.description}</p>
-              </div>
-            )}
-
-            <div className="mt-6 overflow-hidden rounded-2xl border border-gray-200 bg-white">
-              <div className="relative">
-                {typeof e?.lat === "number" && typeof e?.lng === "number" ? (
-                  <EventMap lat={e.lat} lng={e.lng} title={e.title} place={e.city} />
-                ) : (
-                  <div className="aspect-[16/9] grid place-items-center bg-gray-100 text-sm text-gray-500">Location unavailable</div>
-                )}
-                {typeof e?.lat === "number" && typeof e?.lng === "number" && (
-                  <a className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm text-gray-800 ring-1 ring-gray-200 shadow-sm hover:bg-white" href={`https://www.google.com/maps?q=${e.lat},${e.lng}`} target="_blank" rel="noreferrer">
-                    Get directions
-                  </a>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <Link to={`/calendar?d=${encodeURIComponent((safeDate(e?.starts_at) || new Date()).toISOString().slice(0, 10))}`} className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm hover:bg-gray-50">
-                <div className="text-sm font-semibold text-gray-900">Open Calendar</div>
-                <div className="text-xs text-gray-500">See your day</div>
-              </Link>
-              <button onClick={onAddToCalendar} className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-center text-violet-700 shadow-sm hover:bg-violet-100">
-                <div className="text-sm font-semibold">Add to Calendar</div>
-                <div className="text-xs opacity-80">Google/ICS</div>
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Sticky CTA */}
-      {!err && (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-100 bg-white/95 px-4 pb-[env(safe-area-inset-bottom)] pt-3 backdrop-blur">
-          <div className="mx-auto flex max-w-md items-center gap-3">
-            <div className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm">
-              <div className="text-gray-600">Price</div>
-              <div className="font-semibold text-violet-700">
-                {new Intl.NumberFormat([], { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(e?.price ?? 0))}
-                <span className="text-xs text-gray-500">/Person</span>
-              </div>
-            </div>
-            <button className="shrink-0 rounded-full bg-violet-600 px-6 py-3 font-semibold text-white shadow-card hover:bg-violet-700 active:scale-[0.99]" onClick={() => alert("Ticket flow")}>
-              Get Tickets
-            </button>
-          </div>
+          <button className="px-5 py-2.5 rounded-xl bg-slate-100 text-slate-900 font-bold text-xs hover:bg-violet-600 hover:text-white transition-all">
+            Contact
+          </button>
         </div>
-      )}
+
+        {/* Details Section */}
+        <div className="grid grid-cols-2 gap-4">
+          <DetailCard icon={<Calendar className="text-violet-500" />} label="Date" value={stats.date} sub={stats.time} />
+          <DetailCard 
+            icon={<Ticket className="text-violet-500" />} 
+            label="Availability" 
+            value={`${stats.pct}% Filled`} 
+            customChild={
+              <div className="w-full h-1.5 bg-slate-100 rounded-full mt-2 overflow-hidden">
+                <div className="h-full bg-violet-600 transition-all duration-1000" style={{ width: `${stats.pct}%` }} />
+              </div>
+            }
+          />
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+             <Info size={20} className="text-violet-500" />
+             About This Event
+          </h3>
+          <p className="text-slate-600 leading-relaxed font-medium">
+            {event.description}
+          </p>
+        </div>
+
+        {/* Location Section */}
+        <div className="space-y-4">
+          <div className="flex justify-between items-end">
+            <h3 className="text-xl font-black text-slate-900">Location</h3>
+            <a 
+              href={`https://maps.google.com/?q=${event.lat},${event.lng}`}
+              target="_blank" rel="noreferrer"
+              className="text-xs font-bold text-violet-600 flex items-center gap-1 hover:underline"
+            >
+              GET DIRECTIONS <ExternalLink size={12} />
+            </a>
+          </div>
+          {event.lat && <EventMap lat={event.lat} lng={event.lng} />}
+        </div>
+      </main>
+
+      {/* 4. Bottom CTA (High Impact) */}
+      <footer className="fixed bottom-0 inset-x-0 p-6 z-50 bg-gradient-to-t from-slate-50 via-slate-50/90 to-transparent">
+        <div className="max-w-2xl mx-auto flex items-center gap-4 bg-slate-900 p-4 rounded-[2rem] shadow-2xl shadow-violet-900/20">
+          <div className="flex-1 pl-4">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Starting from</p>
+            <p className="text-2xl font-black text-white">{priceFmt.format(event.price)}</p>
+          </div>
+          <button className="bg-violet-600 text-white h-16 px-10 rounded-2xl font-black text-lg hover:bg-violet-500 active:scale-95 transition-all shadow-lg shadow-violet-600/40">
+            Secure Spot
+          </button>
+        </div>
+      </footer>
     </div>
   );
 }
 
-/* ---------- map ---------- */
-function EventMap({ lat, lng, title, place }) {
-  const isValid = Number.isFinite(lat) && Number.isFinite(lng);
-  if (!isValid) return <div className="aspect-[16/9] grid place-items-center bg-gray-100 text-sm text-gray-500">Location unavailable</div>;
-  const pos = [lat, lng];
-  return (
-    <MapContainer center={pos} zoom={14} style={{ height: 260, width: "100%" }} className="touch-pan-y" zoomControl={false}>
-      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-      <Marker position={pos} icon={pinIcon}>
-        <Popup>
-          <div className="text-sm">
-            <div className="font-semibold">{title}</div>
-            <div className="text-gray-600">{place}</div>
-          </div>
-        </Popup>
-      </Marker>
-      <Recenter position={pos} />
-    </MapContainer>
-  );
-}
-function Recenter({ position }) {
+// --- Sub-components for better performance & clean code ---
+
+const DetailCard = ({ icon, label, value, sub, customChild }) => (
+  <div className="bg-white p-5 rounded-3xl border border-white shadow-sm">
+    <div className="flex items-center gap-2 mb-3">
+      {icon}
+      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</span>
+    </div>
+    <p className="font-black text-slate-900 leading-tight">{value}</p>
+    {sub && <p className="text-xs font-medium text-slate-400 mt-0.5">{sub}</p>}
+    {customChild}
+  </div>
+);
+
+function MapAutoCenter({ pos }) {
   const map = useMap();
-  useEffect(() => {
-    map.setView(position, 14, { animate: true });
-  }, [position, map]);
+  useEffect(() => { map.setView(pos); }, [pos, map]);
   return null;
 }
+
+const DetailSkeleton = () => (
+  <div className="animate-pulse p-8 space-y-8">
+    <div className="h-64 bg-slate-200 rounded-3xl" />
+    <div className="h-12 bg-slate-200 w-3/4 rounded-xl" />
+    <div className="grid grid-cols-2 gap-4">
+      <div className="h-24 bg-slate-200 rounded-3xl" />
+      <div className="h-24 bg-slate-200 rounded-3xl" />
+    </div>
+  </div>
+);
