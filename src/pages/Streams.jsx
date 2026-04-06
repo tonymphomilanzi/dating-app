@@ -13,7 +13,6 @@ import {
   VideoCameraIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
-  PauseIcon,
   PlayIcon,
 } from "@heroicons/react/24/solid";
 import { streamsService } from "../services/streams.service.js";
@@ -52,41 +51,54 @@ function formatCompact(n) {
 }
 
 /**
- * Page-level video behavior:
- * - Only active page plays (activeId matches item.id)
- * - Tap screen toggles pause/play
- * - Sound starts muted (autoplay safe), user can unmute, remembered
+ * Responsive 9:16 stage sizing:
+ * - Mobile: full screen
+ * - iPad/tablet: centered phone-like stage with correct 9:16 (not squished)
+ * - Desktop: centered stage, max height
  */
-function StreamPage({ item, activeId, onBack, onFollow, onOpenProfile, onViewed }) {
+function Stage({ children }) {
+  return (
+    <div className="relative z-10 mx-auto flex h-dvh w-full items-center justify-center px-0 sm:px-4 md:px-8">
+      <div
+        className={[
+          "relative overflow-hidden bg-black",
+          // Mobile: fill screen
+          "h-dvh w-full",
+          // Tablet/Desktop: constrain to 9:16 and fit viewport height
+          "sm:h-[92dvh] sm:max-h-[900px]",
+          "sm:aspect-[9/16] sm:w-auto",
+          "sm:rounded-[2.25rem]",
+          "sm:border sm:border-white/10",
+          "sm:shadow-[0_30px_120px_rgba(0,0,0,0.65)]",
+        ].join(" ")}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StreamPage({ item, registerVideo, isActive, onBack, onFollow, onOpenProfile, onViewed }) {
   const [liked, setLiked] = useState(false);
 
-  // muted pref (persist)
   const [muted, setMuted] = useState(() => {
     const saved = localStorage.getItem("streams_muted");
     return saved == null ? true : saved === "true";
   });
 
-  // paused state is local but resets when item changes
-  const [pausedByUser, setPausedByUser] = useState(false);
-
+  const [isPaused, setIsPaused] = useState(true);
+  const userPausedRef = useRef(false);
   const videoRef = useRef(null);
 
-  const isActive = activeId === item.id;
-
-  // Count a view only when it becomes active (once per activation)
-  const viewedRef = useRef(false);
   useEffect(() => {
-    if (isActive && !viewedRef.current) {
-      viewedRef.current = true;
-      onViewed?.();
-    }
-    if (!isActive) {
-      viewedRef.current = false; // if user comes back later, you can count again (change if you want)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, item?.id]);
+    if (!videoRef.current) return;
+    const unregister = registerVideo(item.id, videoRef, {
+      getUserPaused: () => userPausedRef.current,
+      setUserPaused: (v) => (userPausedRef.current = v),
+    });
+    return unregister;
+  }, [item.id, registerVideo]);
 
-  // Keep element mute state in sync
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.muted = muted;
@@ -95,62 +107,58 @@ function StreamPage({ item, activeId, onBack, onFollow, onOpenProfile, onViewed 
     localStorage.setItem("streams_muted", String(muted));
   }, [muted]);
 
-  // When active changes:
-  // - if this page becomes active -> play (unless user paused)
-  // - if it becomes inactive -> pause and reset to start (nice TikTok feel)
+  const viewedOnceRef = useRef(false);
+  useEffect(() => {
+    if (isActive && !viewedOnceRef.current) {
+      viewedOnceRef.current = true;
+      onViewed?.();
+    }
+    if (!isActive) viewedOnceRef.current = false;
+  }, [isActive, item.id, onViewed]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    const run = async () => {
-      try {
-        if (isActive) {
-          if (!pausedByUser) {
-            await v.play();
-          }
-        } else {
-          v.pause();
-          v.currentTime = 0;
-        }
-      } catch {
-        // autoplay can fail in some browsers; we ignore
-      }
+    const onPlay = () => setIsPaused(false);
+    const onPause = () => setIsPaused(true);
+
+    v.addEventListener("play", onPlay);
+    v.addEventListener("pause", onPause);
+    setIsPaused(v.paused);
+
+    return () => {
+      v.removeEventListener("play", onPlay);
+      v.removeEventListener("pause", onPause);
     };
+  }, [item.id]);
 
-    run();
-  }, [isActive, pausedByUser]);
-
-  // Tap screen: toggle play/pause (NOT mute)
-  const togglePlayPause = async () => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    if (v.paused) {
-      setPausedByUser(false);
-      try {
-        await v.play();
-      } catch {
-        // ignore
-      }
-    } else {
-      v.pause();
-      setPausedByUser(true);
-    }
-  };
-
-  // Sound button
-  const toggleMute = async () => {
+  const toggleMute = async (e) => {
+    e?.stopPropagation?.();
     setMuted((m) => !m);
     try {
       await videoRef.current?.play();
     } catch {}
   };
 
-  const actuallyPaused = videoRef.current?.paused ?? (!isActive || pausedByUser);
+  const togglePlayPause = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (v.paused) {
+      userPausedRef.current = false;
+      try {
+        await v.play();
+      } catch {}
+    } else {
+      v.pause();
+      userPausedRef.current = true;
+    }
+  };
 
   return (
     <section className="relative h-dvh w-full snap-start overflow-hidden bg-neutral-950 text-white">
-      {/* Ambient background */}
+      {/* Ambient */}
       <div className="absolute inset-0 opacity-30">
         <div
           className="absolute inset-0"
@@ -158,187 +166,172 @@ function StreamPage({ item, activeId, onBack, onFollow, onOpenProfile, onViewed 
             backgroundImage: `url(${item?.creator?.avatar_url || "/me.jpg"})`,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            filter: "blur(26px)",
-            transform: "scale(1.1)",
+            filter: "blur(28px)",
+            transform: "scale(1.12)",
           }}
         />
       </div>
       <div className="absolute inset-0 bg-black/65" />
 
-      <div className="relative z-10 mx-auto flex h-dvh w-full max-w-4xl items-center justify-center px-0 md:px-6">
-        <div
-          className={[
-            "relative w-full h-dvh md:h-[92dvh]",
-            "md:max-h-[920px]",
-            "md:rounded-[2.25rem]",
-            "overflow-hidden bg-black",
-            "md:border md:border-white/10",
-            "md:shadow-[0_30px_120px_rgba(0,0,0,0.65)]",
-            "md:aspect-[9/16] md:w-auto",
-          ].join(" ")}
-        >
-          {/* Tap overlay for play/pause */}
-          <button
-            type="button"
-            onClick={togglePlayPause}
-            className="absolute inset-0 z-10"
-            aria-label={actuallyPaused ? "Play" : "Pause"}
-            title={actuallyPaused ? "Play" : "Pause"}
-          />
+      <Stage>
+        {/* Tap layer */}
+        <button
+          type="button"
+          onClick={togglePlayPause}
+          className="absolute inset-0 z-10"
+          aria-label={isPaused ? "Play" : "Pause"}
+          title={isPaused ? "Play" : "Pause"}
+        />
 
-          <video
-            ref={videoRef}
-            className="absolute inset-0 h-full w-full object-cover"
-            src={item.url}
-            playsInline
-            controls={false}
-            muted={muted}
-            loop
-            preload="metadata"
-          />
+        <video
+          ref={videoRef}
+          className="absolute inset-0 h-full w-full object-cover"
+          src={item.url}
+          playsInline
+          controls={false}
+          muted={muted}
+          loop
+          preload="metadata"
+        />
 
-          {/* readability gradients */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/85 to-transparent" />
+        {/* readability */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/85 to-transparent" />
 
-          {/* Center play icon when paused */}
-          {(actuallyPaused || !isActive) && (
-            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
-              <div className="grid h-16 w-16 place-items-center rounded-full bg-black/35 backdrop-blur border border-white/10">
-                <PlayIcon className="h-8 w-8 text-white" />
-              </div>
-            </div>
-          )}
-
-          {/* Top bar */}
-          <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4">
-            <div className="flex items-center">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={onBack}
-                  className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55 active:scale-95 transition"
-                  aria-label="Back"
-                  title="Back"
-                >
-                  <ArrowLeftIcon className="h-5 w-5" />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onFollow}
-                  className="rounded-full bg-white px-4 py-2 text-xs font-bold text-neutral-950 hover:bg-white/90 active:scale-95 transition"
-                >
-                  Follow
-                </button>
-              </div>
-
-              <div className="ml-auto flex items-center gap-2">
-                {/* Sound */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleMute();
-                  }}
-                  className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
-                  title={muted ? "Unmute" : "Mute"}
-                  aria-label={muted ? "Unmute" : "Mute"}
-                >
-                  {muted ? (
-                    <SpeakerXMarkIcon className="h-5 w-5" />
-                  ) : (
-                    <SpeakerWaveIcon className="h-5 w-5" />
-                  )}
-                </button>
-
-                {/* Pause indicator (optional quick affordance) */}
-                <div className="hidden sm:grid h-10 w-10 place-items-center rounded-full bg-black/20 text-white/90 backdrop-blur border border-white/10">
-                  {actuallyPaused ? <PlayIcon className="h-5 w-5" /> : <PauseIcon className="h-5 w-5" />}
-                </div>
-
-                <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
-                  Streams
-                </span>
-
-                <button
-                  type="button"
-                  className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
-                  title="More"
-                  aria-label="More"
-                >
-                  <EllipsisVerticalIcon className="h-5 w-5" />
-                </button>
-              </div>
+        {/* Center play icon when paused */}
+        {isPaused && (
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+            <div className="grid h-16 w-16 place-items-center rounded-full bg-black/35 backdrop-blur border border-white/10">
+              <PlayIcon className="h-8 w-8 text-white" />
             </div>
           </div>
+        )}
 
-          {/* Right actions */}
-          <div className="absolute right-4 bottom-28 z-30 flex flex-col items-center gap-6">
-            <div className="flex flex-col items-center">
-              <IconPillButton title={liked ? "Unlike" : "Like"} onClick={() => setLiked((v) => !v)}>
-                <HeartIcon className={`h-6 w-6 ${liked ? "text-pink-300" : "text-white"}`} />
-              </IconPillButton>
-              <CountText>{liked ? formatCompact(item.likes + 1) : formatCompact(item.likes)}</CountText>
-            </div>
-
-            <div className="flex flex-col items-center">
-              <IconPillButton title="Comments" onClick={() => {}}>
-                <ChatBubbleOvalLeftEllipsisIcon className="h-6 w-6 text-white" />
-              </IconPillButton>
-              <CountText>{formatCompact(item.comments)}</CountText>
-            </div>
-
-            <div className="flex flex-col items-center">
-              <IconPillButton title="Share" onClick={() => {}}>
-                <ShareIcon className="h-6 w-6 text-white" />
-              </IconPillButton>
-            </div>
-          </div>
-
-          {/* Bottom meta + caption */}
-          <div className="absolute bottom-0 left-0 right-0 z-30 p-4">
+        {/* Top bar */}
+        <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4 sm:px-5 sm:pt-5">
+          <div className="flex items-center">
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={onOpenProfile}
-                className="h-12 w-12 overflow-hidden rounded-full ring-2 ring-white/35"
-                title="Open creator"
-                aria-label="Open creator"
+                onClick={onBack}
+                className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55 active:scale-95 transition"
+                aria-label="Back"
+                title="Back"
               >
-                <img
-                  src={item?.creator?.avatar_url || "/me.jpg"}
-                  alt={item?.creator?.display_name || "Creator"}
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                />
+                <ArrowLeftIcon className="h-5 w-5" />
               </button>
 
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-white">
-                  {item?.creator?.display_name || "Unknown"}
-                </p>
-                <div className="mt-1 flex items-center gap-3 text-[11px] text-white/75">
-                  <span>{new Date(item.created_at).toLocaleDateString()}</span>
-                  <span>{formatCompact(item.views_count)} views</span>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={onFollow}
+                className="rounded-full bg-white px-4 py-2 text-xs font-bold text-neutral-950 hover:bg-white/90 active:scale-95 transition"
+              >
+                Follow
+              </button>
             </div>
 
-            {item.caption && (
-              <div className="mt-3 rounded-2xl bg-black/30 p-3 backdrop-blur border border-white/10">
-                <p className="text-xs text-white/90 leading-relaxed whitespace-pre-wrap">{item.caption}</p>
-              </div>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleMute}
+                className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
+                title={muted ? "Unmute" : "Mute"}
+                aria-label={muted ? "Unmute" : "Mute"}
+              >
+                {muted ? (
+                  <SpeakerXMarkIcon className="h-5 w-5" />
+                ) : (
+                  <SpeakerWaveIcon className="h-5 w-5" />
+                )}
+              </button>
+
+              <span className="rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white backdrop-blur">
+                Streams
+              </span>
+
+              <button
+                type="button"
+                className="grid h-10 w-10 place-items-center rounded-full bg-black/35 text-white backdrop-blur hover:bg-black/55"
+                title="More"
+                aria-label="More"
+              >
+                <EllipsisVerticalIcon className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Right actions */}
+        <div className="absolute right-4 bottom-28 z-30 flex flex-col items-center gap-6 sm:right-5">
+          <div className="flex flex-col items-center">
+            <IconPillButton title={liked ? "Unlike" : "Like"} onClick={() => setLiked((v) => !v)}>
+              <HeartIcon className={`h-6 w-6 ${liked ? "text-pink-300" : "text-white"}`} />
+            </IconPillButton>
+            <CountText>{liked ? formatCompact(item.likes + 1) : formatCompact(item.likes)}</CountText>
           </div>
 
-          <SwipeDownHint />
+          <div className="flex flex-col items-center">
+            <IconPillButton title="Comments" onClick={() => {}}>
+              <ChatBubbleOvalLeftEllipsisIcon className="h-6 w-6 text-white" />
+            </IconPillButton>
+            <CountText>{formatCompact(item.comments)}</CountText>
+          </div>
+
+          <div className="flex flex-col items-center">
+            <IconPillButton title="Share" onClick={() => {}}>
+              <ShareIcon className="h-6 w-6 text-white" />
+            </IconPillButton>
+          </div>
         </div>
-      </div>
+
+        {/* Bottom */}
+        <div className="absolute bottom-0 left-0 right-0 z-30 p-4 sm:p-5">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              className="h-12 w-12 overflow-hidden rounded-full ring-2 ring-white/35"
+              title="Open creator"
+              aria-label="Open creator"
+            >
+              <img
+                src={item?.creator?.avatar_url || "/me.jpg"}
+                alt={item?.creator?.display_name || "Creator"}
+                className="h-full w-full object-cover"
+                draggable={false}
+              />
+            </button>
+
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white">
+                {item?.creator?.display_name || "Unknown"}
+              </p>
+              <div className="mt-1 flex items-center gap-3 text-[11px] text-white/75">
+                <span>{new Date(item.created_at).toLocaleDateString()}</span>
+                <span>{formatCompact(item.views_count)} views</span>
+              </div>
+            </div>
+          </div>
+
+          {item.caption && (
+            <div className="mt-3 rounded-2xl bg-black/30 p-3 backdrop-blur border border-white/10">
+              <p className="text-xs text-white/90 leading-relaxed whitespace-pre-wrap">{item.caption}</p>
+            </div>
+          )}
+        </div>
+
+        <SwipeDownHint />
+      </Stage>
     </section>
   );
 }
 
+/**
+ * Upload sheet:
+ * - Uses safe-area padding so header buttons never hide behind iPhone notch
+ * - Body scrolls if content is taller than viewport (small phones)
+ * - iPad: centers nicely with max width/height
+ */
 function UploadSheet({
   open,
   onClose,
@@ -363,8 +356,23 @@ function UploadSheet({
         aria-label="Close upload"
       />
 
-      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl rounded-t-3xl border border-white/10 bg-neutral-950 text-white shadow-[0_-30px_120px_rgba(0,0,0,0.7)]">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3">
+      <div
+        className={[
+          "absolute inset-x-0 bottom-0 mx-auto w-full",
+          "max-w-3xl",
+          "rounded-t-3xl border border-white/10 bg-neutral-950 text-white",
+          "shadow-[0_-30px_120px_rgba(0,0,0,0.7)]",
+          // allow the sheet itself to fit small screens
+          "max-h-[92dvh] overflow-hidden",
+        ].join(" ")}
+      >
+        {/* Header with safe-area top padding */}
+        <div
+          className="flex items-center justify-between px-5 pb-3"
+          style={{
+            paddingTop: "calc(env(safe-area-inset-top) + 16px)",
+          }}
+        >
           <div className="flex items-center gap-2">
             <div className="grid h-9 w-9 place-items-center rounded-full bg-white/10">
               <VideoCameraIcon className="h-5 w-5 text-white" />
@@ -387,9 +395,15 @@ function UploadSheet({
           </button>
         </div>
 
-        <div className="px-5 pb-5">
-          <div className="grid gap-4 md:grid-cols-[220px_1fr]">
-            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black">
+        {/* Scrollable body (prevents hidden buttons on small devices) */}
+        <div
+          className="px-5 pb-5 overflow-y-auto"
+          style={{
+            paddingBottom: "calc(env(safe-area-inset-bottom) + 20px)",
+          }}
+        >
+          <div className="grid gap-4 md:grid-cols-[240px_1fr]">
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-black md:sticky md:top-0">
               <div className="aspect-[9/16]">
                 {previewUrl ? (
                   <video className="h-full w-full object-cover" src={previewUrl} muted playsInline controls />
@@ -511,7 +525,6 @@ export default function Streams() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Placeholder likes/comments until tables
   const enriched = useMemo(
     () =>
       items.map((s) => ({
@@ -551,9 +564,8 @@ export default function Streams() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  // Determine active page by scroll position (snap)
+  // Active index
   const [activeIndex, setActiveIndex] = useState(0);
-  const wheelLockRef = useRef(false);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -561,39 +573,41 @@ export default function Streams() {
 
     const onScroll = () => {
       const h = window.innerHeight || el.clientHeight || 1;
-      const idx = Math.round(el.scrollTop / h);
-      setActiveIndex(idx);
+      setActiveIndex(Math.round(el.scrollTop / h));
     };
 
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-
-    const onWheel = (e) => {
-      if (wheelLockRef.current) return;
-      if (Math.abs(e.deltaY) < 10) return;
-
-      e.preventDefault();
-      wheelLockRef.current = true;
-
-      const dir = e.deltaY > 0 ? 1 : -1;
-      const next = Math.max(0, Math.min(enriched.length - 1, activeIndex + dir));
-      el.scrollTo({ top: next * window.innerHeight, behavior: "smooth" });
-
-      window.setTimeout(() => (wheelLockRef.current = false), 450);
-    };
-
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [activeIndex, enriched.length]);
+  // Registry: pause all except active
+  const registryRef = useRef(new Map());
+  const registerVideo = (id, videoRef, helpers) => {
+    registryRef.current.set(id, { videoRef, helpers });
+    return () => registryRef.current.delete(id);
+  };
 
   const activeId = enriched[activeIndex]?.id ?? null;
 
-  // Upload progress animation (Supabase has no byte progress)
+  useEffect(() => {
+    registryRef.current.forEach(({ videoRef, helpers }, id) => {
+      const v = videoRef.current;
+      if (!v) return;
+
+      if (id === activeId) {
+        if (!helpers?.getUserPaused?.()) {
+          Promise.resolve()
+            .then(() => v.play())
+            .catch(() => {});
+        }
+      } else {
+        v.pause();
+        v.currentTime = 0;
+      }
+    });
+  }, [activeId]);
+
+  // Upload progress animation
   const progressTimerRef = useRef(null);
   const startProgress = () => {
     setProgress(0);
@@ -619,7 +633,6 @@ export default function Streams() {
 
   const handleUpload = async () => {
     if (!file) return;
-
     try {
       setUploading(true);
       startProgress();
@@ -672,7 +685,6 @@ export default function Streams() {
 
   return (
     <div className="h-dvh bg-neutral-950">
-      {/* Upload button */}
       <div className="fixed top-4 right-4 z-50">
         <button
           type="button"
@@ -707,22 +719,14 @@ export default function Streams() {
           <div className="max-w-md w-full rounded-2xl border border-white/10 bg-white/5 p-4">
             <p className="font-semibold">No streams yet</p>
             <p className="mt-1 text-xs text-white/70">
-              Upload one
+              Upload one (pending approval), then approve it in Supabase to test the feed.
             </p>
-            <div className="mt-4 flex gap-2">
-              <button
-                className="rounded-full bg-white px-4 py-2 text-xs font-bold text-neutral-950"
-                onClick={() => navigate(-1)}
-              >
-                Back
-              </button>
-              <button
-                className="rounded-full bg-white/10 px-4 py-2 text-xs font-semibold text-white border border-white/10"
-                onClick={() => setUploadOpen(true)}
-              >
-                Upload stream
-              </button>
-            </div>
+            <button
+              className="mt-4 rounded-full bg-white px-4 py-2 text-xs font-bold text-neutral-950"
+              onClick={() => navigate(-1)}
+            >
+              Back
+            </button>
           </div>
         </div>
       ) : (
@@ -735,7 +739,8 @@ export default function Streams() {
             <StreamPage
               key={item.id}
               item={item}
-              activeId={activeId}
+              registerVideo={registerVideo}
+              isActive={activeId === item.id}
               onBack={() => navigate(-1)}
               onFollow={() => {}}
               onOpenProfile={() => navigate("/profile")}
