@@ -626,7 +626,7 @@ export default function ProfileYou() {
           <h2 className="mb-3 text-sm font-semibold">Account</h2>
           <div className="grid gap-2 sm:grid-cols-2">
             <Button
-              className="w-full !bg-red-50 !text-red-700 hover:!bg-red-100"
+              className="w-full"
               onClick={handleLogout}
               disabled={loggingOut}
             >
