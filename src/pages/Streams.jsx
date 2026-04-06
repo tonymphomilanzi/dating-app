@@ -10,7 +10,6 @@ import {
   ShareIcon,
   ArrowUpTrayIcon,
   XMarkIcon,
-  VideoCameraIcon,
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
   PlayIcon,
@@ -62,6 +61,63 @@ function Stage({ children }) {
       <div className="relative overflow-hidden bg-neutral-950 h-dvh w-full sm:h-[92dvh] sm:max-h-[900px] sm:aspect-[9/16] sm:w-auto sm:rounded-[2.25rem] sm:border sm:border-white/10 sm:shadow-[0_30px_120px_rgba(0,0,0,0.85)]">
         {children}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 🔊 YOUTUBE-STYLE VOLUME CONTROLLER
+ */
+function VolumeControl({ muted, onToggleMute, videoRef }) {
+  const [volume, setVolume] = useState(1);
+  const [showSlider, setShowSlider] = useState(false);
+
+  const handleVolumeChange = (e) => {
+    const newVol = parseFloat(e.target.value);
+    setVolume(newVol);
+    if (videoRef.current) {
+      videoRef.current.volume = newVol;
+      // If user slides up while muted, unmute them automatically
+      if (newVol > 0 && muted) {
+        onToggleMute();
+      }
+    }
+  };
+
+  return (
+    <div 
+      className="relative flex flex-col items-center"
+      onMouseEnter={() => setShowSlider(true)}
+      onMouseLeave={() => setShowSlider(false)}
+    >
+      {/* Vertical Slider Popover */}
+      <div className={`absolute bottom-full mb-3 transition-all duration-300 origin-bottom ${
+        showSlider ? 'scale-100 opacity-100' : 'scale-75 opacity-0 pointer-events-none'
+      }`}>
+        <div className="bg-neutral-900/90 backdrop-blur-xl p-3 rounded-2xl h-32 flex items-center justify-center border border-white/10 shadow-2xl">
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={muted ? 0 : volume}
+            onChange={handleVolumeChange}
+            className="accent-white h-24 cursor-pointer"
+            style={{ WebkitAppearance: 'slider-vertical' }}
+          />
+        </div>
+      </div>
+
+      <button 
+        onClick={onToggleMute} 
+        className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md hover:bg-neutral-700 transition-colors"
+      >
+        {muted || volume === 0 ? (
+          <SpeakerXMarkIcon className="h-5 w-5 text-white" />
+        ) : (
+          <SpeakerWaveIcon className="h-5 w-5 text-white" />
+        )}
+      </button>
     </div>
   );
 }
@@ -155,13 +211,21 @@ function StreamPage({ item, isActive, isNear, muted, toggleMute, onBack, onFollo
         <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button onClick={onBack} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md"><ArrowLeftIcon className="h-5 w-5" /></button>
-              <button onClick={onFollow} className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-neutral-950">Follow</button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={toggleMute} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md">
-                {muted ? <SpeakerXMarkIcon className="h-5 w-5" /> : <SpeakerWaveIcon className="h-5 w-5" />}
+              <button onClick={onBack} className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md hover:bg-neutral-700 transition-colors">
+                <ArrowLeftIcon className="h-5 w-5" />
               </button>
+              <button onClick={onFollow} className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-neutral-950 hover:bg-neutral-100 transition-colors">
+                Follow
+              </button>
+            </div>
+            
+            {/* 🌟 VOLUME CONTROL WITH SLIDER */}
+            <div className="flex items-center gap-2">
+              <VolumeControl 
+                muted={muted} 
+                onToggleMute={toggleMute} 
+                videoRef={videoRef} 
+              />
             </div>
           </div>
         </div>
@@ -236,7 +300,6 @@ function UploadSheet({ open, onClose, onUpload, uploading, progress, caption, se
                 disabled={uploading}
               />
 
-              {/* 🌟 PROGRESS BAR IMPLEMENTATION */}
               {uploading && (
                 <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="flex items-center justify-between text-xs">
@@ -306,13 +369,11 @@ export default function Streams() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  // 🌟 PROGRESS LOGIC
   const startProgress = () => {
     setProgress(0);
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(() => {
       setProgress((p) => {
-        // Slows down as it reaches 92% to wait for real API response
         const next = p + Math.max(0.7, (92 - p) * 0.07);
         return next >= 92 ? 92 : next;
       });
@@ -367,7 +428,6 @@ export default function Streams() {
     }
   };
 
-  // Cleanup timers on unmount
   useEffect(() => () => stopProgress(), []);
 
   if (isLoading) return <div className="h-dvh grid place-items-center bg-black"><div className="h-10 w-10 border-4 border-white/10 border-t-white rounded-full animate-spin" /></div>;
