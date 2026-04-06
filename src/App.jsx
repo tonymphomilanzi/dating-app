@@ -45,6 +45,8 @@ import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Streams from "./pages/Streams.jsx";
 
+import { Toaster } from "@/components/ui/sonner"
+
 export default function App() {
   return (
     <AuthFlowProvider>
@@ -97,6 +99,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
+        <Toaster richColors closeButton position="top-center" />
       </Routes>
     </AuthFlowProvider>
   );
