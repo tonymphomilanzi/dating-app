@@ -45,7 +45,6 @@ const CheckCircleIcon = () => (
 );
 
 // ── OTP digit-box input ───────────────────────────────────────────────────────
-import { useRef } from "react";
 
 function OTPInput({ length = 6, onChange }) {
   const [digits, setDigits] = useState(Array(length).fill(""));
