@@ -5,46 +5,28 @@ import { supabase } from "../lib/supabase.client.js";
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [state, setState] = useState({
-    ready: false,
-    session: null,
-    user: null,
-    profile: null,
-  });
+  const [state, setState] = useState({ ready: false, user: null, profile: null });
 
-  const checkCompleteness = (p) => {
-    if (!p) return false;
-    const requirements = ["display_name", "dob", "gender", "avatar_url"];
-    return requirements.every(key => !!p[key]);
-  };
-
-  const loadProfile = async (userId) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .maybeSingle();
+  const loadData = async (user) => {
+    if (!user) return null;
+    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
     return data;
   };
 
   useEffect(() => {
+    // Listen for ALL auth events
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      const user = session?.user ?? null;
-      let profile = null;
-      
-      if (user) profile = await loadProfile(user.id);
-
-      setState({
-        ready: true,
-        session,
-        user,
-        profile,
-      });
-
       if (event === "SIGNED_OUT") {
-        localStorage.clear(); // Nuclear clean for security
-        window.location.href = "/auth";
+        localStorage.clear(); 
+        sessionStorage.clear();
+        setState({ ready: true, user: null, profile: null });
+        window.location.href = "/auth"; // Absolute reset
+        return;
       }
+
+      const user = session?.user ?? null;
+      const profile = await loadData(user);
+      setState({ ready: true, user, profile });
     });
 
     return () => subscription.unsubscribe();
@@ -52,10 +34,10 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     ...state,
-    isSetupComplete: checkCompleteness(state.profile),
+    isSetupComplete: !!(state.profile?.display_name && state.profile?.avatar_url),
     signOut: () => supabase.auth.signOut(),
     reloadProfile: async () => {
-      const p = await loadProfile(state.user?.id);
+      const p = await loadData(state.user);
       setState(prev => ({ ...prev, profile: p }));
     }
   }), [state]);
