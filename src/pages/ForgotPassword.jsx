@@ -1,5 +1,5 @@
 // src/pages/ForgotPassword.jsx
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 
