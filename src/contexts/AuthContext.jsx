@@ -1,32 +1,46 @@
-// src/contexts/AuthContext.jsx
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase.client.js";
 
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [state, setState] = useState({ ready: false, user: null, profile: null });
+  const [state, setState] = useState({
+    ready: false,
+    session: null,
+    user: null,
+    profile: null,
+  });
 
-  const loadData = async (user) => {
-    if (!user) return null;
-    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+  const loadProfile = async (userId) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
     return data;
   };
 
   useEffect(() => {
-    // Listen for ALL auth events
+    // Initial Session Check
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        const profile = await loadProfile(session.user.id);
+        setState({ ready: true, session, user: session.user, profile });
+      } else {
+        setState({ ready: true, session: null, user: null, profile: null });
+      }
+    });
+
+    // Listen for Changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT") {
-        localStorage.clear(); 
-        sessionStorage.clear();
-        setState({ ready: true, user: null, profile: null });
-        window.location.href = "/auth"; // Absolute reset
+        setState({ ready: true, session: null, user: null, profile: null });
         return;
       }
-
-      const user = session?.user ?? null;
-      const profile = await loadData(user);
-      setState({ ready: true, user, profile });
+      if (session) {
+        const profile = await loadProfile(session.user.id);
+        setState({ ready: true, session, user: session.user, profile });
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -34,13 +48,23 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     ...state,
-    isSetupComplete: !!(state.profile?.display_name && state.profile?.avatar_url),
-    signOut: () => supabase.auth.signOut(),
+    signOut: async () => {
+      await supabase.auth.signOut();
+      window.location.href = "/auth";
+    },
     reloadProfile: async () => {
-      const p = await loadData(state.user);
+      const p = await loadProfile(state.user?.id);
       setState(prev => ({ ...prev, profile: p }));
     }
   }), [state]);
+
+  if (!state.ready) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-white">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-fuchsia-600 border-t-transparent"></div>
+      </div>
+    );
+  }
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
