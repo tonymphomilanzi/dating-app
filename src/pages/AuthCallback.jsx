@@ -1,32 +1,48 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// src/contexts/AuthContext.jsx
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase.client.js";
 
-export default function AuthCallback() {
-  const nav = useNavigate();
-  const [msg, setMsg] = useState("Finishing sign-in…");
+const AuthCtx = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [state, setState] = useState({ ready: false, user: null, profile: null });
+
+  const loadData = async (user) => {
+    if (!user) return null;
+    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    return data;
+  };
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        // Exchange code for session (used by magic link / oauth)
-        await supabase.auth.exchangeCodeForSession(window.location.href).catch(() => {});
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
-        if (data?.session) nav("/setup/basics", { replace: true });
-        else setMsg("No active session. Please try signing in again.");
-      } catch (e) {
-        console.warn("[AuthCallback] error:", e);
-        setMsg(e.message || "Something went wrong");
+    // Listen for ALL auth events
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_OUT") {
+        localStorage.clear(); 
+        sessionStorage.clear();
+        setState({ ready: true, user: null, profile: null });
+        window.location.href = "/auth"; // Absolute reset
+        return;
       }
-    })();
-    return () => { mounted = false; };
-  }, [nav]);
 
-  return (
-    <div className="grid min-h-dvh place-items-center p-6">
-      <div className="text-center text-gray-700">{msg}</div>
-    </div>
-  );
+      const user = session?.user ?? null;
+      const profile = await loadData(user);
+      setState({ ready: true, user, profile });
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const value = useMemo(() => ({
+    ...state,
+    isSetupComplete: !!(state.profile?.display_name && state.profile?.avatar_url),
+    signOut: () => supabase.auth.signOut(),
+    reloadProfile: async () => {
+      const p = await loadData(state.user);
+      setState(prev => ({ ...prev, profile: p }));
+    }
+  }), [state]);
+
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
+
+export const useAuth = () => useContext(AuthCtx);
