@@ -1,31 +1,35 @@
 // src/contexts/AuthContext.jsx
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
 import { supabase } from "../lib/supabase.client.js";
 
 const AuthCtx = createContext(null);
-const SETUP_OK_KEY = (uid) => `SETUP_OK_${uid}`;
 
-// Customize which fields count as “complete” (matches your SetupGate)
-function isLocallyComplete(p) {
+function isProfileComplete(p) {
   if (!p) return false;
   const hasName = !!String(p.display_name || "").trim();
   const hasDob = !!p.dob;
   const hasGender = !!String(p.gender || "").trim();
-  const hasAvatar = !!String(p.avatar_url || "").trim();
-  return hasName && hasDob && hasGender && hasAvatar;
+  // avatar is optional for "complete" — don't block users without it
+  return hasName && hasDob && hasGender;
 }
 
-// Best-effort: create a minimal profile if missing
 async function ensureProfileRow(u) {
+  if (!u) return null;
   try {
-    if (!u) return null;
-
-    const { data: existing, error: selErr } = await supabase
+    const { data: existing } = await supabase
       .from("profiles")
       .select("id")
       .eq("id", u.id)
       .maybeSingle();
-    if (selErr) throw selErr;
+
     if (existing) return existing;
 
     const display_name =
@@ -33,18 +37,17 @@ async function ensureProfileRow(u) {
       u.user_metadata?.full_name ||
       u.user_metadata?.name ||
       null;
-    const avatar_url = u.user_metadata?.avatar_url || u.user_metadata?.picture || null;
+    const avatar_url =
+      u.user_metadata?.avatar_url || u.user_metadata?.picture || null;
 
-    const { data: created, error: insErr } = await supabase
+    const { data: created } = await supabase
       .from("profiles")
       .insert({ id: u.id, display_name, avatar_url })
       .select("id")
       .single();
 
-    if (insErr) throw insErr;
     return created;
   } catch {
-    // If RLS disallows, or a trigger already creates it, just skip.
     return null;
   }
 }
@@ -55,20 +58,26 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const initRef = useRef(false);
+  const loadingRef = useRef(false);
 
-  async function loadProfile(u) {
+  const loadProfile = useCallback(async (u) => {
+    // Prevent concurrent loads
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+
     try {
       if (!u) {
         setProfile(null);
         return;
       }
 
-      // Ensure row exists if your DB doesn't auto-create it
       await ensureProfileRow(u);
 
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, display_name, avatar_url, is_premium, city, lat, lng, dob, gender")
+        .select(
+          "id, display_name, avatar_url, is_premium, city, lat, lng, dob, gender"
+        )
         .eq("id", u.id)
         .maybeSingle();
 
@@ -78,66 +87,113 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      setProfile(data || null);
+      const prof = data || null;
+      setProfile(prof);
 
-      // Mark setup complete flags if profile meets requirements
+      // Persist setup-complete flag
       try {
-        const complete = isLocallyComplete(data);
-        if (complete) {
-          localStorage.setItem("SETUP_OK", "1"); // backward-compat with existing SetupGate
-          localStorage.setItem(SETUP_OK_KEY(u.id), "1"); // user-scoped flag
+        if (isProfileComplete(prof)) {
+          localStorage.setItem(`SETUP_OK_${u.id}`, "1");
+          localStorage.setItem("SETUP_OK", "1");
+        } else {
+          // Clear stale flags if profile is now incomplete
+          localStorage.removeItem(`SETUP_OK_${u.id}`);
+          localStorage.removeItem("SETUP_OK");
         }
       } catch {}
     } catch (e) {
       console.error("[Auth] loadProfile exception:", e);
       setProfile(null);
+    } finally {
+      loadingRef.current = false;
     }
-  }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    try {
+      // Clear state immediately so UI reacts fast
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+      try {
+        localStorage.removeItem("SETUP_OK");
+        // Clear all SETUP_OK_* keys
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith("SETUP_OK_"))
+          .forEach((k) => localStorage.removeItem(k));
+      } catch {}
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("[Auth] signOut error:", e);
+    }
+  }, []);
 
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
 
-    let unsub;
-    (async () => {
+    let subscription = null;
+
+    const init = async () => {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) console.warn("[Auth] getSession error:", error.message);
-        const sess = data?.session || null;
+
+        const sess = data?.session ?? null;
+        const u = sess?.user ?? null;
+
         setSession(sess);
-        const u = sess?.user || null;
         setUser(u);
-        await loadProfile(u);
+
+        if (u) {
+          await loadProfile(u);
+        }
       } catch (e) {
-        console.error("[Auth] getSession exception:", e);
+        console.error("[Auth] init exception:", e);
         setSession(null);
         setUser(null);
         setProfile(null);
       } finally {
+        // ALWAYS mark ready so spinner never hangs
         setReady(true);
       }
 
-      const sub = supabase.auth.onAuthStateChange(async (event, newSession) => {
-        setSession(newSession);
-        const u = newSession?.user || null;
-        setUser(u);
+      // Subscribe AFTER initial load to avoid double-firing
+      const { data: sub } = supabase.auth.onAuthStateChange(
+        async (event, newSession) => {
+          const u = newSession?.user ?? null;
 
-        if (event === "SIGNED_OUT" || !u) {
-          setProfile(null);
-          return;
+          setSession(newSession);
+          setUser(u);
+
+          if (event === "SIGNED_OUT" || !u) {
+            setProfile(null);
+            setSession(null);
+            setUser(null);
+            return;
+          }
+
+          if (
+            event === "SIGNED_IN" ||
+            event === "TOKEN_REFRESHED" ||
+            event === "USER_UPDATED"
+          ) {
+            await loadProfile(u);
+          }
         }
+      );
 
-        // For SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED, etc.
-        await loadProfile(u);
-      });
+      subscription = sub.subscription;
+    };
 
-      unsub = () => sub.data.subscription.unsubscribe();
-    })();
+    init();
 
     return () => {
-      try { unsub?.(); } catch {}
+      try {
+        subscription?.unsubscribe();
+      } catch {}
     };
-  }, []);
+  }, [loadProfile]);
 
   const value = useMemo(
     () => ({
@@ -146,18 +202,11 @@ export function AuthProvider({ children }) {
       user,
       profile,
       isPremium: !!profile?.is_premium,
-      signOut: async () => {
-        try {
-          await supabase.auth.signOut();
-        } finally {
-          try {
-            if (user?.id) localStorage.removeItem(SETUP_OK_KEY(user.id));
-          } catch {}
-        }
-      },
+      isProfileComplete: isProfileComplete(profile),
+      signOut,
       reloadProfile: () => loadProfile(user),
     }),
-    [ready, session, user, profile]
+    [ready, session, user, profile, signOut, loadProfile]
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
