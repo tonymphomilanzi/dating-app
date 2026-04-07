@@ -1,35 +1,21 @@
-import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext.jsx";
+import { Navigate, Outlet } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function SetupGate() {
-  const { ready, user, profile, isSetupComplete } = useAuth();
-  const loc = useLocation();
+  const { isSetupComplete, ready, session } = useAuth();
 
-  const isAuthRoute = loc.pathname.startsWith("/auth");
-  const isSetupRoute = loc.pathname.startsWith("/setup");
-  const isOtpFlow = sessionStorage.getItem("AF_IN_OTP") === "1";
-
+  // If we don't know the auth status yet, show a clean branded loader
   if (!ready) {
     return (
-      <div className="grid min-h-dvh place-items-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
+      <div className="h-dvh w-full flex items-center justify-center bg-white">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-fuchsia-600 border-t-transparent" />
       </div>
     );
   }
 
-  // Not logged in? Go to auth
-  if (!user && !isAuthRoute) return <Navigate to="/auth" replace />;
-
-  // Logic for logged-in users
-  if (user && !isOtpFlow) {
-    // If setup is done, don't let them back into setup/auth pages
-    if (isSetupComplete && (isAuthRoute || isSetupRoute)) {
-      return <Navigate to="/discover" replace />;
-    }
-    // If setup NOT done and they are trying to access app, force to setup
-    if (!isSetupComplete && !isSetupRoute && !isAuthRoute) {
-      return <Navigate to="/setup/basics" replace />;
-    }
+  // If logged in but setup is missing, go to basics
+  if (session && !isSetupComplete) {
+    return <Navigate to="/setup/basics" replace />;
   }
 
   return <Outlet />;
