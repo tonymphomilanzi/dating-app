@@ -21,10 +21,8 @@ export default function BottomTabs() {
       <div className="grid grid-cols-5">
         <Tab to="/discover" icon="lni-home" label="Discover" />
         <Tab to="/matches" icon="lni-heart" label="Matches" />
-        <Tab to="/messages" icon="lni-comments" label="Messages" />
         <Tab to= "/massage-clinics" icon="lni-hand"  label="Massage" />
         <Tab to="/events" icon="lni-calendar" label="Events" />
-        {/* Replaces Profile tab */}
         <Tab to="/streams" icon="lni-video" label="Streams" />
       </div>
     </nav>
