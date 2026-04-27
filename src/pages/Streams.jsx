@@ -203,8 +203,10 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
       </button>
 
       {/* Mobile hint */}
-      <div className="text-[9px] text-white/40 font-medium whitespace-nowrap">
-        Tap twice for volume
+      <div className="text-[9px] text-white/40 font-medium whitespace-nowrap text-center">
+        Double tap
+        <br />
+        for volume
       </div>
     </div>
   );
@@ -385,9 +387,10 @@ function StreamPage({
           </div>
         )}
 
-        {/* Header */}
+        {/* ✅ Header - Back & Follow Only */}
         <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4 safe-top">
           <div className="flex items-center justify-between">
+            {/* Left side - Back & Follow */}
             <div className="flex items-center gap-3">
               <button
                 onClick={onBack}
@@ -404,12 +407,18 @@ function StreamPage({
               </button>
             </div>
 
-            <VolumeControl
-              muted={muted}
-              onToggleMute={toggleMute}
-              videoRef={videoRef}
-            />
+            {/* Right side - Empty (reserved for upload button) */}
+            <div className="w-12" />
           </div>
+        </div>
+
+        {/* ✅ Volume Control - Separate on Left Side */}
+        <div className="absolute left-4 top-20 z-30 safe-top">
+          <VolumeControl
+            muted={muted}
+            onToggleMute={toggleMute}
+            videoRef={videoRef}
+          />
         </div>
 
         {/* Right Side Actions */}
