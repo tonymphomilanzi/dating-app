@@ -45,7 +45,7 @@ import Streams from "./pages/Streams.jsx";
 
 import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 import { Toaster } from "@/components/ui/sonner";
-
+import MassageClinic from "./pages/MassageClinic.jsx";
 export default function App() {
   return (
     <AuthFlowProvider>
@@ -91,6 +91,7 @@ export default function App() {
                 <Route path="/matches"   element={<Matches />} />
                 <Route path="/messages"  element={<Messages />} />
                 <Route path="/events"    element={<Events />} />
+                <Route path="/massage-clinics" element={<MassageClinic />} />
               </Route>
 
               {/* Full-screen protected pages (no tab bar) */}

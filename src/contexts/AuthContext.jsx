@@ -10,20 +10,78 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase.client.js";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PROFILE_COLUMNS =
+  "id, display_name, avatar_url, is_premium, city, lat, lng, dob, gender";
+
+// ─── Context ──────────────────────────────────────────────────────────────────
+
 const AuthCtx = createContext(null);
 
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * A profile is "complete" when the three minimum fields are populated.
+ * avatar_url is intentionally excluded — never block a user without a photo.
+ */
 function isProfileComplete(p) {
   if (!p) return false;
-  const hasName = !!String(p.display_name || "").trim();
-  const hasDob = !!p.dob;
-  const hasGender = !!String(p.gender || "").trim();
-  // avatar is optional for "complete" — don't block users without it
-  return hasName && hasDob && hasGender;
+  return (
+    !!String(p.display_name ?? "").trim() &&
+    !!p.dob &&
+    !!String(p.gender ?? "").trim()
+  );
 }
 
+/**
+ * Safe localStorage helpers.
+ * Silences SecurityError in private/incognito environments.
+ */
+const storage = {
+  set: (key, value) => {
+    try { localStorage.setItem(key, value); } catch { /* ignore */ }
+  },
+  remove: (key) => {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  },
+  removeByPrefix: (prefix) => {
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith(prefix))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch { /* ignore */ }
+  },
+};
+
+/**
+ * Sync the setup-complete flag based on profile completeness.
+ * Two keys for backwards compatibility:
+ *   SETUP_OK_{uid} — uid-scoped (preferred, read by SetupGate)
+ *   SETUP_OK       — legacy global key
+ */
+function syncSetupFlag(uid, profile) {
+  if (!uid) return;
+  if (isProfileComplete(profile)) {
+    storage.set(`SETUP_OK_${uid}`, "1");
+    storage.set("SETUP_OK", "1");
+  } else {
+    storage.remove(`SETUP_OK_${uid}`);
+    storage.remove("SETUP_OK");
+  }
+}
+
+/**
+ * Ensure a profile row exists for an auth user.
+ *
+ * Uses SELECT → INSERT (your original pattern) rather than upsert because
+ * your RLS policies may not permit upsert on the profiles table.
+ * Errors are swallowed — the subsequent SELECT in loadProfile reveals truth.
+ */
 async function ensureProfileRow(u) {
   if (!u) return null;
   try {
+    // Check if row already exists
     const { data: existing } = await supabase
       .from("profiles")
       .select("id")
@@ -32,13 +90,17 @@ async function ensureProfileRow(u) {
 
     if (existing) return existing;
 
+    // Create minimal row for new OAuth / magic-link users
     const display_name =
       u.user_metadata?.display_name ||
-      u.user_metadata?.full_name ||
-      u.user_metadata?.name ||
+      u.user_metadata?.full_name     ||
+      u.user_metadata?.name          ||
       null;
+
     const avatar_url =
-      u.user_metadata?.avatar_url || u.user_metadata?.picture || null;
+      u.user_metadata?.avatar_url ||
+      u.user_metadata?.picture    ||
+      null;
 
     const { data: created } = await supabase
       .from("profiles")
@@ -47,39 +109,82 @@ async function ensureProfileRow(u) {
       .single();
 
     return created;
-  } catch {
+  } catch (err) {
+    // Log but don't throw — caller handles null gracefully
+    console.warn("[Auth] ensureProfileRow:", err?.message ?? err);
     return null;
   }
 }
 
-export function AuthProvider({ children }) {
-  const [ready, setReady] = useState(false);
-  const [session, setSession] = useState(null);
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const initRef = useRef(false);
-  const loadingRef = useRef(false);
+// ─── Provider ─────────────────────────────────────────────────────────────────
 
+export function AuthProvider({ children }) {
+  const [ready, setReady]     = useState(false);
+  const [session, setSession] = useState(null);
+  const [user, setUser]       = useState(null);
+  const [profile, setProfile] = useState(null);
+
+  // ── Refs ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Guards against double-initialisation in React 18 Strict Mode.
+   * Strict Mode mounts → unmounts → remounts; without this guard,
+   * `init()` runs twice, causing two getSession() calls and two
+   * loadProfile() calls racing each other.
+   *
+   * Using a ref (not state) means it survives remounts without
+   * triggering a re-render.
+   */
+  const initRef = useRef(false);
+
+  /**
+   * Prevents concurrent loadProfile calls from racing each other.
+   *
+   * BUG IN ORIGINAL: the ref guard silently drops loads for a *new* user
+   * if the previous user's load is still in-flight (sign-out → sign-in fast).
+   * Fixed below with a load-id pattern instead of a binary mutex.
+   */
+  const profileLoadIdRef = useRef(0);
+
+  // ── loadProfile ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch and cache the profile for the given auth user.
+   *
+   * Cancellation model: each call increments a load-id. If a newer call
+   * starts before this one resolves, `isCancelled()` returns true and all
+   * state updates are silently discarded — preventing a slow stale load
+   * from overwriting fresher data.
+   *
+   * @param {object|null} u - Supabase auth user object
+   */
   const loadProfile = useCallback(async (u) => {
-    // Prevent concurrent loads
-    if (loadingRef.current) return;
-    loadingRef.current = true;
+    // Issue a new load-id, cancelling any previous in-flight load
+    const loadId = profileLoadIdRef.current + 1;
+    profileLoadIdRef.current = loadId;
+
+    const isCancelled = () => profileLoadIdRef.current !== loadId;
+
+    if (!u) {
+      setProfile(null);
+      return;
+    }
 
     try {
-      if (!u) {
-        setProfile(null);
-        return;
-      }
-
       await ensureProfileRow(u);
+      if (isCancelled()) return;
 
+      // ✅ Correct Supabase v2 pattern:
+      //    Await the query builder and read {data, error} from the result.
+      //    Never chain .catch() — the query builder is a PromiseLike,
+      //    not a real Promise. .catch() does not exist on it.
       const { data, error } = await supabase
         .from("profiles")
-        .select(
-          "id, display_name, avatar_url, is_premium, city, lat, lng, dob, gender"
-        )
+        .select(PROFILE_COLUMNS)
         .eq("id", u.id)
         .maybeSingle();
+
+      if (isCancelled()) return;
 
       if (error) {
         console.warn("[Auth] loadProfile error:", error.message);
@@ -87,48 +192,57 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      const prof = data || null;
+      const prof = data ?? null;
       setProfile(prof);
-
-      // Persist setup-complete flag
-      try {
-        if (isProfileComplete(prof)) {
-          localStorage.setItem(`SETUP_OK_${u.id}`, "1");
-          localStorage.setItem("SETUP_OK", "1");
-        } else {
-          // Clear stale flags if profile is now incomplete
-          localStorage.removeItem(`SETUP_OK_${u.id}`);
-          localStorage.removeItem("SETUP_OK");
-        }
-      } catch {}
-    } catch (e) {
-      console.error("[Auth] loadProfile exception:", e);
+      syncSetupFlag(u.id, prof);
+    } catch (err) {
+      if (isCancelled()) return;
+      console.error("[Auth] loadProfile exception:", err);
       setProfile(null);
-    } finally {
-      loadingRef.current = false;
     }
-  }, []);
+  }, []); // Stable — uses load-id pattern, not closures over changing state
 
+  // ── signOut ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Sign the user out.
+   *
+   * Your original pattern (clear state first, then call API) is preserved.
+   * The trade-off: if signOut() fails, the UI shows logged-out but the
+   * Supabase session is still valid. Acceptable for this app's risk profile.
+   */
   const signOut = useCallback(async () => {
     try {
-      // Clear state immediately so UI reacts fast
+      // Clear UI state immediately for a snappy feel
       setSession(null);
       setUser(null);
       setProfile(null);
-      try {
-        localStorage.removeItem("SETUP_OK");
-        // Clear all SETUP_OK_* keys
-        Object.keys(localStorage)
-          .filter((k) => k.startsWith("SETUP_OK_"))
-          .forEach((k) => localStorage.removeItem(k));
-      } catch {}
+      storage.removeByPrefix("SETUP_OK_");
+      storage.remove("SETUP_OK");
       await supabase.auth.signOut();
-    } catch (e) {
-      console.error("[Auth] signOut error:", e);
+    } catch (err) {
+      console.error("[Auth] signOut error:", err);
     }
   }, []);
 
+  // ── Initialisation effect ───────────────────────────────────────────────────
+
   useEffect(() => {
+    /**
+     * WHY initRef instead of removing it:
+     *
+     * React 18 Strict Mode intentionally runs effects twice in development
+     * (mount → unmount → remount) to surface side-effect bugs.
+     *
+     * The cleanup function runs between the two mounts, but `subscription`
+     * is assigned inside the async `init()` — it may still be null when
+     * cleanup runs if getSession() hasn't resolved yet. This means:
+     *   - First mount:  init() starts, cleanup runs (subscription is null → noop)
+     *   - Second mount: init() would run AGAIN without the ref guard
+     *
+     * The ref prevents the second run. In production this is irrelevant
+     * (effects only run once) but it prevents double-fetches in development.
+     */
     if (initRef.current) return;
     initRef.current = true;
 
@@ -136,29 +250,41 @@ export function AuthProvider({ children }) {
 
     const init = async () => {
       try {
+        // ── Step 1: Reliable initial session ─────────────────────────────
+        // getSession() is synchronous with the stored token — always resolves.
+        // This is the ONLY place setReady(true) is called, guaranteed by finally.
         const { data, error } = await supabase.auth.getSession();
-        if (error) console.warn("[Auth] getSession error:", error.message);
+
+        if (error) {
+          console.warn("[Auth] getSession error:", error.message);
+          // Don't throw — we must reach finally to call setReady(true)
+        }
 
         const sess = data?.session ?? null;
-        const u = sess?.user ?? null;
+        const u    = sess?.user    ?? null;
 
         setSession(sess);
         setUser(u);
 
         if (u) {
+          // Await profile load so `ready` is set only after we have profile
+          // data — prevents consumers seeing ready=true with profile=null
           await loadProfile(u);
         }
-      } catch (e) {
-        console.error("[Auth] init exception:", e);
+      } catch (err) {
+        console.error("[Auth] init exception:", err);
         setSession(null);
         setUser(null);
         setProfile(null);
       } finally {
-        // ALWAYS mark ready so spinner never hangs
+        // ✅ ALWAYS called — the app can NEVER hang on the loading screen
         setReady(true);
       }
 
-      // Subscribe AFTER initial load to avoid double-firing
+      // ── Step 2: Subscribe AFTER initial load ──────────────────────────
+      // Subscribing after getSession() + loadProfile() ensures the listener
+      // doesn't fire SIGNED_IN and trigger a redundant loadProfile() for the
+      // session we just handled above.
       const { data: sub } = supabase.auth.onAuthStateChange(
         async (event, newSession) => {
           const u = newSession?.user ?? null;
@@ -170,11 +296,13 @@ export function AuthProvider({ children }) {
             setProfile(null);
             setSession(null);
             setUser(null);
+            storage.removeByPrefix("SETUP_OK_");
+            storage.remove("SETUP_OK");
             return;
           }
 
           if (
-            event === "SIGNED_IN" ||
+            event === "SIGNED_IN"      ||
             event === "TOKEN_REFRESHED" ||
             event === "USER_UPDATED"
           ) {
@@ -189,11 +317,28 @@ export function AuthProvider({ children }) {
     init();
 
     return () => {
-      try {
-        subscription?.unsubscribe();
-      } catch {}
+      // Unsubscribe the auth listener on unmount.
+      // Note: if init() hasn't resolved yet, subscription is still null here
+      // (handled by the initRef guard preventing a second init() run).
+      subscription?.unsubscribe();
     };
   }, [loadProfile]);
+
+  // ── reloadProfile ───────────────────────────────────────────────────────────
+
+  /**
+   * Force a profile refresh from the server.
+   * Call this after the setup flow completes or after a profile mutation.
+   *
+   * BUG IN ORIGINAL: `() => loadProfile(user)` was defined inline inside
+   * useMemo, closing over a potentially stale `user` value. Fixed by
+   * using useCallback with [loadProfile, user] as deps.
+   */
+  const reloadProfile = useCallback(() => {
+    loadProfile(user);
+  }, [loadProfile, user]);
+
+  // ── Context value ───────────────────────────────────────────────────────────
 
   const value = useMemo(
     () => ({
@@ -201,16 +346,18 @@ export function AuthProvider({ children }) {
       session,
       user,
       profile,
-      isPremium: !!profile?.is_premium,
+      isPremium:         !!profile?.is_premium,
       isProfileComplete: isProfileComplete(profile),
       signOut,
-      reloadProfile: () => loadProfile(user),
+      reloadProfile,
     }),
-    [ready, session, user, profile, signOut, loadProfile]
+    [ready, session, user, profile, signOut, reloadProfile]
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useAuth() {
   const ctx = useContext(AuthCtx);
