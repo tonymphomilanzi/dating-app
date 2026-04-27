@@ -1,10 +1,10 @@
+// src/pages/Streams.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeftIcon,
   ChevronDownIcon,
-  EllipsisVerticalIcon,
   HeartIcon,
   ChatBubbleOvalLeftEllipsisIcon,
   ShareIcon,
@@ -13,10 +13,15 @@ import {
   SpeakerWaveIcon,
   SpeakerXMarkIcon,
   PlayIcon,
+  PauseIcon,
 } from "@heroicons/react/24/solid";
+import { HeartIcon as HeartOutlineIcon } from "@heroicons/react/24/outline";
 import { streamsService } from "../services/streams.service.js";
 
-// Constants
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
+
 const DEFAULT_AVATAR = "/me.jpg";
 const MAX_CAPTION_LENGTH = 200;
 const UPLOAD_PROGRESS_INTERVAL = 120;
@@ -24,13 +29,12 @@ const UPLOAD_PROGRESS_INCREMENT = 0.07;
 const UPLOAD_PROGRESS_MIN = 0.7;
 const UPLOAD_PROGRESS_MAX = 92;
 const STREAMS_LIMIT = 20;
-const LIKES_CACHE_DURATION = 60000;
 
-// ==========================================
-// UI HELPERS
-// ==========================================
+/* ================================================================
+   UI HELPERS
+   ================================================================ */
 
-function IconPillButton({ title, onClick, children, disabled = false }) {
+function IconPillButton({ title, onClick, children, disabled = false, active = false }) {
   return (
     <button
       type="button"
@@ -38,7 +42,11 @@ function IconPillButton({ title, onClick, children, disabled = false }) {
       aria-label={title}
       onClick={onClick}
       disabled={disabled}
-      className="grid h-12 w-12 place-items-center rounded-full bg-neutral-800/60 text-white backdrop-blur-md hover:bg-neutral-700/80 active:scale-90 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+      className={`grid h-12 w-12 place-items-center rounded-full backdrop-blur-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+        active
+          ? "bg-white/20 scale-110"
+          : "bg-neutral-800/60 hover:bg-neutral-700/80 active:scale-90"
+      }`}
     >
       {children}
     </button>
@@ -47,7 +55,7 @@ function IconPillButton({ title, onClick, children, disabled = false }) {
 
 function CountText({ children }) {
   return (
-    <div className="mt-1 text-[11px] font-medium text-neutral-300">
+    <div className="mt-1 text-[11px] font-bold text-white drop-shadow-lg">
       {children}
     </div>
   );
@@ -56,7 +64,10 @@ function CountText({ children }) {
 function SwipeDownHint() {
   return (
     <div className="pointer-events-none absolute bottom-6 left-1/2 z-30 -translate-x-1/2">
-      <ChevronDownIcon className="h-6 w-6 animate-bounce text-white/80" />
+      <div className="flex flex-col items-center gap-1">
+        <ChevronDownIcon className="h-6 w-6 animate-bounce text-white/80" />
+        <p className="text-[10px] text-white/60 font-medium">Swipe up</p>
+      </div>
     </div>
   );
 }
@@ -82,14 +93,16 @@ function Stage({ children }) {
   );
 }
 
-// ==========================================
-// VOLUME CONTROLLER
-// ==========================================
+/* ================================================================
+   VOLUME CONTROLLER (Mobile-Friendly)
+   ================================================================ */
 
 function VolumeControl({ muted, onToggleMute, videoRef }) {
   const [volume, setVolume] = useState(1);
   const [showSlider, setShowSlider] = useState(false);
+  const timeoutRef = useRef(null);
 
+  // Handle volume change
   const handleVolumeChange = useCallback(
     (e) => {
       const newVol = parseFloat(e.target.value);
@@ -99,44 +112,87 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
         videoRef.current.volume = newVol;
         if (newVol > 0 && muted) {
           onToggleMute();
+        } else if (newVol === 0 && !muted) {
+          onToggleMute();
         }
       }
     },
     [muted, onToggleMute, videoRef]
   );
 
+  // Toggle slider visibility
+  const toggleSlider = useCallback(() => {
+    setShowSlider((prev) => !prev);
+
+    // Auto-hide after 3 seconds
+    if (!showSlider) {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        setShowSlider(false);
+      }, 3000);
+    }
+  }, [showSlider]);
+
+  // Cleanup timeout
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Handle mute toggle
+  const handleMuteToggle = useCallback(() => {
+    onToggleMute();
+    if (videoRef.current) {
+      videoRef.current.muted = !muted;
+    }
+  }, [muted, onToggleMute, videoRef]);
+
   return (
-    <div
-      className="relative flex flex-col items-center"
-      onMouseEnter={() => setShowSlider(true)}
-      onMouseLeave={() => setShowSlider(false)}
-    >
-      {/* Volume Slider Popover */}
+    <div className="relative flex flex-col items-center gap-2">
+      {/* Volume Slider */}
       <div
-        className={`absolute bottom-full mb-3 transition-all duration-300 origin-bottom ${
+        className={`absolute bottom-full mb-2 transition-all duration-300 origin-bottom ${
           showSlider
-            ? "scale-100 opacity-100"
-            : "scale-75 opacity-0 pointer-events-none"
+            ? "scale-100 opacity-100 translate-y-0"
+            : "scale-75 opacity-0 translate-y-4 pointer-events-none"
         }`}
       >
-        <div className="bg-neutral-900/90 backdrop-blur-xl p-3 rounded-2xl h-32 flex items-center justify-center border border-white/10 shadow-2xl">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={muted ? 0 : volume}
-            onChange={handleVolumeChange}
-            className="accent-white h-24 cursor-pointer"
-            style={{ WebkitAppearance: "slider-vertical" }}
-            aria-label="Volume control"
-          />
+        <div className="bg-neutral-900/95 backdrop-blur-xl p-4 rounded-2xl border border-white/10 shadow-2xl">
+          <div className="flex flex-col items-center gap-3 h-32">
+            {/* Volume percentage */}
+            <div className="text-xs font-bold text-white">
+              {Math.round((muted ? 0 : volume) * 100)}%
+            </div>
+
+            {/* Vertical slider */}
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={muted ? 0 : volume}
+              onChange={handleVolumeChange}
+              className="h-20 w-1 appearance-none bg-white/20 rounded-full cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-lg [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
+              style={{
+                writingMode: "bt-lr",
+                WebkitAppearance: "slider-vertical",
+              }}
+              aria-label="Volume control"
+            />
+          </div>
         </div>
       </div>
 
+      {/* Mute/Unmute Button */}
       <button
-        onClick={onToggleMute}
-        className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md hover:bg-neutral-700 transition-colors"
+        onClick={handleMuteToggle}
+        onDoubleClick={toggleSlider}
+        className="grid h-11 w-11 place-items-center rounded-full bg-neutral-800/70 backdrop-blur-md hover:bg-neutral-700/90 active:scale-90 transition-all shadow-lg border border-white/5"
         aria-label={muted ? "Unmute" : "Mute"}
       >
         {muted || volume === 0 ? (
@@ -145,13 +201,18 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
           <SpeakerWaveIcon className="h-5 w-5 text-white" />
         )}
       </button>
+
+      {/* Mobile hint */}
+      <div className="text-[9px] text-white/40 font-medium whitespace-nowrap">
+        Tap twice for volume
+      </div>
     </div>
   );
 }
 
-// ==========================================
-// STREAM PAGE COMPONENT
-// ==========================================
+/* ================================================================
+   STREAM PAGE COMPONENT
+   ================================================================ */
 
 function StreamPage({
   item,
@@ -187,7 +248,9 @@ function StreamPage({
 
     if (isActive) {
       if (!userPausedRef.current) {
-        video.play().catch(() => {});
+        video.play().catch(() => {
+          console.log("Autoplay prevented");
+        });
       }
     } else {
       video.pause();
@@ -216,63 +279,83 @@ function StreamPage({
 
   // Track view
   useEffect(() => {
-    if (isActive && !viewedOnceRef.current) {
+    if (isActive && !viewedOnceRef.current && onViewed) {
       viewedOnceRef.current = true;
-      onViewed?.();
+      onViewed();
     }
     if (!isActive) {
       viewedOnceRef.current = false;
     }
   }, [isActive, onViewed]);
 
+  // Toggle play/pause
   const togglePlayPause = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
 
-    if (video.paused) {
-      userPausedRef.current = false;
-      try {
+    try {
+      if (video.paused) {
+        userPausedRef.current = false;
         await video.play();
-      } catch (error) {
-        console.error("Play failed:", error);
+      } else {
+        video.pause();
+        userPausedRef.current = true;
       }
-    } else {
-      video.pause();
-      userPausedRef.current = true;
+    } catch (error) {
+      console.error("Play/pause error:", error);
     }
   }, []);
 
+  // Handle like with better error handling
   const handleLike = useCallback(() => {
+    if (loadingLikes.has(item.id)) {
+      console.log("Already processing like for this stream");
+      return;
+    }
     onLike(item.id, !isLiked);
-  }, [item.id, isLiked, onLike]);
+  }, [item.id, isLiked, onLike, loadingLikes]);
 
+  // Handle share
   const handleShare = useCallback(async () => {
+    if (shareLoading) return;
+
     setShareLoading(true);
     try {
       await onShare(item.id);
-      toast.success("Stream shared successfully");
+      toast.success("Stream shared!");
     } catch (error) {
       console.error("Share failed:", error);
-      toast.error("Failed to share stream");
+      toast.error("Failed to share");
     } finally {
       setShareLoading(false);
     }
-  }, [item.id, onShare]);
+  }, [item.id, onShare, shareLoading]);
 
+  // Calculate like count with optimistic update
   const likeCount = useMemo(() => {
-    return formatCompact(item.likes + (isLiked ? 1 : 0));
+    const baseCount = item.likes || 0;
+    const displayCount = isLiked ? baseCount + 1 : baseCount;
+    return formatCompact(displayCount);
   }, [item.likes, isLiked]);
+
+  // Safe data access
+  const creatorName = item?.creator?.display_name || "Unknown";
+  const creatorAvatar = item?.creator?.avatar_url || DEFAULT_AVATAR;
+  const viewsCount = formatCompact(item?.views_count || 0);
+  const commentsCount = formatCompact(item?.comments_count || 0);
 
   return (
     <section className="relative h-dvh w-full snap-start overflow-hidden bg-black text-white">
       <Stage>
+        {/* Tap area for play/pause */}
         <button
           type="button"
           onClick={togglePlayPause}
-          className="absolute inset-0 z-10"
-          aria-label="Play or pause video"
+          className="absolute inset-0 z-10 active:bg-white/5 transition-colors"
+          aria-label={isPaused ? "Play video" : "Pause video"}
         />
 
+        {/* Video */}
         {isNear ? (
           <video
             ref={videoRef}
@@ -284,65 +367,68 @@ function StreamPage({
             preload="metadata"
           />
         ) : (
-          <div className="absolute inset-0 h-full w-full bg-neutral-900 grid place-items-center" />
+          <div className="absolute inset-0 h-full w-full bg-neutral-900 grid place-items-center">
+            <div className="h-8 w-8 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+          </div>
         )}
 
         {/* Gradient overlays */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/80 to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black/90 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-black/90 via-black/50 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-black/95 via-black/60 to-transparent" />
 
-        {/* Play indicator */}
+        {/* Play/Pause indicator */}
         {isPaused && (
           <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
-            <div className="grid h-16 w-16 place-items-center rounded-full bg-black/40 backdrop-blur-md border border-white/10 shadow-lg animate-in zoom-in-90">
-              <PlayIcon className="h-8 w-8 text-white" />
+            <div className="grid h-20 w-20 place-items-center rounded-full bg-black/50 backdrop-blur-md border-2 border-white/20 shadow-2xl animate-in zoom-in-90 duration-200">
+              <PlayIcon className="h-10 w-10 text-white ml-1" />
             </div>
           </div>
         )}
 
         {/* Header */}
-        <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4">
+        <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4 safe-top">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
                 onClick={onBack}
-                className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/60 backdrop-blur-md hover:bg-neutral-700 transition-colors"
+                className="grid h-10 w-10 place-items-center rounded-full bg-neutral-800/70 backdrop-blur-md hover:bg-neutral-700/90 active:scale-90 transition-all shadow-lg border border-white/5"
                 aria-label="Go back"
               >
                 <ArrowLeftIcon className="h-5 w-5" />
               </button>
               <button
                 onClick={onFollow}
-                className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-neutral-950 hover:bg-neutral-100 transition-colors"
+                className="rounded-full bg-white px-5 py-2.5 text-xs font-bold text-neutral-950 hover:bg-neutral-100 active:scale-95 transition-all shadow-lg"
               >
                 Follow
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              <VolumeControl
-                muted={muted}
-                onToggleMute={toggleMute}
-                videoRef={videoRef}
-              />
-            </div>
+            <VolumeControl
+              muted={muted}
+              onToggleMute={toggleMute}
+              videoRef={videoRef}
+            />
           </div>
         </div>
 
         {/* Right Side Actions */}
-        <div className="absolute right-4 bottom-28 z-30 flex flex-col items-center gap-6">
+        <div className="absolute right-4 bottom-32 z-30 flex flex-col items-center gap-5 safe-bottom">
           {/* Like Button */}
           <div className="flex flex-col items-center">
             <IconPillButton
               title={isLiked ? "Unlike" : "Like"}
               onClick={handleLike}
               disabled={loadingLikes.has(item.id)}
+              active={isLiked}
             >
-              <HeartIcon
-                className={`h-6 w-6 transition-all ${
-                  isLiked ? "text-red-500 scale-110" : "text-white"
-                }`}
-              />
+              {loadingLikes.has(item.id) ? (
+                <div className="h-6 w-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : isLiked ? (
+                <HeartIcon className="h-6 w-6 text-red-500" />
+              ) : (
+                <HeartOutlineIcon className="h-6 w-6 text-white" />
+              )}
             </IconPillButton>
             <CountText>{likeCount}</CountText>
           </div>
@@ -350,13 +436,12 @@ function StreamPage({
           {/* Comments Button */}
           <div className="flex flex-col items-center">
             <IconPillButton
-              title="Comments coming soon"
-              onClick={() => toast.info("Comments coming soon")}
-              disabled
+              title="Comments"
+              onClick={() => toast.info("Comments coming soon!")}
             >
               <ChatBubbleOvalLeftEllipsisIcon className="h-6 w-6 text-white" />
             </IconPillButton>
-            <CountText>{formatCompact(item.comments || 0)}</CountText>
+            <CountText>{commentsCount}</CountText>
           </div>
 
           {/* Share Button */}
@@ -366,38 +451,45 @@ function StreamPage({
               onClick={handleShare}
               disabled={shareLoading}
             >
-              <ShareIcon className="h-6 w-6 text-white" />
+              {shareLoading ? (
+                <div className="h-6 w-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <ShareIcon className="h-6 w-6 text-white" />
+              )}
             </IconPillButton>
           </div>
         </div>
 
         {/* Bottom Creator Info */}
-        <div className="absolute bottom-0 left-0 right-0 z-30 p-4">
-          <div className="flex items-center gap-3">
+        <div className="absolute bottom-0 left-0 right-0 z-30 p-4 pb-6 safe-bottom">
+          <div className="flex items-center gap-3 mb-3">
             <button
               onClick={onOpenProfile}
-              className="h-12 w-12 overflow-hidden rounded-full border-2 border-white/20 hover:border-white/40 transition-colors"
-              aria-label="View creator profile"
+              className="h-12 w-12 overflow-hidden rounded-full border-2 border-white/30 hover:border-white active:scale-95 transition-all shadow-lg"
+              aria-label={`View ${creatorName}'s profile`}
             >
               <img
-                src={item?.creator?.avatar_url || DEFAULT_AVATAR}
-                alt={item?.creator?.display_name || "Creator"}
+                src={creatorAvatar}
+                alt={creatorName}
                 className="h-full w-full object-cover"
+                onError={(e) => {
+                  e.target.src = DEFAULT_AVATAR;
+                }}
               />
             </button>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">
-                {item?.creator?.display_name || "Unknown"}
+              <p className="truncate text-sm font-bold drop-shadow-lg">
+                {creatorName}
               </p>
-              <p className="text-[11px] text-neutral-300">
-                {formatCompact(item.views_count)} views
+              <p className="text-xs text-white/80 font-medium drop-shadow">
+                {viewsCount} views
               </p>
             </div>
           </div>
 
           {item.caption && (
-            <div className="mt-3 rounded-xl bg-neutral-900/50 p-3.5 backdrop-blur-md border border-white/10">
-              <p className="text-xs text-neutral-200 leading-relaxed">
+            <div className="rounded-2xl bg-gradient-to-br from-neutral-900/90 to-neutral-800/90 p-4 backdrop-blur-xl border border-white/10 shadow-2xl">
+              <p className="text-sm text-white/95 leading-relaxed line-clamp-3">
                 {item.caption}
               </p>
             </div>
@@ -410,9 +502,9 @@ function StreamPage({
   );
 }
 
-// ==========================================
-// UPLOAD SHEET COMPONENT
-// ==========================================
+/* ================================================================
+   UPLOAD SHEET COMPONENT
+   ================================================================ */
 
 function UploadSheet({
   open,
@@ -428,15 +520,32 @@ function UploadSheet({
 }) {
   const inputRef = useRef(null);
 
-  if (!open) return null;
+  // Handle file selection with validation
+  const handleFileSelect = useCallback(
+    (e) => {
+      const selectedFile = e.target.files?.[0];
+      if (!selectedFile) return;
 
-  const handleFileSelect = useCallback((e) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
+      // Validate file type
+      if (!selectedFile.type.startsWith("video/")) {
+        toast.error("Please select a video file");
+        return;
+      }
+
+      // Validate file size (max 100MB)
+      const maxSize = 100 * 1024 * 1024; // 100MB
+      if (selectedFile.size > maxSize) {
+        toast.error("File size must be less than 100MB");
+        return;
+      }
+
       setFile(selectedFile);
-    }
-  }, [setFile]);
+      toast.success("Video selected");
+    },
+    [setFile]
+  );
 
+  // Handle caption change
   const handleCaptionChange = useCallback(
     (e) => {
       const value = e.target.value.slice(0, MAX_CAPTION_LENGTH);
@@ -445,63 +554,100 @@ function UploadSheet({
     [setCaption]
   );
 
-  const handleBackdropClick = useCallback(() => {
-    if (!uploading) {
-      onClose();
+  // Handle backdrop click
+  const handleBackdropClick = useCallback(
+    (e) => {
+      if (e.target === e.currentTarget && !uploading) {
+        onClose();
+      }
+    },
+    [uploading, onClose]
+  );
+
+  // Handle upload with validation
+  const handleUploadClick = useCallback(() => {
+    if (!file) {
+      toast.error("Please select a video file");
+      return;
     }
-  }, [uploading, onClose]);
+    onUpload();
+  }, [file, onUpload]);
+
+  if (!open) return null;
 
   const isUploadDisabled = uploading || !file;
 
   return (
     <div className="fixed inset-0 z-[100]">
+      {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/90 backdrop-blur-sm"
         onClick={handleBackdropClick}
       />
-      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl flex flex-col rounded-t-3xl border border-white/10 bg-neutral-950 text-white shadow-2xl h-[85dvh] overflow-hidden animate-in slide-in-from-bottom duration-300">
-        <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/5">
-          <p className="text-sm font-semibold">Upload Stream</p>
+
+      {/* Sheet */}
+      <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl flex flex-col rounded-t-3xl border border-white/10 bg-neutral-950 text-white shadow-2xl max-h-[90dvh] overflow-hidden animate-in slide-in-from-bottom duration-300">
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/10 bg-neutral-900/50">
+          <p className="text-base font-bold">Upload Stream</p>
           <button
             onClick={onClose}
             disabled={uploading}
-            className="p-2 hover:bg-white/5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-2 hover:bg-white/10 rounded-full disabled:opacity-50 disabled:cursor-not-allowed active:scale-90 transition-all"
             aria-label="Close upload sheet"
           >
             <XMarkIcon className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-5">
-          <div className="grid gap-6 md:grid-cols-[240px_1fr]">
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-5 py-6">
+          <div className="grid gap-6 md:grid-cols-[280px_1fr]">
             {/* Video Preview */}
-            <div className="aspect-[9/16] bg-black rounded-xl overflow-hidden border border-white/5">
+            <div className="aspect-[9/16] bg-neutral-900 rounded-2xl overflow-hidden border border-white/10 shadow-xl">
               {previewUrl ? (
                 <video
                   className="h-full w-full object-cover"
                   src={previewUrl}
                   muted
                   playsInline
+                  controls
                 />
               ) : (
-                <div className="grid h-full place-items-center text-[10px] text-neutral-500">
-                  No Preview
+                <div className="grid h-full place-items-center text-center p-4">
+                  <div>
+                    <ArrowUpTrayIcon className="h-12 w-12 mx-auto mb-2 text-neutral-600" />
+                    <p className="text-xs text-neutral-500">
+                      No video selected
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Upload Form */}
             <div className="space-y-5">
-              {/* File Input */}
+              {/* File Input Button */}
               <button
                 onClick={() => inputRef.current?.click()}
                 disabled={uploading}
-                className="w-full rounded-xl border border-white/5 bg-white/5 p-4 text-left hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full rounded-xl border border-white/10 bg-white/5 p-4 text-left hover:bg-white/10 active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <p className="text-sm font-semibold">
-                  {file ? file.name : "Choose video file"}
-                </p>
+                <div className="flex items-center gap-3">
+                  <ArrowUpTrayIcon className="h-5 w-5 text-violet-400" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">
+                      {file ? file.name : "Choose video file"}
+                    </p>
+                    {file && (
+                      <p className="text-xs text-neutral-400 mt-0.5">
+                        {(file.size / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                    )}
+                  </div>
+                </div>
               </button>
+
               <input
                 ref={inputRef}
                 type="file"
@@ -513,37 +659,48 @@ function UploadSheet({
 
               {/* Caption Input */}
               <div>
+                <label className="block text-sm font-semibold mb-2 text-neutral-300">
+                  Caption (Optional)
+                </label>
                 <textarea
                   value={caption}
                   onChange={handleCaptionChange}
-                  placeholder="Caption..."
-                  className="w-full rounded-xl bg-white/5 p-4 text-sm outline-none focus:ring-1 ring-white/20 h-28 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Add a caption to your stream..."
+                  className="w-full rounded-xl bg-white/5 border border-white/10 p-4 text-sm outline-none focus:ring-2 ring-violet-500 h-32 resize-none disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   disabled={uploading}
                   maxLength={MAX_CAPTION_LENGTH}
                   aria-label="Stream caption"
                 />
-                <p className="text-xs text-neutral-400 mt-1">
-                  {caption.length}/{MAX_CAPTION_LENGTH}
-                </p>
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-xs text-neutral-500">
+                    Share your thoughts with your audience
+                  </p>
+                  <p className="text-xs text-neutral-400 font-medium">
+                    {caption.length}/{MAX_CAPTION_LENGTH}
+                  </p>
+                </div>
               </div>
 
               {/* Upload Progress */}
               {uploading && (
-                <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-white/80">
-                      Uploading
+                <div className="rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4">
+                  <div className="flex items-center justify-between text-sm mb-3">
+                    <span className="font-semibold text-white">
+                      Uploading stream...
                     </span>
-                    <span className="font-semibold text-white/80">
+                    <span className="font-bold text-violet-400">
                       {Math.round(progress)}%
                     </span>
                   </div>
-                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white/10">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-400 transition-[width] duration-200"
+                      className="h-full rounded-full bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 transition-[width] duration-300"
                       style={{ width: `${progress}%` }}
                     />
                   </div>
+                  <p className="text-xs text-neutral-400 mt-2">
+                    Please don't close this window
+                  </p>
                 </div>
               )}
 
@@ -552,16 +709,16 @@ function UploadSheet({
                 <button
                   onClick={onClose}
                   disabled={uploading}
-                  className="flex-1 py-3 rounded-full border border-white/10 text-sm hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-3.5 rounded-full border border-white/20 text-sm font-semibold hover:bg-white/5 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={onUpload}
+                  onClick={handleUploadClick}
                   disabled={isUploadDisabled}
-                  className="flex-1 py-3 rounded-full bg-white text-black text-sm font-semibold hover:bg-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-3.5 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white text-sm font-bold hover:from-violet-500 hover:to-fuchsia-500 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-neutral-600 disabled:to-neutral-600 shadow-lg"
                 >
-                  Publish
+                  {uploading ? "Publishing..." : "Publish Stream"}
                 </button>
               </div>
             </div>
@@ -572,9 +729,9 @@ function UploadSheet({
   );
 }
 
-// ==========================================
-// MAIN STREAMS COMPONENT
-// ==========================================
+/* ================================================================
+   MAIN STREAMS COMPONENT
+   ================================================================ */
 
 export default function Streams() {
   const navigate = useNavigate();
@@ -588,7 +745,8 @@ export default function Streams() {
 
   // Audio preference
   const [muted, setMuted] = useState(() => {
-    return localStorage.getItem("streams_muted") !== "false";
+    const saved = localStorage.getItem("streams_muted");
+    return saved !== "false";
   });
 
   // Upload sheet state
@@ -602,24 +760,25 @@ export default function Streams() {
   // Like management
   const [likedStreams, setLikedStreams] = useState(new Set());
   const [loadingLikes, setLoadingLikes] = useState(new Set());
-  const likesCacheRef = useRef(null);
 
-  // Load streams and likes
+  // ── Load streams and liked status ──────────────────────────────
   useEffect(() => {
     const fetchStreamsAndLikes = async () => {
       try {
-        const [streamsData, likedSet] = await Promise.all([
-          streamsService.listApproved(STREAMS_LIMIT),
-          streamsService.getUserLikedStreams().catch(() => new Set()),
-        ]);
-        
+        setIsLoading(true);
+
+        // Fetch streams
+        const streamsData = await streamsService.listApproved(STREAMS_LIMIT);
         setItems(streamsData);
-        setLikedStreams(likedSet);
-        
-        likesCacheRef.current = {
-          timestamp: Date.now(),
-          data: likedSet,
-        };
+
+        // Fetch user's liked streams
+        try {
+          const likedSet = await streamsService.getUserLikedStreams();
+          setLikedStreams(likedSet);
+        } catch (error) {
+          console.error("Failed to load liked streams:", error);
+          // Continue even if likes fail to load
+        }
       } catch (error) {
         console.error("Failed to load streams:", error);
         toast.error("Failed to load streams");
@@ -631,7 +790,7 @@ export default function Streams() {
     fetchStreamsAndLikes();
   }, []);
 
-  // Handle file preview
+  // ── Handle file preview ────────────────────────────────────────
   useEffect(() => {
     if (!file) {
       setPreviewUrl("");
@@ -646,7 +805,7 @@ export default function Streams() {
     };
   }, [file]);
 
-  // Progress management
+  // ── Progress simulation ────────────────────────────────────────
   const startProgress = useCallback(() => {
     setProgress(0);
     if (progressTimerRef.current) {
@@ -674,16 +833,21 @@ export default function Streams() {
     }
   }, []);
 
+  // ── Reset upload form ──────────────────────────────────────────
   const resetUpload = useCallback(() => {
     setFile(null);
     setCaption("");
     setProgress(0);
     setUploading(false);
+    setPreviewUrl("");
   }, []);
 
-  // Upload handler
+  // ── Upload handler ─────────────────────────────────────────────
   const handleUpload = useCallback(async () => {
-    if (!file) return;
+    if (!file) {
+      toast.error("Please select a video file");
+      return;
+    }
 
     const toastId = toast.loading("Uploading your stream...");
 
@@ -704,9 +868,9 @@ export default function Streams() {
         resetUpload();
         toast.success("Stream Uploaded Successfully!", {
           id: toastId,
-          description: "Your video is in the queue and will appear shortly.",
+          description: "Your video is pending approval and will appear soon.",
         });
-      }, 450);
+      }, 500);
     } catch (error) {
       console.error("Upload failed:", error);
       stopProgress();
@@ -719,33 +883,51 @@ export default function Streams() {
     }
   }, [file, caption, startProgress, stopProgress, resetUpload]);
 
-  // Cleanup on unmount
+  // ── Cleanup on unmount ─────────────────────────────────────────
   useEffect(() => {
     return () => {
       stopProgress();
     };
   }, [stopProgress]);
 
-  // Like handler
-  const handleLike = useCallback((streamId, isLiking) => {
-    setLoadingLikes((prev) => new Set(prev).add(streamId));
+  // ── Like handler with better error handling ────────────────────
+  const handleLike = useCallback(
+    async (streamId, isLiking) => {
+      console.log(`${isLiking ? "Liking" : "Unliking"} stream:`, streamId);
 
-    setLikedStreams((prev) => {
-      const newSet = new Set(prev);
-      if (isLiking) {
-        newSet.add(streamId);
-      } else {
-        newSet.delete(streamId);
+      // Prevent duplicate requests
+      if (loadingLikes.has(streamId)) {
+        console.log("Already processing like for this stream");
+        return;
       }
-      return newSet;
-    });
 
-    const likePromise = isLiking
-      ? streamsService.likeStream(streamId)
-      : streamsService.unlikeStream(streamId);
+      // Add to loading set
+      setLoadingLikes((prev) => new Set(prev).add(streamId));
 
-    likePromise
-      .catch(() => {
+      // Optimistic update
+      setLikedStreams((prev) => {
+        const newSet = new Set(prev);
+        if (isLiking) {
+          newSet.add(streamId);
+        } else {
+          newSet.delete(streamId);
+        }
+        return newSet;
+      });
+
+      try {
+        // Call API
+        if (isLiking) {
+          await streamsService.likeStream(streamId);
+        } else {
+          await streamsService.unlikeStream(streamId);
+        }
+
+        console.log(`Successfully ${isLiking ? "liked" : "unliked"} stream`);
+      } catch (error) {
+        console.error("Like operation failed:", error);
+
+        // Revert optimistic update
         setLikedStreams((prev) => {
           const newSet = new Set(prev);
           if (isLiking) {
@@ -755,29 +937,46 @@ export default function Streams() {
           }
           return newSet;
         });
-        toast.error(isLiking ? "Failed to like stream" : "Failed to unlike stream");
-      })
-      .finally(() => {
+
+        toast.error(
+          isLiking ? "Failed to like stream" : "Failed to unlike stream",
+          {
+            description: error.message || "Please try again",
+          }
+        );
+      } finally {
+        // Remove from loading set
         setLoadingLikes((prev) => {
           const newSet = new Set(prev);
           newSet.delete(streamId);
           return newSet;
         });
-      });
-  }, []);
+      }
+    },
+    [loadingLikes]
+  );
 
-  // Share handler
+  // ── Share handler ──────────────────────────────────────────────
   const handleShare = useCallback(async (streamId) => {
     try {
       await streamsService.trackShareStream(streamId);
+
+      // Try native share if available
+      if (navigator.share) {
+        await navigator.share({
+          title: "Check out this stream!",
+          url: window.location.href,
+        });
+      }
+
       return true;
     } catch (error) {
-      console.error("Share tracking failed:", error);
+      console.error("Share failed:", error);
       throw error;
     }
   }, []);
 
-  // Toggle mute and persist
+  // ── Toggle mute ────────────────────────────────────────────────
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const newMuted = !prev;
@@ -786,37 +985,69 @@ export default function Streams() {
     });
   }, []);
 
-  // Handle scroll
+  // ── Handle scroll ──────────────────────────────────────────────
   const handleScroll = useCallback((e) => {
-    const newActiveIndex = Math.round(e.target.scrollTop / window.innerHeight);
+    const newActiveIndex = Math.round(
+      e.target.scrollTop / window.innerHeight
+    );
     setActiveIndex(newActiveIndex);
   }, []);
 
-  // Handle upload sheet close
+  // ── Handle upload sheet close ──────────────────────────────────
   const handleUploadSheetClose = useCallback(() => {
-    if (uploading) return;
+    if (uploading) {
+      toast.error("Please wait for upload to complete");
+      return;
+    }
     setUploadOpen(false);
     resetUpload();
   }, [uploading, resetUpload]);
 
+  // ── Loading state ──────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="h-dvh grid place-items-center bg-black">
-        <div className="h-10 w-10 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+      <div className="h-dvh grid place-items-center bg-neutral-950">
+        <div className="text-center">
+          <div className="h-12 w-12 mx-auto border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+          <p className="text-sm text-white/60 font-medium">Loading streams...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Empty state ────────────────────────────────────────────────
+  if (items.length === 0) {
+    return (
+      <div className="h-dvh grid place-items-center bg-neutral-950 text-white p-4">
+        <div className="text-center max-w-sm">
+          <div className="h-20 w-20 mx-auto mb-6 rounded-full bg-neutral-800/50 grid place-items-center">
+            <ArrowUpTrayIcon className="h-10 w-10 text-neutral-400" />
+          </div>
+          <h2 className="text-xl font-bold mb-2">No Streams Yet</h2>
+          <p className="text-sm text-neutral-400 mb-6">
+            Be the first to share a stream with the community!
+          </p>
+          <button
+            onClick={() => setUploadOpen(true)}
+            className="px-6 py-3 rounded-full bg-white text-black font-semibold hover:bg-neutral-100 active:scale-95 transition-all"
+          >
+            Upload Your First Stream
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="h-dvh bg-neutral-950">
-      {/* Upload Button */}
-      <div className="fixed top-4 right-4 z-50">
+      {/* Upload Button (Fixed) */}
+      <div className="fixed top-4 right-4 z-50 safe-top">
         <button
           onClick={() => setUploadOpen(true)}
-          className="grid h-10 w-10 place-items-center rounded-full bg-white text-black shadow-lg hover:scale-105 active:scale-95 transition-all"
+          className="grid h-12 w-12 place-items-center rounded-full bg-white text-black shadow-2xl hover:scale-105 active:scale-95 transition-all border-2 border-white/20"
           aria-label="Upload stream"
         >
-          <ArrowUpTrayIcon className="h-5 w-5" />
+          <ArrowUpTrayIcon className="h-6 w-6" />
         </button>
       </div>
 
@@ -845,7 +1076,7 @@ export default function Streams() {
             key={item.id}
             item={{
               ...item,
-              likes: item.likes_count || 1200,
+              likes: item.likes_count || 0,
               comments: item.comments_count || 0,
             }}
             isActive={activeIndex === index}
@@ -853,13 +1084,17 @@ export default function Streams() {
             muted={muted}
             toggleMute={toggleMute}
             onBack={() => navigate(-1)}
-            onFollow={() => navigate("/profile")}
-            onOpenProfile={() => navigate(`/profile/${item.creator.id}`)}
-            onViewed={() =>
+            onFollow={() => toast.info("Follow feature coming soon!")}
+            onOpenProfile={() => {
+              if (item?.creator?.id) {
+                navigate(`/profile/${item.creator.id}`);
+              }
+            }}
+            onViewed={() => {
               streamsService.incrementView(item.id).catch((error) => {
                 console.error("Failed to increment view:", error);
-              })
-            }
+              });
+            }}
             onLike={handleLike}
             onShare={handleShare}
             likedStreams={likedStreams}
