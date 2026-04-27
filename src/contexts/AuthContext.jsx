@@ -1,187 +1,259 @@
-// src/contexts/AuthFlowContext.jsx
+// src/contexts/AuthContext.jsx
 import {
   createContext,
   useContext,
   useMemo,
   useState,
   useCallback,
+  useEffect,
 } from "react";
+import { supabase } from "../lib/supabase.client.js";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+const AuthContext = createContext(null);
 
-/**
- * Keys used for persisting temporary auth flow state in session storage.
- * These ensure the flow survives a page reload (e.g. during Magic Link wait).
- */
-const STORAGE_KEYS = {
-  EMAIL: "AF_email",
-  DISPLAY_NAME: "AF_name",
-  PENDING_PASSWORD: "AF_pwd", // WARNING: Storing passwords is generally discouraged, but used here for ephemeral flow state.
-  OTP_TYPE: "AF_type",
-};
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-// ─── Helpers (Storage Safety) ───────────────────────────────────────────────────
+  // Initialize auth state on mount
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Get current session
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-/**
- * Safe wrapper around sessionStorage to handle SecurityError in private modes.
- * Returns null on error.
- */
-function safeGet(key) {
-  try {
-    return window.sessionStorage.getItem(key);
-  } catch (e) {
-    // console.warn("[AuthFlow] SessionStorage read failed:", e.message);
-    return null;
-  }
-}
+        if (sessionError) throw sessionError;
 
-/**
- * Safe wrapper around sessionStorage to handle SecurityError in private modes.
- */
-function safeSet(key, value) {
-  try {
-    window.sessionStorage.setItem(key, value);
-  } catch (e) {
-    // console.warn("[AuthFlow] SessionStorage write failed:", e.message);
-  }
-}
+        if (session?.user) {
+          setUser(session.user);
 
-/**
- * Safe wrapper to remove a key.
- */
-function safeRemove(key) {
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch (e) {
-    // console.warn("[AuthFlow] SessionStorage remove failed:", e.message);
-  }
-}
+          // Fetch user profile
+          const { data: profileData, error: profileError } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", session.user.id)
+            .single();
 
-// ─── Context ───────────────────────────────────────────────────────────────────
+          if (profileError && profileError.code !== "PGRST116") {
+            throw profileError;
+          }
 
-const Ctx = createContext(null);
+          setProfile(profileData || null);
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
+      } catch (err) {
+        console.error("Auth initialization failed:", err);
+        setError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-/**
- * Provider for ephemeral state during the authentication flow.
- *
- * This manages the temporary data required to complete a signup or login
- * sequence (e.g. entering email, name, and password before verifying via OTP
- * or Magic Link). It persists this data to `sessionStorage` so that if the
- * user refreshes the page, they don't lose their progress.
- *
- * NOTE: Data in this context is transient and cleared once the flow completes
- * or is explicitly aborted.
- */
-export function AuthFlowProvider({ children }) {
-  // ── State Initialization (Hydration) ───────────────────────────────────────
-  // We hydrate the state from sessionStorage on mount so page reloads preserve
-  // the user's partial input.
+    initializeAuth();
 
-  const [email, setEmail] = useState(() => safeGet(STORAGE_KEYS.EMAIL) || "");
-  const [displayName, setDisplayName] = useState(
-    () => safeGet(STORAGE_KEYS.DISPLAY_NAME) || ""
-  );
-  const [pendingPassword, setPendingPassword] = useState(
-    () => safeGet(STORAGE_KEYS.PENDING_PASSWORD) || ""
-  );
-  const [otpType, setOtpType] = useState(
-    () => safeGet(STORAGE_KEYS.OTP_TYPE) || "signup"
-  );
+    // Subscribe to auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
 
-  // ── Actions ───────────────────────────────────────────────────────────────
+        // Fetch profile when user changes
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", session.user.id)
+          .single()
+          .catch(() => ({ data: null }));
 
-  /**
-   * Initialize or update the auth flow state.
-   * Persists all provided fields to sessionStorage.
-   *
-   * @param {object} payload
-   * @param {string} payload.email
-   * @param {string} [payload.displayName]
-   * @param {string} [payload.password]
-   * @param {"signup"|"magiclink"} [payload.type]
-   */
-  const startSignupFlow = useCallback(
-    ({ email: em, displayName: dn, password: pw, type }) => {
-      const nextEmail = em || "";
-      const nextName = dn || "";
-      const nextPw = pw || "";
-      const nextType = type || "signup";
+        setProfile(profileData);
+      } else {
+        setUser(null);
+        setProfile(null);
+      }
+    });
 
-      // Update React State
-      setEmail(nextEmail);
-      setDisplayName(nextName);
-      setPendingPassword(nextPw);
-      setOtpType(nextType);
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, []);
 
-      // Persist to Storage
-      safeSet(STORAGE_KEYS.EMAIL, nextEmail);
-      safeSet(STORAGE_KEYS.DISPLAY_NAME, nextName);
-      safeSet(STORAGE_KEYS.PENDING_PASSWORD, nextPw);
-      safeSet(STORAGE_KEYS.OTP_TYPE, nextType);
+  // Sign up with email and password
+  const signUp = useCallback(
+    async ({ email, password, displayName }) => {
+      try {
+        setError(null);
+
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+
+        if (data.user) {
+          // Create profile
+          const { error: profileError } = await supabase
+            .from("profiles")
+            .insert({
+              id: data.user.id,
+              display_name: displayName || email.split("@")[0],
+              avatar_url: null,
+            });
+
+          if (profileError) throw profileError;
+        }
+
+        return data;
+      } catch (err) {
+        setError(err.message);
+        throw err;
+      }
     },
     []
   );
 
-  /**
-   * Reset the flow state.
-   * Clears React state and removes all auth-flow keys from sessionStorage.
-   */
-  const clearFlow = useCallback(() => {
-    // Update React State
-    setDisplayName("");
-    setPendingPassword("");
-    setOtpType("signup"); // Reset to default type
+  // Sign in with email and password
+  const signIn = useCallback(async ({ email, password }) => {
+    try {
+      setError(null);
 
-    // Clear Storage
-    safeRemove(STORAGE_KEYS.DISPLAY_NAME);
-    safeRemove(STORAGE_KEYS.PENDING_PASSWORD);
-    safeRemove(STORAGE_KEYS.OTP_TYPE);
-    // Note: We generally keep the EMAIL in storage or clear it depending on UX preference.
-    // Here, we clear everything to ensure a clean slate.
-    safeRemove(STORAGE_KEYS.EMAIL);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+
+      return data;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
   }, []);
 
-  // ── Context Value ─────────────────────────────────────────────────────────
+  // Sign in with magic link
+  const signInWithMagicLink = useCallback(async ({ email }) => {
+    try {
+      setError(null);
 
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+      });
+
+      if (error) throw error;
+
+      return { success: true };
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  }, []);
+
+  // Sign out
+  const signOut = useCallback(async () => {
+    try {
+      setError(null);
+
+      const { error } = await supabase.auth.signOut();
+
+      if (error) throw error;
+
+      setUser(null);
+      setProfile(null);
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  }, []);
+
+  // Update profile
+  const updateProfile = useCallback(async (updates) => {
+    try {
+      setError(null);
+
+      if (!user) throw new Error("No user logged in");
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setProfile(data);
+      return data;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  }, [user]);
+
+  // Check if user is authenticated
+  const isAuthenticated = useMemo(() => !!user, [user]);
+
+  // Memoized context value
   const value = useMemo(
     () => ({
-      // Getters
-      email,
-      displayName,
-      pendingPassword,
-      otpType, // "signup" | "magiclink"
+      // State
+      user,
+      profile,
+      isLoading,
+      error,
+      isAuthenticated,
 
-      // Setters
-      setEmail, // Exposed for granular updates if needed (e.g. correcting email typo)
+      // Methods
+      signUp,
+      signIn,
+      signInWithMagicLink,
+      signOut,
+      updateProfile,
 
-      // Actions
-      startSignupFlow,
-      clearFlow,
+      // Utility
+      clearError: () => setError(null),
     }),
     [
-      email,
-      displayName,
-      pendingPassword,
-      otpType,
-      startSignupFlow,
-      clearFlow,
+      user,
+      profile,
+      isLoading,
+      error,
+      isAuthenticated,
+      signUp,
+      signIn,
+      signInWithMagicLink,
+      signOut,
+      updateProfile,
     ]
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// Main hook - this is what Discover.jsx is importing
+export function useAuth() {
+  const context = useContext(AuthContext);
 
-/**
- * Access the AuthFlow context.
- *
- * @throws {Error} if used outside of AuthFlowProvider
- */
-export function useAuthFlow() {
-  const ctx = useContext(Ctx);
-  if (!ctx) {
-    throw new Error("useAuthFlow must be used within <AuthFlowProvider>");
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider component");
   }
-  return ctx;
+
+  return context;
 }
+
+// Optional: Export context for advanced use cases
+export { AuthContext };
