@@ -67,7 +67,7 @@ export default function App() {
             <Route path="/auth/signup"        element={<SignUp />} />
             <Route path="/auth/signin/email"  element={<SignInEmail />} />
 
-            {/* ✅ Forgot password — guest only so logged-in users        */}
+            {/*    Forgot password — guest only so logged-in users        */}
             {/*    can't accidentally hit it and lose their session       */}
             <Route path="/auth/forgot-password" element={<ForgotPassword />} />
           </Route>
