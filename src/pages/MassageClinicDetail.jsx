@@ -273,19 +273,36 @@ export default function MassageClinicDetail() {
 
   const handleReviewSubmit = useCallback(async (e) => {
     e.preventDefault();
-    if (!reviewDraft.rating) { setReviewError("Please select a star rating."); return; }
+    
+    // ✅ OWNER PROTECTION CHECK
+    if (isOwner) {
+      setReviewError("You cannot review your own clinic. Owners are not allowed to leave reviews for their listings.");
+      return;
+    }
+
+    if (!reviewDraft.rating) { 
+      setReviewError("Please select a star rating."); 
+      return; 
+    }
+
     setReviewSubmitting(true);
     setReviewError("");
+    
     try {
       await submitReview(reviewDraft);
       setReviewMode(false);
       refetch(); // refresh rating cache
     } catch (err) {
-      setReviewError(err.message);
+      // Check if it's a database constraint error about owner reviews
+      if (err.message?.includes('owner') || err.message?.includes('own listing')) {
+        setReviewError("You cannot review your own clinic.");
+      } else {
+        setReviewError(err.message || "Failed to submit review. Please try again.");
+      }
     } finally {
       setReviewSubmitting(false);
     }
-  }, [reviewDraft, submitReview, refetch]);
+  }, [reviewDraft, submitReview, refetch, isOwner]);
 
   const handleDeleteReview = useCallback(async () => {
     if (!window.confirm("Delete your review?")) return;
@@ -744,6 +761,24 @@ export default function MassageClinicDetail() {
         {/* ── Reviews ── */}
         <Card title={`Reviews${clinic.review_count ? ` (${clinic.review_count})` : ""}`}>
 
+          {/* ✅ Owner info message */}
+          {isOwner && (
+            <div className="mb-4 rounded-xl bg-blue-50 border border-blue-100 p-4 
+              flex items-start gap-3">
+              <svg className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" fill="none" 
+                viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" 
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-blue-900">This is your clinic</p>
+                <p className="text-xs text-blue-700 mt-0.5">
+                  As the owner, you cannot leave a review for your own listing.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Write / edit review CTA */}
           {user && !isOwner && (
             <div className="mb-4">
@@ -760,13 +795,32 @@ export default function MassageClinicDetail() {
                   draft={reviewDraft}
                   onChange={setReviewDraft}
                   onSubmit={handleReviewSubmit}
-                  onCancel={() => setReviewMode(false)}
+                  onCancel={() => {
+                    setReviewMode(false);
+                    setReviewError(""); // Clear error when canceling
+                  }}
                   submitting={reviewSubmitting}
                   error={reviewError}
                   isEdit={!!myReview}
                   onDelete={myReview ? handleDeleteReview : undefined}
                 />
               )}
+            </div>
+          )}
+
+          {/* Sign in prompt for non-users */}
+          {!user && (
+            <div className="mb-4 rounded-xl bg-gray-50 border border-gray-100 p-4 
+              text-center">
+              <p className="text-sm text-gray-600">
+                <button 
+                  onClick={() => navigate('/sign-in', { state: { returnTo: window.location.pathname } })}
+                  className="font-semibold text-violet-600 hover:text-violet-700 
+                    underline decoration-violet-300 underline-offset-2">
+                  Sign in
+                </button>
+                {' '}to leave a review
+              </p>
             </div>
           )}
 
@@ -874,7 +928,20 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
           {draft.body.length}/1000
         </p>
       </div>
-      {error && <p className="text-xs text-red-500 font-medium">{error}</p>}
+      
+      {/* ✅ Enhanced error display */}
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 p-3 flex 
+          items-start gap-2">
+          <svg className="h-5 w-5 text-red-500 shrink-0" fill="none" 
+            viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" 
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-sm text-red-700 font-medium">{error}</p>
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
         <button type="submit" disabled={submitting}
           className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-semibold
