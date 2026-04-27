@@ -48,9 +48,11 @@ import { Toaster } from "@/components/ui/sonner";
 import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
+import { NotificationProvider } from "./contexts/NotificationContext.jsx";
 export default function App() {
   return (
     <AuthFlowProvider>
+        <NotificationProvider>
       <Toaster richColors closeButton position="top-center" />
 
       <Routes>
@@ -120,6 +122,7 @@ export default function App() {
 
         </Route>
       </Routes>
+      </NotificationProvider>
     </AuthFlowProvider>
   );
 }

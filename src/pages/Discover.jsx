@@ -16,6 +16,7 @@ import { updateProfileLocation } from "../utils/location.js";
 import { DiscoverCache } from "../lib/discoverCache.js";
 import { useRevalidate } from "../hooks/useRevalidate.js";
 import { useGeolocation } from "../hooks/useGeolocation.js";
+import { useNotifications } from '../hooks/useNotifications'; // Add this import
 
 /* ================================================================
    CONSTANTS
@@ -37,6 +38,7 @@ export default function Discover() {
   const navigate    = useNavigate();
   const { profile } = useAuth();
   const userId      = profile?.id || "me";
+  const { unreadCount } = useNotifications();
 
   // ── Tab state ───────────────────────────────────────────────────
   const [mode,       setMode]       = useState("for_you");
@@ -220,8 +222,12 @@ export default function Discover() {
           <div className="flex items-center gap-2">
             <IconButton icon="messages" aria-label="Messages"
               onClick={() => navigate("/messages")} />
-            <IconButton icon="bell" aria-label="Notifications" count={3}
-              onClick={() => navigate("/notifications")} />
+             <IconButton 
+        icon="bell" 
+        aria-label="Notifications" 
+        count={unreadCount}
+        onClick={() => navigate("/notifications")} 
+      />
             <IconButton icon="filter" aria-label="Filter"
               onClick={() => navigate("/filters")} />
           </div>
