@@ -19,11 +19,18 @@ const DAY_LABEL_ORDER = ["Today", "Yesterday", "Earlier"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Extract a numeric timestamp from various API response shapes.
- * Returns 0 (not Date.now()) so items without timestamps sort into "Earlier"
- * rather than always appearing as "Today".
- */
+function timeAgo(ts) {
+  if (!ts) return "";
+  const diff = Math.max(0, Date.now() - new Date(ts).getTime());
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 function getTimestamp(item) {
   const raw =
     item?.created_at ||
@@ -33,14 +40,8 @@ function getTimestamp(item) {
   return raw ? new Date(raw).getTime() : 0;
 }
 
-/**
- * Map a numeric timestamp to a human-readable day label.
- * Computes day boundaries once per call — acceptable for list sizes here.
- */
 function getLabelForTimestamp(timestamp) {
-  // Items with no timestamp (ts === 0) always go to "Earlier"
   if (timestamp === 0) return "Earlier";
-
   const now = new Date();
   const startOfToday = new Date(
     now.getFullYear(),
@@ -48,36 +49,56 @@ function getLabelForTimestamp(timestamp) {
     now.getDate()
   ).getTime();
   const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-
   if (timestamp >= startOfToday) return "Today";
   if (timestamp >= startOfYesterday) return "Yesterday";
   return "Earlier";
 }
 
-/**
- * Group a flat list of items into ordered day buckets.
- * Order is always: Today → Yesterday → Earlier (omitting empty buckets).
- */
 function groupByDay(items) {
   const groups = new Map();
-
   for (const item of items) {
     const label = getLabelForTimestamp(getTimestamp(item));
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(item);
   }
-
-  // Fixed iteration order — never rely on Map insertion order for display
   return DAY_LABEL_ORDER.filter((label) => groups.has(label)).map(
     (label) => ({ label, items: groups.get(label) })
   );
 }
 
 /**
- * Derive a stable, unique key for an item regardless of API shape.
+ * Always returns the OTHER USER's profile ID.
+ * item.other.id  → preferred (explicit nested user object)
+ * item.user_id   → some APIs put the target user ID at top level
+ * item.id        → last resort (only safe if API guarantees item.id === user id)
  */
-function getItemId(item) {
-  return item?.other?.id ?? item?.id ?? null;
+function getOtherUserId(item) {
+  return item?.other?.id ?? item?.user_id ?? item?.id ?? null;
+}
+
+/**
+ * Returns the unique record ID for this match/like entry (used as React key
+ * and for optimistic removal — NOT for navigation).
+ */
+function getRecordId(item) {
+  // Prefer an explicit record/match id that is NOT the user id
+  return item?.match_id ?? item?.record_id ?? item?.id ?? getOtherUserId(item);
+}
+
+/**
+ * Returns the conversation ID to navigate to.
+ * For matches: use conversation_id if present, otherwise use the other user's
+ * ID (the chat route accepts either and resolves on the backend).
+ * NEVER use the match record ID as a conversation destination.
+ */
+function getConversationDest(item) {
+  // Explicit conversation id — most reliable
+  if (item?.conversation_id) return item.conversation_id;
+  // Some APIs nest it
+  if (item?.conversation?.id) return item.conversation.id;
+  // Fall back to the other user's profile ID so the chat page can
+  // create/find a conversation with that user
+  return getOtherUserId(item);
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -85,37 +106,26 @@ function getItemId(item) {
 export default function Matches() {
   const navigate = useNavigate();
 
-  // "likes" | "matches"
   const [mode, setMode] = useState("likes");
 
-  // Per-tab state so switching tabs doesn't flash stale data
   const [tabState, setTabState] = useState({
     likes:   { items: [], limited: false, total: 0 },
     matches: { items: [], limited: false, total: 0 },
   });
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState("");
+  const [actionLoading, setActionLoading] = useState(null); // otherId string | null
 
-  // Track which item ID is currently being actioned (like-back or pass)
-  const [actionLoading, setActionLoading] = useState(null);
-
-  // Abort controller for the active list-fetch request
-  const abortRef = useRef(null);
-
-  // Timestamp of last successful refetch for cooldown logic
+  const abortRef         = useRef(null);
   const lastRefetchTsRef = useRef(0);
+  // Keep a ref to the current mode so async callbacks always see the latest value
+  const modeRef          = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   // ── Fetch ────────────────────────────────────────────────────────────────
 
-  /**
-   * Fetch items for the given mode (defaults to current mode).
-   * Cancels any in-flight request before starting a new one.
-   * All state updates are guarded by the local abort signal so that
-   * responses from cancelled requests are silently discarded.
-   */
   const fetchItems = useCallback(async (nextMode) => {
-    // Cancel in-flight request
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -125,11 +135,10 @@ export default function Matches() {
 
     try {
       const response = await matchesService.list(nextMode, {
-        signal: ac.signal,
+        signal:    ac.signal,
         timeoutMs: REQUEST_TIMEOUT_MS,
       });
 
-      // Discard response if this request was superseded
       if (ac.signal.aborted) return;
 
       setTabState((prev) => ({
@@ -141,36 +150,26 @@ export default function Matches() {
         },
       }));
     } catch (err) {
-      // Ignore errors from aborted/superseded requests
       if (ac.signal.aborted) return;
       setError(err?.message || "Failed to load");
     } finally {
-      // Only clear loading if this is still the active request
-      if (!ac.signal.aborted) {
-        setLoading(false);
-      }
+      if (!ac.signal.aborted) setLoading(false);
     }
-  }, []); // No deps — nextMode is passed explicitly; setters are stable
+  }, []);
 
-  // Fetch whenever the active tab changes
   useEffect(() => {
     fetchItems(mode);
-    // Abort the in-flight request when the effect is cleaned up
     return () => abortRef.current?.abort();
   }, [mode, fetchItems]);
 
   // ── Background Revalidation ───────────────────────────────────────────────
 
-  /**
-   * Revalidate on window focus, tab visibility restore, or coming back online.
-   * A cooldown prevents hammering the API when multiple events fire together.
-   */
   useEffect(() => {
     const maybeRefetch = () => {
       const now = Date.now();
       if (now - lastRefetchTsRef.current < REFETCH_COOLDOWN_MS) return;
       lastRefetchTsRef.current = now;
-      fetchItems(mode);
+      fetchItems(modeRef.current);
     };
 
     const onVisibility = () => {
@@ -186,7 +185,7 @@ export default function Matches() {
       window.removeEventListener("online", maybeRefetch);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [mode, fetchItems]);
+  }, [fetchItems]);
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
@@ -198,43 +197,41 @@ export default function Matches() {
   const handleRetry = useCallback(() => fetchItems(mode), [fetchItems, mode]);
 
   /**
-   * Optimistically remove the item from the list and decrement the total.
-   * If the API call fails, show an alert (a toast system would be better).
+   * Optimistically remove a record from whichever tab is currently active.
+   * Uses the functional updater + modeRef so it never closes over a stale mode.
    */
-  const removeItemOptimistically = useCallback((targetId) => {
+  const removeItemOptimistically = useCallback((recordId) => {
+    const activeMode = modeRef.current;
     setTabState((prev) => {
-      const tab = prev[mode]; // captured via closure — always current
+      const tab = prev[activeMode];
       return {
         ...prev,
-        [mode]: {
+        [activeMode]: {
           ...tab,
-          items: tab.items.filter((i) => getItemId(i) !== targetId),
+          items: tab.items.filter((i) => getRecordId(i) !== recordId),
           total: Math.max(0, tab.total - 1),
         },
       };
     });
-  }, [mode]);
+  }, []); // modeRef is a ref — safe to omit from deps
 
   const handleLikeBack = useCallback(
     async (item) => {
-      const targetId = getItemId(item);
-      if (!targetId || actionLoading) return; // prevent double-action
+      const otherId  = getOtherUserId(item);
+      const recordId = getRecordId(item);
+      if (!otherId || actionLoading) return;
 
-      setActionLoading(targetId);
+      setActionLoading(otherId);
       try {
-        const result = await matchesService.likeBack(targetId, {
+        const result = await matchesService.likeBack(otherId, {
           timeoutMs: ACTION_TIMEOUT_MS,
         });
-
-        removeItemOptimistically(targetId);
-
+        removeItemOptimistically(recordId);
         if (result?.matched) {
-          // TODO: Replace alert with a toast/modal for better UX
-          console.info("🎉 It's a match with", targetId);
+          console.info("🎉 It's a match with", otherId);
         }
       } catch (err) {
         console.error("Like back failed:", err);
-        // TODO: Replace with toast notification
         alert(err?.message || "Failed to like back. Please try again.");
       } finally {
         setActionLoading(null);
@@ -245,16 +242,16 @@ export default function Matches() {
 
   const handlePass = useCallback(
     async (item) => {
-      const targetId = getItemId(item);
-      if (!targetId || actionLoading) return; // prevent double-action
+      const otherId  = getOtherUserId(item);
+      const recordId = getRecordId(item);
+      if (!otherId || actionLoading) return;
 
-      setActionLoading(targetId);
+      setActionLoading(otherId);
       try {
-        await matchesService.pass(targetId, { timeoutMs: ACTION_TIMEOUT_MS });
-        removeItemOptimistically(targetId);
+        await matchesService.pass(otherId, { timeoutMs: ACTION_TIMEOUT_MS });
+        removeItemOptimistically(recordId);
       } catch (err) {
         console.error("Pass failed:", err);
-        // TODO: Replace with toast notification
         alert(err?.message || "Failed to pass. Please try again.");
       } finally {
         setActionLoading(null);
@@ -263,11 +260,21 @@ export default function Matches() {
     [actionLoading, removeItemOptimistically]
   );
 
+  /**
+   * FIX: Navigate to a conversation with the correct destination.
+   * - Uses conversation_id when the API provides it (avoids conflating
+   *   match record IDs with conversation IDs).
+   * - Falls back to the OTHER USER's ID (not the record ID).
+   * - Message action is never blocked by like/pass loading state.
+   */
   const handleMessage = useCallback(
     (item) => {
-      // Prefer an existing conversation ID; fall back to the other user's ID
-      const dest = item.conversationId ?? item.other?.id ?? null;
-      if (dest) navigate(`/chat/${dest}`);
+      const dest = getConversationDest(item);
+      if (!dest) {
+        console.warn("handleMessage: could not determine destination", item);
+        return;
+      }
+      navigate(`/chat/${dest}`);
     },
     [navigate]
   );
@@ -281,8 +288,6 @@ export default function Matches() {
         <div className="mx-auto max-w-md">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold">Matches</h1>
-
-            {/* Tab toggle */}
             <TabToggle
               mode={mode}
               onSelect={setMode}
@@ -290,7 +295,6 @@ export default function Matches() {
               matchesCount={tabState.matches.total}
             />
           </div>
-
           <p className="mt-2 text-sm text-gray-500">
             {mode === "likes"
               ? "People who liked you — like back to match!"
@@ -309,14 +313,10 @@ export default function Matches() {
           <EmptyState mode={mode} />
         ) : (
           <>
-            {/* Premium limit banner */}
             <AnimatePresence>
-              {limited && (
-                <PremiumBanner total={total} mode={mode} />
-              )}
+              {limited && <PremiumBanner total={total} mode={mode} />}
             </AnimatePresence>
 
-            {/* Grouped item grid */}
             <AnimatePresence mode="popLayout">
               {groups.map((group) => (
                 <section key={group.label} className="mb-6">
@@ -328,12 +328,13 @@ export default function Matches() {
                     <AnimatePresence mode="popLayout">
                       {group.items.map((item) => {
                         const other    = item.other ?? item;
-                        const otherId  = getItemId(item);
+                        const otherId  = getOtherUserId(item);
+                        const recordId = getRecordId(item);
                         const isActing = actionLoading === otherId;
 
                         return (
                           <motion.div
-                            key={item.id ?? otherId}
+                            key={recordId ?? otherId}
                             layout
                             initial={{ opacity: 0, scale: 0.9 }}
                             animate={{ opacity: 1, scale: 1 }}
@@ -353,8 +354,9 @@ export default function Matches() {
                               to={`/profile/${otherId}`}
                               mode={mode}
                               isActing={isActing}
-                              // Disable all action buttons while any action is pending
-                              disabled={Boolean(actionLoading)}
+                              // BUG FIX: Only disable like/pass buttons during
+                              // actions — never disable the Message button.
+                              likePassDisabled={Boolean(actionLoading)}
                               onPass={() => handlePass(item)}
                               onLike={() => handleLikeBack(item)}
                               onMessage={() => handleMessage(item)}
@@ -376,10 +378,6 @@ export default function Matches() {
 
 // ─── Tab Toggle ───────────────────────────────────────────────────────────────
 
-/**
- * Segmented control for switching between "likes" and "matches" tabs.
- * Shows a badge count for each tab when > 0.
- */
 function TabToggle({ mode, onSelect, likesCount, matchesCount }) {
   const tabs = [
     { key: "likes",   label: "Likes",   count: likesCount },
@@ -421,13 +419,10 @@ function PremiumBanner({ total, mode }) {
       className="mb-4 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-4"
     >
       <div className="flex items-center gap-3">
-        {/* Icon */}
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
           <StarIcon className="h-5 w-5 text-amber-600" />
         </div>
-
-        {/* Copy */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-amber-800">
             You have {total} {mode}!
           </p>
@@ -435,11 +430,9 @@ function PremiumBanner({ total, mode }) {
             Upgrade to Premium to see all.
           </p>
         </div>
-
-        {/* CTA */}
         <Link
           to="/premium"
-          className="shrink-0 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:shadow-md transition-shadow"
+          className="shrink-0 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-shadow hover:shadow-md"
         >
           Upgrade
         </Link>
@@ -451,18 +444,18 @@ function PremiumBanner({ total, mode }) {
 // ─── Match Card ───────────────────────────────────────────────────────────────
 
 /**
- * @param {string}   name
- * @param {number}   [age]
- * @param {string}   [city]
- * @param {string}   [img]
- * @param {boolean}  isSuper
- * @param {string}   to          - Profile link href
+ * @param {string}          name
+ * @param {number}          [age]
+ * @param {string}          [city]
+ * @param {string}          [img]
+ * @param {boolean}         isSuper
+ * @param {string}          to               - Profile link href
  * @param {"likes"|"matches"} mode
- * @param {boolean}  isActing    - This specific card's action is in-flight
- * @param {boolean}  disabled    - Any card's action is in-flight (block all)
- * @param {Function} onPass
- * @param {Function} onLike
- * @param {Function} onMessage
+ * @param {boolean}         isActing         - This card's action is in-flight
+ * @param {boolean}         likePassDisabled - Any like/pass is in-flight (block like+pass only)
+ * @param {Function}        onPass
+ * @param {Function}        onLike
+ * @param {Function}        onMessage        - Never disabled
  */
 function MatchCard({
   name,
@@ -473,12 +466,11 @@ function MatchCard({
   to,
   mode,
   isActing,
-  disabled,
+  likePassDisabled,
   onPass,
   onLike,
   onMessage,
 }) {
-  // Stable fallback avatar so broken URLs degrade gracefully
   const fallbackSrc = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`;
 
   const handleImgError = (e) => {
@@ -501,23 +493,18 @@ function MatchCard({
             loading="lazy"
           />
 
-          {/* Super-like badge */}
           {isSuper && (
             <div className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg">
               <StarIcon className="h-4 w-4 text-white" />
             </div>
           )}
 
-          {/* Top vignette */}
           <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/20 to-transparent" />
-          {/* Bottom vignette */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/60 via-black/30 to-transparent" />
 
-          {/* Name / age / city */}
           <div className="absolute bottom-14 left-3 right-3 text-white">
             <div className="truncate text-base font-semibold drop-shadow">
-              {name}
-              {age != null ? `, ${age}` : ""}
+              {name}{age != null ? `, ${age}` : ""}
             </div>
             {city && (
               <div className="flex items-center gap-1 text-xs text-white/80">
@@ -533,14 +520,13 @@ function MatchCard({
       <div className="flex items-center justify-between bg-gray-50 px-3 py-2.5">
         {mode === "likes" ? (
           <>
-            {/* Pass button */}
+            {/* Pass */}
             <button
               onClick={onPass}
-              disabled={disabled}
+              disabled={likePassDisabled}
               className="grid h-10 w-10 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Pass"
             >
-              {/* Show spinner on the pass button too when THIS card is acting */}
               {isActing ? (
                 <Spinner className="h-5 w-5 text-gray-400" />
               ) : (
@@ -550,10 +536,10 @@ function MatchCard({
 
             <div className="h-6 w-px bg-gray-200" />
 
-            {/* Like-back button */}
+            {/* Like back */}
             <button
               onClick={onLike}
-              disabled={disabled}
+              disabled={likePassDisabled}
               className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-green-400 to-green-600 text-white shadow-sm transition-shadow hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Like back"
             >
@@ -565,11 +551,15 @@ function MatchCard({
             </button>
           </>
         ) : (
-          /* Message button */
+          /*
+           * FIX: Message button is NEVER disabled.
+           * Navigating to chat does not conflict with like/pass actions,
+           * and blocking it caused the "opens wrong user" confusion because
+           * users would click repeatedly and land on a queued navigation.
+           */
           <button
             onClick={onMessage}
-            disabled={disabled}
-            className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800"
           >
             <ChatIcon className="h-4 w-4" />
             Message
@@ -582,26 +572,17 @@ function MatchCard({
 
 // ─── Skeleton Grid ────────────────────────────────────────────────────────────
 
-/**
- * Placeholder grid shown while the list is loading.
- * Mirrors the real card layout — including the correct action row for the mode.
- */
 function SkeletonGrid({ count = 6, mode = "likes" }) {
   return (
     <div className="animate-pulse">
-      {/* Fake section label */}
       <div className="mb-3 h-4 w-20 rounded bg-gray-200" />
-
       <div className="grid grid-cols-2 gap-3">
         {Array.from({ length: count }).map((_, i) => (
           <div
             key={i}
             className="overflow-hidden rounded-2xl border border-gray-100 bg-white"
           >
-            {/* Photo placeholder */}
             <div className="aspect-[3/4] w-full bg-gray-200" />
-
-            {/* Action row placeholder */}
             <div className="flex items-center justify-between bg-gray-50 px-3 py-2.5">
               {mode === "likes" ? (
                 <>
@@ -632,7 +613,6 @@ function EmptyState({ mode }) {
           <PeopleIcon className="h-8 w-8 text-violet-400" />
         )}
       </div>
-
       <h3 className="text-lg font-semibold text-gray-800">
         {mode === "likes" ? "No likes yet" : "No matches yet"}
       </h3>
@@ -641,7 +621,6 @@ function EmptyState({ mode }) {
           ? "Keep swiping! Your next like could be waiting."
           : "Like some profiles to start matching!"}
       </p>
-
       <Link
         to="/discover"
         className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-violet-700"
@@ -661,10 +640,8 @@ function ErrorState({ error, onRetry }) {
       <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
         <WarningIcon className="h-8 w-8 text-red-400" />
       </div>
-
       <h3 className="text-lg font-semibold text-gray-800">Failed to load</h3>
       <p className="mt-2 text-sm text-gray-500">{error}</p>
-
       <button
         onClick={onRetry}
         className="mt-4 inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-6 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
@@ -675,22 +652,13 @@ function ErrorState({ error, onRetry }) {
   );
 }
 
-// ─── Inline SVG Icon Components ───────────────────────────────────────────────
-// Extracted so they can be reused without duplication across card / states.
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
 function Spinner({ className = "h-5 w-5" }) {
   return (
     <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
-      <circle
-        className="opacity-25"
-        cx="12" cy="12" r="10"
-        stroke="currentColor" strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-      />
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   );
 }
@@ -704,13 +672,17 @@ function StarIcon({ className = "h-5 w-5" }) {
 }
 
 function HeartIcon({ className = "h-5 w-5", filled = false }) {
-  return filled ? (
+  return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-    </svg>
-  ) : (
-    <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+      {filled ? (
+        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+      ) : (
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M12 5.72C10.81 4.05 8.98 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.31C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3c-1.48 0-3.31 1.05-4.5 2.72z"
+        />
+      )}
     </svg>
   );
 }
