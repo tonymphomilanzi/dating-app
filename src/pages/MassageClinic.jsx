@@ -781,6 +781,7 @@ function ClinicBody({
 
 function ClinicCard({ clinic }) {
   // Parse opening hours from JSON string if needed
+    const navigate = useNavigate(); // add this import at the top
   const hours = (() => {
     try {
       const parsed = typeof clinic.opening_hours === "string"
@@ -797,8 +798,11 @@ function ClinicCard({ clinic }) {
   })();
 
   return (
-    <div className="flex items-stretch gap-3 rounded-2xl border border-gray-200
-      bg-white p-3 shadow-sm hover:shadow-md transition-shadow">
+       <div
+      onClick={() => navigate(`/massage-clinics/${clinic.id}`, { state: { clinic } })}
+      className="flex items-stretch gap-3 rounded-2xl border border-gray-200
+        bg-white p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+    >
 
       {/* Cover image */}
       <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br
