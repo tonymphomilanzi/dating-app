@@ -47,8 +47,7 @@ import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 import { Toaster } from "@/components/ui/sonner";
 import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
-
-
+import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 export default function App() {
   return (
     <AuthFlowProvider>
@@ -112,6 +111,7 @@ export default function App() {
               <Route path="/events/:id"           element={<EventDetail />} />
               <Route path="/calendar"             element={<Calendar />} />
               <Route path="/massage-clinics/new"  element={<CreateMassageClinic />} />
+              <Route path="/massage-clinics/:id"  element={<MassageClinicDetail />} />
             </Route>
           </Route>
 
