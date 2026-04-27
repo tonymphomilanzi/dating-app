@@ -16,7 +16,7 @@ import { updateProfileLocation } from "../utils/location.js";
 import { DiscoverCache } from "../lib/discoverCache.js";
 import { useRevalidate } from "../hooks/useRevalidate.js";
 import { useGeolocation } from "../hooks/useGeolocation.js";
-import { useNotifications } from '../hooks/useNotifications'; // Add this import
+import { useNotifications } from '../hooks/useNotifications';
 
 /* ================================================================
    CONSTANTS
@@ -51,6 +51,7 @@ export default function Discover() {
 
   // ── Stories ─────────────────────────────────────────────────────
   const [stories, setStories] = useState({ users: [], mine: false });
+  const [storiesLoading, setStoriesLoading] = useState(true);
 
   // ── Refs ────────────────────────────────────────────────────────
   const reqId            = useRef({});
@@ -59,9 +60,6 @@ export default function Discover() {
   const initializedModes = useRef(new Set());
 
   // ── Derived state ────────────────────────────────────────────────
-  // `loading` defaults to `false` when profilesMap already has data for this
-  // mode — avoids the loading flash when switching back to an already-loaded tab.
-  // It defaults to `true` only when we have no data yet.
   const profiles = profilesMap[mode] ?? [];
   const loading  = loadingMap[mode]  ?? !profilesMap[mode];
   const error    = errorMap[mode]    ?? "";
@@ -89,8 +87,6 @@ export default function Discover() {
     return null;
   }, [geo, profile?.lat, profile?.lng]);
 
-  // Ref mirror — lets loadProfiles read the latest location without
-  // being in its dependency array (prevents recreation on every GPS tick)
   const myLocRef = useRef(myLoc);
   useEffect(() => { myLocRef.current = myLoc; }, [myLoc]);
 
@@ -116,7 +112,7 @@ export default function Discover() {
           signal: abortCtrls.current[targetMode].signal,
         });
 
-        if (id !== reqId.current[targetMode]) return; // stale
+        if (id !== reqId.current[targetMode]) return;
 
         const list = Array.isArray(data) ? data : [];
         setProfilesMap((prev) => ({ ...prev, [targetMode]: list }));
@@ -160,23 +156,16 @@ export default function Discover() {
   );
 
   // ── Effects ─────────────────────────────────────────────────────
-
-  // ✅ FIX: Reset initializedModes on UNMOUNT so that navigating away
-  // and back causes a fresh init. Without this, coming back from another
-  // route skips initMode entirely and the page stays blank.
   useEffect(() => {
     return () => {
       initializedModes.current = new Set();
-      // Abort all in-flight requests on unmount
       Object.values(abortCtrls.current).forEach((ac) => ac?.abort());
       abortCtrls.current = {};
     };
-  }, []); // runs once — cleanup fires on unmount
+  }, []);
 
-  // Init active tab on mode change
   useEffect(() => { initMode(mode); }, [mode, initMode]);
 
-  // Reset all per-tab state when the user changes
   useEffect(() => {
     initializedModes.current = new Set();
     setProfilesMap({});
@@ -184,19 +173,40 @@ export default function Discover() {
     setErrorMap   ({});
   }, [userId]);
 
-  // Load stories once per mount
+  // ✅ Load stories with actual media
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      storiesService.listActiveUsers(30).catch(() => []),
-      storiesService.hasMyActive().catch(() => false),
-    ]).then(([users, mine]) => {
-      if (!cancelled) setStories({ users, mine });
-    });
-    return () => { cancelled = true; };
+    
+    const loadStories = async () => {
+      setStoriesLoading(true);
+      try {
+        const [users, mine] = await Promise.all([
+          storiesService.listActiveUsers(30),
+          storiesService.hasMyActive(),
+        ]);
+
+        if (!cancelled) {
+          setStories({ users: users || [], mine });
+        }
+      } catch (error) {
+        console.error('Failed to load stories:', error);
+        if (!cancelled) {
+          setStories({ users: [], mine: false });
+        }
+      } finally {
+        if (!cancelled) {
+          setStoriesLoading(false);
+        }
+      }
+    };
+
+    loadStories();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Background revalidation (stable ref — no listener churn)
   const silentRefetch = useCallback(
     () => loadProfiles(mode, true),
     [mode, loadProfiles]
@@ -215,21 +225,27 @@ export default function Discover() {
   return (
     <div className="flex min-h-screen flex-col bg-white text-gray-900">
 
-      <header className="px-4 pt-4">
+      <header className="px-4 pt-4 safe-top">
         <div className="mb-4 flex items-center justify-between">
 
           {/* Left — Messages · Notifications · Filter */}
           <div className="flex items-center gap-2">
-            <IconButton icon="messages" aria-label="Messages"
-              onClick={() => navigate("/messages")} />
-             <IconButton 
-        icon="bell" 
-        aria-label="Notifications" 
-        count={unreadCount}
-        onClick={() => navigate("/notifications")} 
-      />
-            <IconButton icon="filter" aria-label="Filter"
-              onClick={() => navigate("/filters")} />
+            <IconButton 
+              icon="messages" 
+              aria-label="Messages"
+              onClick={() => navigate("/messages")} 
+            />
+            <IconButton 
+              icon="bell" 
+              aria-label="Notifications" 
+              count={unreadCount}
+              onClick={() => navigate("/notifications")} 
+            />
+            <IconButton 
+              icon="filter" 
+              aria-label="Filter"
+              onClick={() => navigate("/filters")} 
+            />
           </div>
 
           {/* Centre */}
@@ -251,13 +267,15 @@ export default function Discover() {
           </Link>
         </div>
 
+        {/* ✅ Stories with actual media */}
         <StoriesRow
           data={stories}
+          loading={storiesLoading}
           onMine={() => navigate("/stories/new")}
           onUser={(id) => navigate(`/stories/${id}`)}
         />
 
-        <h1 className="text-xl font-bold mt-2">
+        <h1 className="text-xl font-bold mt-4">
           Find Your <span className="text-violet-600">Matches</span>
         </h1>
 
@@ -280,9 +298,6 @@ export default function Discover() {
 
       <main className="flex-1 px-4 py-6">
         {loading && !profiles.length ? (
-          // ✅ Replaced "Scanning for matches…" with instant skeleton cards
-          // so the UI feels responsive immediately instead of showing a
-          // full-page spinner that can take 2-3 seconds.
           <ProfileSkeleton />
         ) : error ? (
           <ErrorState error={error} onRetry={handleRetry} />
@@ -383,47 +398,141 @@ const LocationStatus = memo(function LocationStatus({ geo, status }) {
 });
 
 /* ================================================================
-   STORIES ROW
+   STORIES ROW - SHOWS ACTUAL STORY MEDIA
    ================================================================ */
 
-const StoriesRow = memo(function StoriesRow({ data, onMine, onUser }) {
+const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
+  if (loading) {
+    return (
+      <div className="no-scrollbar flex gap-4 overflow-x-auto py-3">
+        <div className="flex flex-col items-center gap-2 shrink-0">
+          <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse" />
+          <div className="h-2 w-12 rounded-full bg-gray-200 animate-pulse" />
+        </div>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="flex flex-col items-center gap-2 shrink-0">
+            <div className="h-16 w-16 rounded-full bg-gray-200 animate-pulse" />
+            <div className="h-2 w-12 rounded-full bg-gray-200 animate-pulse" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="no-scrollbar flex gap-4 overflow-x-auto py-2">
-      <button onClick={onMine}
-        className="flex flex-col items-center gap-1 shrink-0"
-        aria-label="My story">
-        <div className={`grid h-14 w-14 place-items-center rounded-full border-2
-          ${data.mine ? "border-violet-600 p-0.5" : "border-dashed border-gray-300"}`}>
-          <div className="grid h-full w-full place-items-center rounded-full
-            bg-gray-50 text-violet-600">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24"
+    <div className="no-scrollbar flex gap-4 overflow-x-auto py-3">
+      {/* My Story Button */}
+      <button 
+        onClick={onMine}
+        className="flex flex-col items-center gap-2 shrink-0"
+        aria-label="My story"
+      >
+        <div className={`relative grid h-16 w-16 place-items-center rounded-full border-2 transition-all ${
+          data.mine 
+            ? "border-violet-600 bg-gradient-to-br from-violet-100 to-fuchsia-100" 
+            : "border-dashed border-gray-300 bg-gray-50"
+        }`}>
+          <div className="grid h-full w-full place-items-center rounded-full text-violet-600">
+            <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24"
               stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
           </div>
+          {data.mine && (
+            <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-violet-600 border-2 border-white grid place-items-center">
+              <svg className="h-3 w-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            </div>
+          )}
         </div>
-        <span className="text-[10px] font-medium text-gray-500">My Story</span>
+        <span className="text-[11px] font-semibold text-gray-600">
+          {data.mine ? "My Story" : "Add Story"}
+        </span>
       </button>
 
-      {data.users.map((u) => (
-        <button key={u.user_id} onClick={() => onUser(u.user_id)}
-          className="flex flex-col items-center gap-1 shrink-0"
-          aria-label={`${u.name}'s story`}>
-          <img src={u.avatar || "/me.jpg"} alt={u.name}
-            className="h-14 w-14 rounded-full border-2 border-violet-200 p-0.5 object-cover" />
-          <span className="text-[10px] font-medium text-gray-600 w-14 truncate text-center">
-            {u.name?.split(" ")[0]}
-          </span>
-        </button>
+      {/* User Stories - Show Actual Media */}
+      {data.users.map((story) => (
+        <StoryThumbnail
+          key={story.user_id}
+          story={story}
+          onClick={() => onUser(story.user_id)}
+        />
       ))}
     </div>
   );
 });
 
 /* ================================================================
-   PROFILE SKELETON  — replaces the old "Scanning for matches…" spinner
-   Renders instantly, matches the real SwipeDeck card shape so there's
-   no layout shift when data arrives.
+   STORY THUMBNAIL - Individual Story with Media Preview
+   ================================================================ */
+
+const StoryThumbnail = memo(function StoryThumbnail({ story, onClick }) {
+  const [mediaError, setMediaError] = useState(false);
+  const isVideo = story.media_type === 'video';
+
+  // Fallback to avatar if media fails to load
+  const thumbnailSrc = mediaError ? (story.avatar || "/me.jpg") : story.media_url;
+
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center gap-2 shrink-0 group"
+      aria-label={`${story.name}'s story`}
+    >
+      <div className="relative">
+        {/* Story Ring */}
+        <div className="rounded-full p-[2px] bg-gradient-to-tr from-violet-600 via-fuchsia-500 to-pink-500 shadow-lg">
+          <div className="rounded-full p-[3px] bg-white">
+            {/* Story Media */}
+            <div className="h-16 w-16 rounded-full overflow-hidden bg-gray-100">
+              {isVideo && !mediaError ? (
+                <div className="relative h-full w-full">
+                  <video
+                    src={thumbnailSrc}
+                    className="h-full w-full object-cover"
+                    muted
+                    playsInline
+                    onError={() => setMediaError(true)}
+                  />
+                  {/* Video play indicator */}
+                  <div className="absolute inset-0 bg-black/20 grid place-items-center">
+                    <div className="h-6 w-6 rounded-full bg-white/90 grid place-items-center">
+                      <svg className="h-3 w-3 text-gray-900 ml-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src={thumbnailSrc}
+                  alt={story.name}
+                  className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-300"
+                  onError={() => setMediaError(true)}
+                  loading="lazy"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Unread indicator (optional - can track if user has seen this story) */}
+        {story.unread && (
+          <div className="absolute top-0 right-0 h-3 w-3 rounded-full bg-violet-600 border-2 border-white" />
+        )}
+      </div>
+
+      {/* Name */}
+      <span className="text-[11px] font-semibold text-gray-700 w-16 truncate text-center">
+        {story.name?.split(" ")[0] || "User"}
+      </span>
+    </button>
+  );
+});
+
+/* ================================================================
+   PROFILE SKELETON
    ================================================================ */
 
 function ProfileSkeleton() {
@@ -455,7 +564,7 @@ function ProfileSkeleton() {
         </div>
       </div>
 
-      {/* Subtle hint text — brief, not "scanning" language */}
+      {/* Hint text */}
       <p className="text-xs text-gray-400 font-medium">Finding people near you…</p>
     </div>
   );
@@ -481,7 +590,7 @@ const ErrorState = ({ error, onRetry }) => (
     </p>
     <button
       onClick={onRetry}
-      className="mt-4 text-xs font-bold text-violet-600 uppercase tracking-widest"
+      className="mt-4 text-xs font-bold text-violet-600 uppercase tracking-widest hover:text-violet-700 transition-colors"
     >
       Try Again
     </button>
@@ -494,18 +603,30 @@ const ErrorState = ({ error, onRetry }) => (
 
 const LocationPrompt = ({ onEnable, loading }) => (
   <div className="mb-6 flex items-center justify-between rounded-2xl
-    bg-violet-600 p-4 text-white shadow-lg shadow-violet-200">
-    <div>
+    bg-gradient-to-r from-violet-600 to-fuchsia-600 p-4 text-white shadow-lg">
+    <div className="flex-1">
       <p className="text-sm font-bold">Nearby Mode</p>
-      <p className="text-xs opacity-80">Enable location to find local matches.</p>
+      <p className="text-xs opacity-90 mt-0.5">Enable location to find local matches.</p>
     </div>
     <button
       onClick={onEnable}
       disabled={loading}
       className="rounded-full bg-white px-4 py-2 text-xs font-bold text-violet-600
-        active:scale-95 transition-transform disabled:opacity-60"
+        hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-60 shadow-sm"
     >
       {loading ? "Locating…" : "Enable"}
     </button>
   </div>
 );
+
+/* ================================================================
+   KEYFRAMES FOR SHIMMER ANIMATION
+   ================================================================ */
+
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes shimmer {
+    100% { transform: translateX(100%); }
+  }
+`;
+document.head.appendChild(style);
