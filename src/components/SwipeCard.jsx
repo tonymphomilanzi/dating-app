@@ -2,9 +2,16 @@
 import { motion, useMotionValue, useTransform, animate } from "framer-motion";
 import { useRef, useState, useCallback, useEffect } from "react";
 
-/* ---------------- Constants ---------------- */
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
+
 const SWIPE_THRESHOLD = 100;
 const VELOCITY_THRESHOLD = 400;
+
+/* ================================================================
+   HELPERS
+   ================================================================ */
 
 function formatDistance(distanceKm) {
   if (distanceKm == null || !Number.isFinite(distanceKm)) return null;
@@ -14,10 +21,14 @@ function formatDistance(distanceKm) {
   return `${Math.round(distance)}km`;
 }
 
+/* ================================================================
+   MAIN COMPONENT
+   ================================================================ */
+
 export default function SwipeCard({
   person,
   isActive = true,
-  canSwipe = true,         // NEW
+  canSwipe = true,
   onSwipe,
   onOpen,
   onDragStateChange,
@@ -25,38 +36,43 @@ export default function SwipeCard({
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
-  //const [isAnimating, setIsAnimating] = useState(false);
- // const [showSuperLike, setShowSuperLike] = useState(false);
+  // ── State ──────────────────────────────────────────────────────
+  const isDraggingRef = useRef(false);
+  const cardRef = useRef(null);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showSuperLike, setShowSuperLike] = useState(false);
 
-
-   // Reset transforms/state whenever this card becomes active or the person changes
+  // ── Reset state when card becomes active or person changes ────
   useEffect(() => {
     if (isActive) {
+      console.log("🔄 Resetting card state for:", person?.display_name);
       x.set(0);
       y.set(0);
       setIsAnimating(false);
       setShowSuperLike(false);
+      isDraggingRef.current = false;
     }
-  }, [isActive, person?.id, x, y]); // NEW
+  }, [isActive, person?.id, x, y]);
 
-
-
-
-  // Transforms
+  // ── Transforms ─────────────────────────────────────────────────
   const rotate = useTransform(x, [-300, 0, 300], [-18, 0, 18]);
-  const cardScale = useTransform(x, [-300, -100, 0, 100, 300], [0.95, 0.98, 1, 0.98, 0.95]);
+  const cardScale = useTransform(
+    x,
+    [-300, -100, 0, 100, 300],
+    [0.95, 0.98, 1, 0.98, 0.95]
+  );
 
-  // LIKE stamp
+  // LIKE stamp transforms
   const likeOpacity = useTransform(x, [0, 30, 100], [0, 0.5, 1]);
   const likeScale = useTransform(x, [0, 30, 100], [0.6, 0.8, 1]);
   const likeRotate = useTransform(x, [0, 150], [-25, -12]);
 
-  // NOPE stamp
+  // NOPE stamp transforms
   const nopeOpacity = useTransform(x, [-100, -30, 0], [1, 0.5, 0]);
   const nopeScale = useTransform(x, [-100, -30, 0], [1, 0.8, 0.6]);
   const nopeRotate = useTransform(x, [-150, 0], [12, 25]);
 
-  // Background overlays
+  // Background color overlays
   const bgGreen = useTransform(
     x,
     [0, 50, 150],
@@ -68,12 +84,7 @@ export default function SwipeCard({
     ["rgba(239,68,68,0.25)", "rgba(239,68,68,0.1)", "rgba(239,68,68,0)"]
   );
 
-  // State
-  const isDraggingRef = useRef(false);
-  const cardRef = useRef(null);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [showSuperLike, setShowSuperLike] = useState(false);
-
+  // ── Person data ────────────────────────────────────────────────
   const imgSrc =
     person.avatar_url ||
     person.photo ||
@@ -84,7 +95,7 @@ export default function SwipeCard({
   const name = person.display_name || person.name || "Member";
   const distanceText = formatDistance(person.distance_km);
 
-  // Prevent default touch behaviors during drag
+  // ── Prevent default touch behaviors ───────────────────────────
   useEffect(() => {
     if (!isActive) return;
 
@@ -105,13 +116,18 @@ export default function SwipeCard({
     };
   }, [isActive]);
 
-  // Throw card animation
+  // ── Throw card animation ───────────────────────────────────────
   const throwOut = useCallback(
     async (direction) => {
-      if (isAnimating) return;
-       if (isAnimating || !canSwipe) return; // NEW
+      if (isAnimating || !canSwipe) {
+        console.log("⛔ Cannot throw - animating or blocked");
+        return;
+      }
+
+      console.log("🚀 Throwing card:", direction);
       setIsAnimating(true);
       onDragStateChange?.(false);
+      isDraggingRef.current = false;
 
       if (direction === "super") {
         setShowSuperLike(true);
@@ -149,32 +165,41 @@ export default function SwipeCard({
       await Promise.all(animations);
       onSwipe?.(direction);
     },
-    [isAnimating, x, y, onSwipe, onDragStateChange]
+    [isAnimating, canSwipe, x, y, onSwipe, onDragStateChange]
   );
 
-  // Snap back animation
+  // ── Snap back animation ────────────────────────────────────────
   const snapBack = useCallback(async () => {
+    console.log("↩️ Snapping back");
     onDragStateChange?.(false);
+    isDraggingRef.current = false;
+
     await Promise.all([
       animate(x, 0, { type: "spring", stiffness: 500, damping: 30 }),
       animate(y, 0, { type: "spring", stiffness: 500, damping: 30 }),
     ]);
   }, [x, y, onDragStateChange]);
 
-  // Handle drag start
+  // ── Handle drag start ──────────────────────────────────────────
   const handleDragStart = useCallback(() => {
-    if (!canSwipe) return; // NEW
+    if (!canSwipe) {
+      console.log("⛔ Drag blocked - cannot swipe");
+      return;
+    }
+    console.log("👆 Drag start");
     isDraggingRef.current = true;
     onDragStateChange?.(true);
-  }, [onDragStateChange]);
+  }, [canSwipe, onDragStateChange]);
 
-  // Handle drag end
+  // ── Handle drag end ────────────────────────────────────────────
   const handleDragEnd = useCallback(
     async (_, info) => {
-      isDraggingRef.current = false;
+      console.log("👆 Drag end", info.offset);
 
-        if (!canSwipe) {        // NEW: if blocked, snap back to safe state
+      if (!canSwipe) {
+        console.log("⛔ Swipe blocked - snapping back");
         onDragStateChange?.(false);
+        isDraggingRef.current = false;
         await Promise.all([
           animate(x, 0, { type: "spring", stiffness: 500, damping: 30 }),
           animate(y, 0, { type: "spring", stiffness: 500, damping: 30 }),
@@ -183,12 +208,15 @@ export default function SwipeCard({
       }
 
       if (isAnimating) {
+        console.log("⏳ Already animating");
         onDragStateChange?.(false);
+        isDraggingRef.current = false;
         return;
       }
 
       const { offset, velocity } = info;
 
+      // Check thresholds
       if (offset.x > SWIPE_THRESHOLD || velocity.x > VELOCITY_THRESHOLD) {
         return throwOut("right");
       }
@@ -198,29 +226,38 @@ export default function SwipeCard({
 
       await snapBack();
     },
-    [isAnimating, throwOut, snapBack, onDragStateChange]
+    [canSwipe, isAnimating, throwOut, snapBack, onDragStateChange, x, y]
   );
 
-  // Handle card click (open profile)
+  // ── Handle card click (open profile) ───────────────────────────
   const handleCardClick = useCallback(
     (e) => {
       // Don't open if clicking on buttons area
-      if (e.target.closest(".action-buttons")) return;
+      if (e.target.closest(".action-buttons")) {
+        console.log("🔘 Clicked button area - ignoring");
+        return;
+      }
       if (!isDraggingRef.current && !isAnimating && isActive) {
+        console.log("👤 Opening profile");
         onOpen?.(person);
       }
     },
     [isAnimating, isActive, onOpen, person]
   );
 
-  // Button handlers - stop propagation and prevent drag
+  // ── Button handlers ────────────────────────────────────────────
   const handleButtonClick = useCallback(
     (e, action) => {
       e.preventDefault();
       e.stopPropagation();
-       if (isAnimating || !canSwipe) return; // NEW
-  
-      
+
+      if (isAnimating || !canSwipe) {
+        console.log("⛔ Button blocked");
+        return;
+      }
+
+      console.log("🔘 Button:", action);
+
       if (action === "nope") {
         throwOut("left");
       } else if (action === "like") {
@@ -229,10 +266,13 @@ export default function SwipeCard({
         throwOut("super");
       }
     },
-    [isAnimating, throwOut]
+    [isAnimating, canSwipe, throwOut]
   );
 
-  // Non-active card (stacked behind)
+  // ══════════════════════════════════════════════════════════════
+  // RENDER: NON-ACTIVE CARD (stacked behind)
+  // ══════════════════════════════════════════════════════════════
+
   if (!isActive) {
     return (
       <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-lg select-none pointer-events-none">
@@ -253,20 +293,28 @@ export default function SwipeCard({
     );
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // RENDER: ACTIVE CARD
+  // ══════════════════════════════════════════════════════════════
+
   return (
     <motion.div
       ref={cardRef}
-       drag={canSwipe ? "x" : false}       // NEW
-      drag="x"
+      drag={canSwipe ? "x" : false}
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.9}
       dragMomentum={false}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onClick={handleCardClick}
-      style={{ x, y, rotate, scale: cardScale, cursor: canSwipe ? "grab" : "default" }} // NEW
-      style={{ x, y, rotate, scale: cardScale }}
-      className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-xl select-none touch-none cursor-grab active:cursor-grabbing"
+      style={{
+        x,
+        y,
+        rotate,
+        scale: cardScale,
+        cursor: canSwipe ? (isDraggingRef.current ? "grabbing" : "grab") : "default",
+      }}
+      className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-gray-200 shadow-xl select-none touch-none"
     >
       {/* Photo */}
       <img
@@ -417,7 +465,9 @@ export default function SwipeCard({
             className="absolute left-1/2 top-1/2 mt-16 -translate-x-1/2"
           >
             <div className="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2 shadow-xl">
-              <span className="text-xl font-black tracking-wider text-white">SUPER LIKE</span>
+              <span className="text-xl font-black tracking-wider text-white">
+                SUPER LIKE
+              </span>
             </div>
           </motion.div>
         </motion.div>
@@ -431,7 +481,9 @@ export default function SwipeCard({
           className="flex items-baseline gap-2"
         >
           <span className="text-2xl font-bold drop-shadow-lg">{name}</span>
-          {person.age && <span className="text-xl font-light text-white/90">{person.age}</span>}
+          {person.age && (
+            <span className="text-xl font-light text-white/90">{person.age}</span>
+          )}
         </motion.div>
 
         {person.city && (
@@ -461,19 +513,18 @@ export default function SwipeCard({
       </div>
 
       {/* Action buttons */}
-      <div className="action-buttons absolute inset-x-0 bottom-4 flex justify-center px-4 z-40">
+      <div className="action-buttons absolute inset-x-0 bottom-4 flex justify-center px-4 z-50">
         <div className="flex w-full max-w-xs items-center justify-center gap-4">
           {/* Nope button */}
           <motion.button
             type="button"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: canSwipe ? 1.1 : 1 }}
+            whileTap={{ scale: canSwipe ? 0.9 : 1 }}
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "nope")}
-             disabled={isAnimating || !canSwipe}  // NEW
-            disabled={isAnimating}
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
+            disabled={isAnimating || !canSwipe}
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ touchAction: "manipulation" }}
           >
             <svg
@@ -490,13 +541,13 @@ export default function SwipeCard({
           {/* Super Like button */}
           <motion.button
             type="button"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: canSwipe ? 1.1 : 1 }}
+            whileTap={{ scale: canSwipe ? 0.9 : 1 }}
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "super")}
-           disabled={isAnimating || !canSwipe}  // NEW
-            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 disabled:opacity-50"
+            disabled={isAnimating || !canSwipe}
+            className="relative grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-xl shadow-blue-300/50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ touchAction: "manipulation" }}
           >
             <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400 opacity-20" />
@@ -508,13 +559,13 @@ export default function SwipeCard({
           {/* Like button */}
           <motion.button
             type="button"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: canSwipe ? 1.1 : 1 }}
+            whileTap={{ scale: canSwipe ? 0.9 : 1 }}
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={(e) => handleButtonClick(e, "like")}
-            disabled={isAnimating || !canSwipe}  // NEW
-            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50"
+            disabled={isAnimating || !canSwipe}
+            className="relative grid h-14 w-14 place-items-center rounded-full bg-white shadow-xl overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ touchAction: "manipulation" }}
           >
             <svg className="h-7 w-7 text-green-500" fill="currentColor" viewBox="0 0 24 24">

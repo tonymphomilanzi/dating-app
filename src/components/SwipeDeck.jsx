@@ -7,25 +7,29 @@ import MatchModal from "./MatchModal.jsx";
 import { swipesService } from "../services/swipes.service.js";
 import { kmBetween } from "../utils/geo.js";
 
-/* ---------------- Helpers ---------------- */
- // Add alongside helpers
+/* ================================================================
+   HELPERS
+   ================================================================ */
+
 const toNum = (v) => (v == null ? null : Number(v));
+
 const isValidLatLng = (lat, lng) => {
   const la = toNum(lat), ln = toNum(lng);
-  return Number.isFinite(la) && Number.isFinite(ln) &&
-         la >= -90 && la <= 90 && ln >= -180 && ln <= 180 &&
-         !(la === 0 && ln === 0);
+  return (
+    Number.isFinite(la) &&
+    Number.isFinite(ln) &&
+    la >= -90 &&
+    la <= 90 &&
+    ln >= -180 &&
+    ln <= 180 &&
+    !(la === 0 && ln === 0)
+  );
 };
 
+/* ================================================================
+   MAIN COMPONENT
+   ================================================================ */
 
-function normalizeCoords(profile) {
-  return {
-    lat: parseNumber(profile.lat ?? profile.latitude),
-    lng: parseNumber(profile.lng ?? profile.longitude ?? profile.long),
-  };
-}
-
-/* ---------------- Main Component ---------------- */
 export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   const navigate = useNavigate();
   const [people, setPeople] = useState(initialItems);
@@ -35,79 +39,88 @@ export default function SwipeDeck({ initialItems = [], mode, myLoc }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Sync with initial items
+  // ── Sync with initial items ────────────────────────────────────
   useEffect(() => {
     setPeople(initialItems);
   }, [initialItems]);
 
-  // Prevent body scroll when dragging
+  // ── Prevent body scroll when dragging ──────────────────────────
   useEffect(() => {
     if (isDragging) {
       document.body.style.overflow = "hidden";
       document.body.style.touchAction = "none";
       document.documentElement.style.overflow = "hidden";
+      document.documentElement.style.touchAction = "none";
     } else {
       document.body.style.overflow = "";
       document.body.style.touchAction = "";
       document.documentElement.style.overflow = "";
+      document.documentElement.style.touchAction = "";
     }
 
     return () => {
       document.body.style.overflow = "";
       document.body.style.touchAction = "";
       document.documentElement.style.overflow = "";
+      document.documentElement.style.touchAction = "";
     };
   }, [isDragging]);
 
-  // Calculate distances
+  // ── Calculate distances ────────────────────────────────────────
+  const displayPeople = useMemo(() => {
+    const myLat = toNum(myLoc?.lat);
+    const myLng = toNum(myLoc?.lng);
+    const hasMyLoc = isValidLatLng(myLat, myLng);
 
-// Update displayPeople
-const displayPeople = useMemo(() => {
-  const myLat = toNum(myLoc?.lat);
-  const myLng = toNum(myLoc?.lng);
-  const hasMyLoc = isValidLatLng(myLat, myLng);
+    console.log("📍 Calculating distances with location:", {
+      myLat,
+      myLng,
+      valid: hasMyLoc,
+    });
 
-  console.log("📍 Calculating distances with location:", {
-    myLat, myLng, valid: hasMyLoc
-  });
+    return people.map((person) => {
+      const personLat = toNum(person.lat);
+      const personLng = toNum(person.lng);
+      const hasPersonLoc = isValidLatLng(personLat, personLng);
 
-  return people.map((person) => {
-    const personLat = toNum(person.lat);
-    const personLng = toNum(person.lng);
-    const hasPersonLoc = isValidLatLng(personLat, personLng);
+      let distanceKm = toNum(person.distance_km);
 
-    let distanceKm = toNum(person.distance_km);
+      if (hasMyLoc && hasPersonLoc) {
+        distanceKm = kmBetween(myLat, myLng, personLat, personLng);
+      }
 
-    if (hasMyLoc && hasPersonLoc) {
-      distanceKm = kmBetween(myLat, myLng, personLat, personLng);
-    }
+      return {
+        ...person,
+        lat: hasPersonLoc ? personLat : null,
+        lng: hasPersonLoc ? personLng : null,
+        distance_km: distanceKm ?? null,
+      };
+    });
+  }, [people, myLoc?.lat, myLoc?.lng]);
 
-    return {
-      ...person,
-      lat: hasPersonLoc ? personLat : null,
-      lng: hasPersonLoc ? personLng : null,
-      distance_km: distanceKm ?? null,
-    };
-  });
-}, [people, myLoc?.lat, myLoc?.lng]);
-
-  // Open profile
+  // ── Open profile ───────────────────────────────────────────────
   const handleOpenProfile = useCallback(
     (person) => {
+      if (isProcessing || isDragging) return;
       navigate(`/profile/${person.id}`, { state: { person } });
     },
-    [navigate]
+    [navigate, isProcessing, isDragging]
   );
 
-  // Handle drag state from child
+  // ── Handle drag state from child ───────────────────────────────
   const handleDragStateChange = useCallback((dragging) => {
     setIsDragging(dragging);
   }, []);
 
-  // Handle swipe
+  // ── Handle swipe ───────────────────────────────────────────────
   const handleSwipe = useCallback(
     async (direction, person) => {
-      if (isProcessing) return;
+      if (isProcessing) {
+        console.log("⏳ Already processing, ignoring swipe");
+        return;
+      }
+
+      console.log("👆 Swipe:", direction, person.display_name);
       setIsProcessing(true);
       setIsDragging(false);
 
@@ -133,7 +146,7 @@ const displayPeople = useMemo(() => {
       } catch (error) {
         console.error("[SwipeDeck] swipe error:", error);
 
-        // Restore card
+        // Restore card on error
         setPeople((prev) => [person, ...prev]);
         setLastAction(null);
 
@@ -149,7 +162,7 @@ const displayPeople = useMemo(() => {
     [isProcessing]
   );
 
-  // Undo
+  // ── Undo ───────────────────────────────────────────────────────
   const handleUndo = useCallback(async () => {
     if (!lastAction || isProcessing) return;
 
@@ -166,13 +179,13 @@ const displayPeople = useMemo(() => {
     }
   }, [lastAction, isProcessing]);
 
-  // Close match modal
+  // ── Close match modal ──────────────────────────────────────────
   const handleCloseMatch = useCallback(() => {
     setShowMatchModal(false);
     setMatchedPerson(null);
   }, []);
 
-  // Empty state
+  // ── Empty state ────────────────────────────────────────────────
   if (!displayPeople.length) {
     return (
       <motion.div
@@ -188,7 +201,9 @@ const displayPeople = useMemo(() => {
           >
             🎉
           </motion.div>
-          <p className="text-lg font-semibold text-gray-800">You're all caught up!</p>
+          <p className="text-lg font-semibold text-gray-800">
+            You're all caught up!
+          </p>
           <p className="mt-2 text-sm text-gray-500">
             {mode === "nearby"
               ? "Try expanding the distance or check back later."
@@ -200,10 +215,21 @@ const displayPeople = useMemo(() => {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               onClick={handleUndo}
-              className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-100 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-200"
+              disabled={isProcessing}
+              className="mt-4 inline-flex items-center gap-2 rounded-full bg-violet-100 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                />
               </svg>
               Undo last swipe
             </motion.button>
@@ -215,9 +241,13 @@ const displayPeople = useMemo(() => {
 
   return (
     <>
-      <div 
+      <div
         className="relative h-[70vh] select-none overscroll-none"
-        style={{ touchAction: isDragging ? "none" : "pan-y" }}
+        style={{ 
+          touchAction: isDragging ? "none" : "pan-y",
+          WebkitUserSelect: "none",
+          userSelect: "none",
+        }}
       >
         {/* Background cards */}
         <div className="pointer-events-none absolute inset-x-3 top-6 -z-10">
@@ -229,58 +259,76 @@ const displayPeople = useMemo(() => {
           )}
         </div>
 
-        {/* Cards */}
- 
-<AnimatePresence mode="popLayout">
-  {displayPeople
-    .slice(0, 3)
-    .reverse()
-    .map((person, index, arr) => {
-      const isTop = index === arr.length - 1;
-      const stackIndex = arr.length - 1 - index;
+        {/* Cards Stack */}
+        <AnimatePresence mode="popLayout">
+          {displayPeople
+            .slice(0, 3)
+            .reverse()
+            .map((person, index, arr) => {
+              const isTop = index === arr.length - 1;
+              const stackIndex = arr.length - 1 - index;
 
-      return (
-        <motion.div
-          key={person.id}
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{
-            scale: 1 - stackIndex * 0.03,
-            y: stackIndex * 8,
-            opacity: 1,
-          }}
-          exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
-          transition={{ type: "spring", stiffness: 300, damping: 25 }}
-          className="absolute inset-0 p-2"
-          style={{
-            zIndex: 10 - stackIndex,
-            pointerEvents: isTop ? "auto" : "none", // only top card is interactive
-          }}
-        >
-          <SwipeCard
-            person={person}
-            isActive={isTop}
-            canSwipe={!isProcessing}          // NEW
-            onSwipe={(dir) => handleSwipe(dir, person)}
-            onOpen={handleOpenProfile}
-            onDragStateChange={handleDragStateChange}
-          />
-        </motion.div>
-      );
-    })}
-</AnimatePresence>
+              return (
+                <motion.div
+                  key={person.id}
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{
+                    scale: 1 - stackIndex * 0.03,
+                    y: stackIndex * 8,
+                    opacity: 1,
+                  }}
+                  exit={{ 
+                    opacity: 0, 
+                    scale: 0.8, 
+                    transition: { duration: 0.2 } 
+                  }}
+                  transition={{ 
+                    type: "spring", 
+                    stiffness: 300, 
+                    damping: 25 
+                  }}
+                  className="absolute inset-0 p-2"
+                  style={{
+                    zIndex: 10 - stackIndex,
+                    pointerEvents: isTop ? "auto" : "none",
+                  }}
+                >
+                  <SwipeCard
+                    person={person}
+                    isActive={isTop}
+                    canSwipe={!isProcessing && isTop}
+                    onSwipe={(dir) => handleSwipe(dir, person)}
+                    onOpen={handleOpenProfile}
+                    onDragStateChange={handleDragStateChange}
+                  />
+                </motion.div>
+              );
+            })}
+        </AnimatePresence>
 
         {/* Undo button */}
         <AnimatePresence>
-          {lastAction && (
+          {lastAction && !isProcessing && (
             <motion.button
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               onClick={handleUndo}
-              className="absolute -top-2 left-4 z-50 flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg border border-gray-100"
+              disabled={isProcessing}
+              className="absolute -top-2 left-4 z-50 flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-lg border border-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg className="h-3.5 w-3.5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              <svg
+                className="h-3.5 w-3.5 text-violet-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                />
               </svg>
               Undo
             </motion.button>
