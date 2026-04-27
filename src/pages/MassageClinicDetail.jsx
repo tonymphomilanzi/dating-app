@@ -13,6 +13,16 @@ const DAYS_ORDER = [
   "Friday","Saturday","Sunday",
 ];
 
+const CLINIC_SELECT = `
+  id, name, description, phone, email, website,
+  address, city, state, country,
+  lat, lng, cover_url, rating, review_count,
+  opening_hours, status, is_verified, is_featured,
+  created_at, owner_id,
+  clinic_specialties ( name ),
+  clinic_media ( url, caption, sort_order )
+`;
+
 /* ================================================================
    PURE HELPERS
    ================================================================ */
@@ -32,10 +42,6 @@ function formatDistanceLabel(km) {
   return km < 1 ? `${Math.round(km * 1_000)} m` : `${km.toFixed(1)} km`;
 }
 
-/**
- * Parse opening_hours — stored as a JSON string or array.
- * Returns an array of { day, from, to } or [].
- */
 function parseHours(raw) {
   try {
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -43,130 +49,120 @@ function parseHours(raw) {
   } catch { return []; }
 }
 
-/**
- * Determine if the clinic is open right now.
- * Returns "open" | "closed" | "unknown"
- */
 function getOpenStatus(hours) {
   if (!hours.length) return "unknown";
-  const now   = new Date();
-  const today = DAYS_ORDER[(now.getDay() + 6) % 7]; // Mon=0
-  const slot  = hours.find((h) => h.day === today);
+  const now      = new Date();
+  const todayIdx = (now.getDay() + 6) % 7; // Mon = 0
+  const today    = DAYS_ORDER[todayIdx];
+  const slot     = hours.find((h) => h.day === today);
   if (!slot) return "closed";
-
   const [fh, fm] = slot.from.split(":").map(Number);
   const [th, tm] = slot.to.split(":").map(Number);
   const nowMins  = now.getHours() * 60 + now.getMinutes();
-  const fromMins = fh * 60 + fm;
-  const toMins   = th * 60 + tm;
+  return nowMins >= fh * 60 + fm && nowMins < th * 60 + tm ? "open" : "closed";
+}
 
-  return nowMins >= fromMins && nowMins < toMins ? "open" : "closed";
+function normaliseClinic(data) {
+  return {
+    ...data,
+    specialties: data.clinic_specialties?.map((s) => s.name) ?? [],
+    media: (data.clinic_media ?? [])
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map((m) => m.url),
+  };
+}
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30)  return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
 }
 
 /* ================================================================
-   HOOK: useFetchClinic
-   Tries to use navigation state (passed from the list) first,
-   then falls back to a Supabase query for direct URL access.
+   useFetchClinic
    ================================================================ */
 
 function useFetchClinic(id) {
   const location = useLocation();
 
-  const [clinic,    setClinic]    = useState(location.state?.clinic ?? null);
-  const [loading,   setLoading]   = useState(!location.state?.clinic);
-  const [error,     setError]     = useState("");
+  // Seed from nav state but always re-fetch in background for freshness
+  const [clinic,  setClinic]  = useState(() => {
+    const s = location.state?.clinic;
+    return s ? normaliseClinic(s) : null;
+  });
+  const [loading, setLoading] = useState(true); // always true on mount → triggers bg fetch
+  const [error,   setError]   = useState("");
 
   const mountedRef = useRef(true);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  useEffect(() => {
-    // Already have data from navigation state — no fetch needed
-    if (clinic) return;
+  const doFetch = useCallback(async ({ showLoader = false } = {}) => {
     if (!id) { setError("Invalid clinic ID."); setLoading(false); return; }
+    if (showLoader) setLoading(true);
+    setError("");
 
-    const fetch = async () => {
-      setLoading(true);
-      setError("");
-
-      const { data, error: err } = await supabase
-        .from("massage_clinics")
-        .select(`
-          id, name, description, phone, email, website,
-          address, city, state, country,
-          lat, lng, cover_url, rating, review_count,
-          opening_hours, status, is_verified, is_featured,
-          created_at, owner_id,
-          clinic_specialties ( name ),
-          clinic_media ( url, caption, sort_order )
-        `)
-        .eq("id", id)
-        .single();
-
-      if (!mountedRef.current) return;
-
-      if (err) {
-        setError("Clinic not found or you don't have permission to view it.");
-      } else {
-        setClinic({
-          ...data,
-          specialties : data.clinic_specialties?.map((s) => s.name) ?? [],
-          media       : (data.clinic_media ?? [])
-                          .sort((a, b) => a.sort_order - b.sort_order)
-                          .map((m) => m.url),
-        });
-      }
-      setLoading(false);
-    };
-
-    fetch();
-  }, [id, clinic]);
-
-  const refetch = useCallback(async () => {
-    if (!id) return;
-    setLoading(true);
     const { data, error: err } = await supabase
       .from("massage_clinics")
-      .select(`
-        id, name, description, phone, email, website,
-        address, city, state, country,
-        lat, lng, cover_url, rating, review_count,
-        opening_hours, status, is_verified, is_featured,
-        created_at, owner_id,
-        clinic_specialties ( name ),
-        clinic_media ( url, caption, sort_order )
-      `)
+      .select(CLINIC_SELECT)
       .eq("id", id)
       .single();
 
     if (!mountedRef.current) return;
-    if (!err && data) {
-      setClinic({
-        ...data,
-        specialties: data.clinic_specialties?.map((s) => s.name) ?? [],
-        media: (data.clinic_media ?? [])
-                 .sort((a, b) => a.sort_order - b.sort_order)
-                 .map((m) => m.url),
-      });
+
+    if (err) {
+      // Only show error if we have no cached data
+      if (!clinic) setError("Clinic not found.");
+    } else if (data) {
+      setClinic(normaliseClinic(data));
     }
     setLoading(false);
-  }, [id]);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { clinic, loading, error, refetch };
+  // Background fetch on mount (or explicit refetch)
+  useEffect(() => {
+    // If we have nav-state data, do a silent background refresh
+    doFetch({ showLoader: !location.state?.clinic });
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-validate on focus / visibility (handles back navigation)
+  useEffect(() => {
+    const onFocus    = () => doFetch({ showLoader: false });
+    const onVisible  = () => {
+      if (document.visibilityState === "visible") doFetch({ showLoader: false });
+    };
+    window.addEventListener("focus",            onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus",            onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [doFetch]);
+
+  // Optimistic local update — lets callers patch the clinic without a full refetch
+  const patchClinic = useCallback((patch) => {
+    setClinic((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  return { clinic, loading, error, refetch: () => doFetch({ showLoader: false }), patchClinic };
 }
 
 /* ================================================================
-   HOOK: useReviews
+   useReviews
    ================================================================ */
 
 function useReviews(clinicId) {
-  const [reviews,      setReviews]      = useState([]);
+  const [reviews,        setReviews]        = useState([]);
   const [loadingReviews, setLoadingReviews] = useState(true);
-  const [myReview,     setMyReview]     = useState(null);
-
+  const [myReview,       setMyReview]       = useState(null);
   const { user } = useAuth();
   const mountedRef = useRef(true);
 
@@ -177,23 +173,19 @@ function useReviews(clinicId) {
 
   const loadReviews = useCallback(async () => {
     if (!clinicId) return;
-    setLoadingReviews(true);
 
     const { data } = await supabase
       .from("clinic_reviews")
-      .select(`
-        id, rating, body, created_at,
-        profiles ( display_name, avatar_url )
-      `)
+      .select(`id, rating, body, created_at, author_id,
+        profiles ( display_name, avatar_url )`)
       .eq("clinic_id", clinicId)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(30);
 
     if (!mountedRef.current) return;
-
     const list = data ?? [];
     setReviews(list);
-    if (user) setMyReview(list.find((r) => r.author_id === user.id) ?? null);
+    setMyReview(user ? (list.find((r) => r.author_id === user.id) ?? null) : null);
     setLoadingReviews(false);
   }, [clinicId, user]);
 
@@ -201,7 +193,6 @@ function useReviews(clinicId) {
 
   const submitReview = useCallback(async ({ rating, body }) => {
     if (!user || !clinicId) throw new Error("Must be signed in to review.");
-
     const payload = { clinic_id: clinicId, author_id: user.id, rating, body };
 
     const { error } = myReview
@@ -210,16 +201,38 @@ function useReviews(clinicId) {
       : await supabase.from("clinic_reviews").insert(payload);
 
     if (error) throw new Error(error.message);
-    await loadReviews();
+
+    // Optimistic update — immediately show new review without a reload
+    const now = new Date().toISOString();
+    const newReview = {
+      id:         myReview?.id ?? `temp-${Date.now()}`,
+      rating,
+      body,
+      created_at: myReview?.created_at ?? now,
+      author_id:  user.id,
+      profiles:   { display_name: user.user_metadata?.display_name ?? "You", avatar_url: null },
+    };
+    setReviews((prev) =>
+      myReview
+        ? prev.map((r) => (r.id === myReview.id ? newReview : r))
+        : [newReview, ...prev]
+    );
+    setMyReview(newReview);
+
+    // Reconcile in background
+    loadReviews();
   }, [user, clinicId, myReview, loadReviews]);
 
   const deleteReview = useCallback(async () => {
     if (!myReview) return;
     await supabase.from("clinic_reviews").delete().eq("id", myReview.id);
-    await loadReviews();
+    // Optimistic removal
+    setReviews((prev) => prev.filter((r) => r.id !== myReview.id));
+    setMyReview(null);
+    loadReviews();
   }, [myReview, loadReviews]);
 
-  return { reviews, loadingReviews, myReview, submitReview, deleteReview };
+  return { reviews, loadingReviews, myReview, submitReview, deleteReview, loadReviews };
 }
 
 /* ================================================================
@@ -227,511 +240,460 @@ function useReviews(clinicId) {
    ================================================================ */
 
 export default function MassageClinicDetail() {
-  const { id }     = useParams();
-  const navigate   = useNavigate();
-  const { user }   = useAuth();
+  const { id }   = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
 
-  const { clinic, loading, error, refetch } = useFetchClinic(id);
+  const { clinic, loading, error, refetch, patchClinic } = useFetchClinic(id);
   const { reviews, loadingReviews, myReview, submitReview, deleteReview } =
     useReviews(id);
 
-  const [activePhoto, setActivePhoto] = useState(0);
-  const [showAllHours, setShowAllHours] = useState(false);
-  const [reviewDraft, setReviewDraft] = useState({ rating: 0, body: "" });
-  const [reviewMode, setReviewMode] = useState(false); // write | false
-  const [reviewSubmitting, setReviewSubmitting] = useState(false);
-  const [reviewError, setReviewError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [activePhoto,      setActivePhoto]      = useState(0);
+  const [showAllHours,     setShowAllHours]      = useState(false);
+  const [reviewDraft,      setReviewDraft]       = useState({ rating: 0, body: "" });
+  const [reviewMode,       setReviewMode]        = useState(false);
+  const [reviewSubmitting, setReviewSubmitting]  = useState(false);
+  const [reviewError,      setReviewError]       = useState("");
+  const [copied,           setCopied]            = useState(false);
+  const [imgError,         setImgError]          = useState({});
 
-  // Pre-fill draft with existing review
   useEffect(() => {
     if (myReview) setReviewDraft({ rating: myReview.rating, body: myReview.body ?? "" });
   }, [myReview]);
 
+  // Reset active photo when clinic changes (e.g. back-nav)
+  useEffect(() => { setActivePhoto(0); }, [id]);
+
   const hours      = clinic ? parseHours(clinic.opening_hours) : [];
   const openStatus = getOpenStatus(hours);
-  const isOwner    = user && clinic && user.id === clinic.owner_id;
+  const isOwner    = !!(user && clinic && user.id === clinic.owner_id);
 
-  // All photos = cover + media gallery
   const photos = [
     ...(clinic?.cover_url ? [clinic.cover_url] : []),
     ...(clinic?.media ?? []),
-  ];
+  ].filter((_, i) => !imgError[i]);
 
-  // ── Handlers ────────────────────────────────────────────────────────────
+  /* ── handlers ──────────────────────────────────────────────── */
 
   const handleShare = useCallback(async () => {
     const url = window.location.href;
-    if (navigator.share) {
-      await navigator.share({ title: clinic?.name, url }).catch(() => {});
-    } else {
-      await navigator.clipboard.writeText(url).catch(() => {});
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: clinic?.name, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2_000);
+      }
+    } catch { /* user cancelled */ }
   }, [clinic?.name]);
 
   const handleReviewSubmit = useCallback(async (e) => {
     e.preventDefault();
-    
-    // ✅ OWNER PROTECTION CHECK
     if (isOwner) {
-      setReviewError("You cannot review your own clinic. Owners are not allowed to leave reviews for their listings.");
+      setReviewError("Owners cannot review their own clinic.");
       return;
     }
-
-    if (!reviewDraft.rating) { 
-      setReviewError("Please select a star rating."); 
-      return; 
+    if (!reviewDraft.rating) {
+      setReviewError("Please select a star rating.");
+      return;
     }
-
     setReviewSubmitting(true);
     setReviewError("");
-    
     try {
       await submitReview(reviewDraft);
       setReviewMode(false);
-      refetch(); // refresh rating cache
+      // Optimistically update the aggregate rating shown in the header card
+      patchClinic({
+        review_count: (clinic?.review_count ?? 0) + (myReview ? 0 : 1),
+      });
     } catch (err) {
-      // Check if it's a database constraint error about owner reviews
-      if (err.message?.includes('owner') || err.message?.includes('own listing')) {
-        setReviewError("You cannot review your own clinic.");
-      } else {
-        setReviewError(err.message || "Failed to submit review. Please try again.");
-      }
+      setReviewError(err.message || "Failed to submit. Please try again.");
     } finally {
       setReviewSubmitting(false);
     }
-  }, [reviewDraft, submitReview, refetch, isOwner]);
+  }, [reviewDraft, submitReview, isOwner, myReview, clinic?.review_count, patchClinic]);
 
   const handleDeleteReview = useCallback(async () => {
-    if (!window.confirm("Delete your review?")) return;
+    if (!confirm("Delete your review?")) return;
     await deleteReview();
     setReviewDraft({ rating: 0, body: "" });
-    refetch();
-  }, [deleteReview, refetch]);
+    patchClinic({ review_count: Math.max(0, (clinic?.review_count ?? 1) - 1) });
+  }, [deleteReview, patchClinic, clinic?.review_count]);
 
-  // ── Loading / Error ──────────────────────────────────────────────────────
+  /* ── loading / error ────────────────────────────────────────── */
 
-  if (loading) {
+  if (loading && !clinic) return <DetailSkeleton onBack={() => navigate(-1)} />;
+
+  if (error && !clinic) {
     return (
-      <div className="min-h-dvh bg-white">
-        <DetailSkeleton />
-      </div>
-    );
-  }
-
-  if (error || !clinic) {
-    return (
-      <div className="min-h-dvh bg-white flex flex-col items-center justify-center
-        gap-4 p-8 text-center">
-        <div className="h-16 w-16 rounded-full bg-red-50 grid place-items-center">
-          <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24"
-            stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667
-                 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34
-                 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
+      <div className="min-h-dvh bg-gray-50 flex flex-col items-center
+        justify-center gap-5 p-8 text-center">
+        <div className="h-20 w-20 rounded-full bg-red-50 flex items-center
+          justify-center">
+          <WarningIcon className="h-10 w-10 text-red-400" />
         </div>
-        <p className="text-sm font-semibold text-gray-800">{error || "Clinic not found"}</p>
-        <button onClick={() => navigate(-1)}
-          className="rounded-full bg-violet-600 px-6 py-2.5 text-sm
-            font-semibold text-white hover:bg-violet-700">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Clinic Not Found</h2>
+          <p className="mt-1.5 text-sm text-gray-500 max-w-xs">
+            {error}
+          </p>
+        </div>
+        <button
+          onClick={() => navigate(-1)}
+          className="inline-flex items-center gap-2 rounded-full bg-violet-600
+            px-6 py-2.5 text-sm font-bold text-white hover:bg-violet-700
+            active:scale-95 transition-all"
+        >
+          <ChevronLeftIcon className="h-4 w-4" />
           Go Back
         </button>
       </div>
     );
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  /* ── render ─────────────────────────────────────────────────── */
 
   return (
-    <div className="min-h-dvh bg-gray-50 pb-32">
+    <div className="min-h-dvh bg-gray-50 pb-32 antialiased">
 
-      {/* ── Photo gallery ── */}
-      <div className="relative bg-gray-100">
+      {/* ══ PHOTO GALLERY ════════════════════════════════════════ */}
+      <div className="relative bg-gray-900 select-none">
         {photos.length > 0 ? (
           <>
             <img
+              key={photos[activePhoto]}
               src={photos[activePhoto]}
-              alt={clinic.name}
+              alt={`${clinic.name} photo ${activePhoto + 1}`}
+              onError={() => setImgError((prev) => ({ ...prev, [activePhoto]: true }))}
               className="h-72 w-full object-cover"
               loading="eager"
             />
+
+            {/* Gradient */}
+            <div className="absolute inset-0 bg-gradient-to-t
+              from-black/60 via-transparent to-black/20 pointer-events-none" />
+
             {/* Dot indicators */}
             {photos.length > 1 && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2
-                flex items-center gap-1.5">
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2
+                flex items-center gap-1.5 z-10">
                 {photos.map((_, i) => (
                   <button
                     key={i}
                     onClick={() => setActivePhoto(i)}
-                    className={`rounded-full transition-all ${
+                    className={`rounded-full transition-all duration-200 ${
                       i === activePhoto
                         ? "h-2 w-6 bg-white"
-                        : "h-2 w-2 bg-white/50 hover:bg-white/80"
+                        : "h-1.5 w-1.5 bg-white/50 hover:bg-white/80"
                     }`}
-                    aria-label={`Photo ${i + 1}`}
+                    aria-label={`View photo ${i + 1}`}
                   />
                 ))}
               </div>
             )}
-            {/* Thumbnail strip */}
+
+            {/* Photo count badge */}
             {photos.length > 1 && (
-              <div className="absolute bottom-10 left-0 right-0 overflow-x-auto
-                no-scrollbar flex gap-2 px-4">
-                {photos.map((p, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setActivePhoto(i)}
-                    className={`shrink-0 h-10 w-10 overflow-hidden rounded-lg
-                      transition-all ${i === activePhoto
-                        ? "ring-2 ring-white ring-offset-1"
-                        : "opacity-60 hover:opacity-90"}`}
-                  >
-                    <img src={p} alt={`Photo ${i + 1}`}
-                      className="h-full w-full object-cover" loading="lazy" />
-                  </button>
-                ))}
+              <div className="absolute bottom-3 right-4 rounded-full
+                bg-black/50 backdrop-blur-sm px-2.5 py-1
+                text-[11px] font-semibold text-white z-10">
+                {activePhoto + 1} / {photos.length}
               </div>
             )}
           </>
         ) : (
-          <div className="h-72 w-full bg-gradient-to-br from-violet-100 to-purple-200
-            grid place-items-center">
-            <svg className="h-20 w-20 text-violet-300" fill="none" viewBox="0 0 24 24"
-              stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round"
-                d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0
-                   00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2
-                   2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586
-                   1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782
-                   0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-            </svg>
+          <div className="h-72 w-full bg-gradient-to-br from-violet-500
+            to-purple-700 flex items-end pb-8 pl-6">
+            <span className="text-7xl opacity-30">💆</span>
           </div>
         )}
 
-        {/* Back + action buttons overlay */}
-        <div className="absolute left-4 right-4 top-4 flex items-center justify-between">
+        {/* ── Nav buttons overlay ── */}
+        <div className="absolute left-4 right-4 top-4 flex items-center
+          justify-between z-20">
+          {/* Back */}
           <button
             onClick={() => navigate(-1)}
-            className="grid h-9 w-9 place-items-center rounded-full
-              bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-2xl
+              bg-black/40 backdrop-blur-md text-white border border-white/10
+              hover:bg-black/60 active:scale-90 transition-all"
             aria-label="Go back"
           >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24"
-              stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
+            <ChevronLeftIcon className="h-5 w-5" />
           </button>
 
+          {/* Right actions */}
           <div className="flex items-center gap-2">
             {/* Share */}
             <button
               onClick={handleShare}
-              className="grid h-9 w-9 place-items-center rounded-full
-                bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 transition-colors"
-              aria-label="Share"
+              className="flex h-10 w-10 items-center justify-center rounded-2xl
+                bg-black/40 backdrop-blur-md text-white border border-white/10
+                hover:bg-black/60 active:scale-90 transition-all"
+              aria-label={copied ? "Copied!" : "Share"}
             >
-              {copied ? (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                  stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              ) : (
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                  stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938
-                       -.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632
-                       3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684
-                       3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684
-                       3 3 0 00-5.368-2.684z" />
-                </svg>
-              )}
+              {copied
+                ? <CheckIcon className="h-4 w-4 text-green-400" />
+                : <ShareIcon className="h-4 w-4" />
+              }
             </button>
 
-            {/* Edit (owner only) */}
+            {/* Edit (owner) */}
             {isOwner && (
               <button
                 onClick={() => navigate(`/massage-clinics/${id}/edit`)}
-                className="grid h-9 w-9 place-items-center rounded-full
-                  bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 transition-colors"
+                className="flex h-10 w-10 items-center justify-center rounded-2xl
+                  bg-violet-600/90 backdrop-blur-md text-white border
+                  border-violet-400/30 hover:bg-violet-700 active:scale-90
+                  transition-all"
                 aria-label="Edit clinic"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                  stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0
-                       002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828
-                       15H9v-2.828l8.586-8.586z" />
-                </svg>
+                <PencilIcon className="h-4 w-4" />
               </button>
             )}
           </div>
         </div>
 
-        {/* Status badges */}
-        <div className="absolute left-4 bottom-4 flex items-center gap-2">
+        {/* ── Status badges (bottom-left of hero) ── */}
+        <div className="absolute left-4 bottom-8 flex items-center gap-2 z-10">
           {clinic.is_featured && (
             <span className="inline-flex items-center gap-1 rounded-full
-              bg-amber-500/90 px-2.5 py-1 text-[11px] font-bold text-white
-              backdrop-blur-sm">
-              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1
-                  1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1
-                  1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8
-                  -2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539
-                  -1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38
-                  -1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-              </svg>
+              bg-amber-500/90 backdrop-blur-sm px-3 py-1
+              text-[11px] font-bold text-white">
+              <StarIcon className="h-3 w-3" filled />
               Featured
             </span>
           )}
           {clinic.status === "pending" && (
-            <span className="rounded-full bg-amber-100/90 px-2.5 py-1
-              text-[11px] font-bold text-amber-700 backdrop-blur-sm">
+            <span className="rounded-full bg-amber-100/90 backdrop-blur-sm
+              px-3 py-1 text-[11px] font-bold text-amber-800">
               Pending Approval
             </span>
           )}
         </div>
       </div>
 
-      {/* ── Main content ── */}
-      <div className="mx-auto max-w-lg px-4 space-y-4 pt-5">
+      {/* ══ CONTENT ══════════════════════════════════════════════ */}
+      <div className="mx-auto max-w-lg px-4 space-y-4 pt-4">
 
-        {/* ── Name + rating ── */}
-        <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl font-bold text-gray-900 leading-tight">
-                  {clinic.name}
-                </h1>
-                {clinic.is_verified && (
-                  <span title="Verified clinic" className="shrink-0">
-                    <svg className="h-5 w-5 text-violet-600" fill="currentColor"
-                      viewBox="0 0 20 20">
-                      <path fillRule="evenodd" clipRule="evenodd"
-                        d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0
-                           013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812
-                           2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010
-                           3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812
-                           2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976
-                           0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812
-                           -2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010
-                           -3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812
-                           -2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707
-                           9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
-                    </svg>
-                  </span>
+        {/* ── Stale data notice ── */}
+        {error && clinic && (
+          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3
+            flex items-center gap-3">
+            <InfoIcon className="h-4 w-4 text-amber-500 shrink-0" />
+            <p className="text-xs text-amber-700 flex-1">
+              Showing cached data — {error}
+            </p>
+            <button
+              onClick={() => refetch()}
+              className="text-xs font-bold text-amber-700 hover:text-amber-900"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* ── Name / rating / address card ── */}
+        <div className="rounded-3xl bg-white border border-gray-100 shadow-sm overflow-hidden">
+          <div className="p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                {/* Name + verified */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-xl font-extrabold text-gray-900 leading-tight">
+                    {clinic.name}
+                  </h1>
+                  {clinic.is_verified && (
+                    <VerifiedIcon className="h-5 w-5 text-violet-600 shrink-0" />
+                  )}
+                </div>
+
+                {/* Address */}
+                {(clinic.address || clinic.city) && (
+                  <div className="mt-1.5 flex items-start gap-1.5 text-sm text-gray-500">
+                    <MapPinIcon className="h-4 w-4 shrink-0 text-violet-400 mt-0.5" />
+                    <span className="leading-snug">
+                      {[clinic.address, clinic.city, clinic.state]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Rating */}
+                {clinic.rating > 0 && (
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <StarRow rating={Number(clinic.rating)} size="sm" />
+                    <span className="text-sm font-bold text-gray-800">
+                      {Number(clinic.rating).toFixed(1)}
+                    </span>
+                    <span className="text-sm text-gray-400">
+                      · {clinic.review_count ?? 0} review{(clinic.review_count ?? 0) !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+
+                {/* Distance */}
+                {clinic.distance_km != null && (
+                  <p className="mt-1.5 text-xs text-gray-400 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                    {formatDistanceLabel(clinic.distance_km)} away
+                  </p>
                 )}
               </div>
 
-              {/* Address */}
-              {clinic.address && (
-                <div className="mt-1 flex items-center gap-1 text-sm text-gray-500">
-                  <svg className="h-3.5 w-3.5 shrink-0 text-violet-500" fill="none"
-                    viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round"
-                      d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827
-                         0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round"
-                      d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <span className="line-clamp-1">{clinic.address}</span>
+              {/* Open / Closed pill */}
+              {openStatus !== "unknown" && (
+                <div className={`shrink-0 rounded-2xl px-3 py-1.5 text-xs font-bold
+                  flex items-center gap-1.5 ${
+                    openStatus === "open"
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-red-50 text-red-600 border border-red-200"
+                  }`}>
+                  <span className={`h-2 w-2 rounded-full ${
+                    openStatus === "open" ? "bg-emerald-500" : "bg-red-500"
+                  }`} />
+                  {openStatus === "open" ? "Open Now" : "Closed"}
                 </div>
               )}
             </div>
-
-            {/* Open/closed badge */}
-            {openStatus !== "unknown" && (
-              <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
-                openStatus === "open"
-                  ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                  : "bg-red-50 text-red-600 ring-1 ring-red-200"
-              }`}>
-                {openStatus === "open" ? "Open Now" : "Closed"}
-              </span>
-            )}
           </div>
 
-          {/* Rating row */}
-          {(clinic.rating > 0 || clinic.review_count > 0) && (
-            <div className="mt-3 flex items-center gap-2">
-              <StarRow rating={Number(clinic.rating)} />
-              <span className="text-sm font-semibold text-gray-800">
-                {Number(clinic.rating).toFixed(1)}
-              </span>
-              <span className="text-sm text-gray-400">
-                ({clinic.review_count} review{clinic.review_count !== 1 ? "s" : ""})
-              </span>
-            </div>
-          )}
-
-          {/* Distance (passed via nav state) */}
-          {clinic.distance_km != null && (
-            <p className="mt-2 text-xs text-gray-400">
-              {formatDistanceLabel(clinic.distance_km)} away
-            </p>
-          )}
+          {/* Divider */}
+          {/* ── Quick action strip ── */}
+          <div className={`grid border-t border-gray-100 ${
+            [clinic.phone, clinic.website, clinic.lat && clinic.lng, clinic.email]
+              .filter(Boolean).length === 4
+              ? "grid-cols-4"
+              : [clinic.phone, clinic.website, clinic.lat && clinic.lng, clinic.email]
+                  .filter(Boolean).length === 3
+                ? "grid-cols-3"
+                : "grid-cols-2"
+          }`}>
+            {clinic.phone && (
+              <QuickAction
+                href={`tel:${clinic.phone}`}
+                icon={<PhoneIcon className="h-5 w-5" />}
+                label="Call"
+                first
+              />
+            )}
+            {clinic.website && (
+              <QuickAction
+                href={clinic.website}
+                icon={<GlobeIcon className="h-5 w-5" />}
+                label="Website"
+                external
+              />
+            )}
+            {clinic.lat && clinic.lng && (
+              <QuickAction
+                href={`https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`}
+                icon={<DirectionsIcon className="h-5 w-5" />}
+                label="Directions"
+                external
+              />
+            )}
+            {clinic.email && (
+              <QuickAction
+                href={`mailto:${clinic.email}`}
+                icon={<MailIcon className="h-5 w-5" />}
+                label="Email"
+                last
+              />
+            )}
+          </div>
         </div>
 
-        {/* ── Action buttons ── */}
-        <div className="grid grid-cols-3 gap-3">
-          {clinic.phone && (
-            <a href={`tel:${clinic.phone}`}
-              className="flex flex-col items-center gap-1.5 rounded-2xl bg-white
-                border border-gray-100 py-3.5 shadow-sm hover:bg-violet-50
-                hover:border-violet-200 transition-all group">
-              <div className="grid h-9 w-9 place-items-center rounded-full
-                bg-violet-50 group-hover:bg-violet-100 transition-colors">
-                <svg className="h-5 w-5 text-violet-600" fill="none"
-                  viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1
-                       1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516
-                       5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0
-                       01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                </svg>
-              </div>
-              <span className="text-xs font-semibold text-gray-700">Call</span>
-            </a>
-          )}
-
-          {clinic.website && (
-            <a href={clinic.website} target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center gap-1.5 rounded-2xl bg-white
-                border border-gray-100 py-3.5 shadow-sm hover:bg-violet-50
-                hover:border-violet-200 transition-all group">
-              <div className="grid h-9 w-9 place-items-center rounded-full
-                bg-violet-50 group-hover:bg-violet-100 transition-colors">
-                <svg className="h-5 w-5 text-violet-600" fill="none"
-                  viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0
-                       01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657
-                       0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                </svg>
-              </div>
-              <span className="text-xs font-semibold text-gray-700">Website</span>
-            </a>
-          )}
-
-          {clinic.lat && clinic.lng && (
-            <a
-              href={`https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`}
-              target="_blank" rel="noopener noreferrer"
-              className="flex flex-col items-center gap-1.5 rounded-2xl bg-white
-                border border-gray-100 py-3.5 shadow-sm hover:bg-violet-50
-                hover:border-violet-200 transition-all group">
-              <div className="grid h-9 w-9 place-items-center rounded-full
-                bg-violet-50 group-hover:bg-violet-100 transition-colors">
-                <svg className="h-5 w-5 text-violet-600" fill="none"
-                  viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0
-                       011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553
-                       2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15
-                       4m0 13V4m0 0L9 7" />
-                </svg>
-              </div>
-              <span className="text-xs font-semibold text-gray-700">Directions</span>
-            </a>
-          )}
-
-          {clinic.email && (
-            <a href={`mailto:${clinic.email}`}
-              className="flex flex-col items-center gap-1.5 rounded-2xl bg-white
-                border border-gray-100 py-3.5 shadow-sm hover:bg-violet-50
-                hover:border-violet-200 transition-all group">
-              <div className="grid h-9 w-9 place-items-center rounded-full
-                bg-violet-50 group-hover:bg-violet-100 transition-colors">
-                <svg className="h-5 w-5 text-violet-600" fill="none"
-                  viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2
-                       0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <span className="text-xs font-semibold text-gray-700">Email</span>
-            </a>
-          )}
-        </div>
-
-        {/* ── Description ── */}
+        {/* ── About ── */}
         {clinic.description && (
-          <Card title="About">
-            <p className="text-sm text-gray-600 leading-relaxed">{clinic.description}</p>
-          </Card>
+          <SectionCard title="About">
+            <ExpandableText text={clinic.description} maxChars={250} />
+          </SectionCard>
         )}
 
         {/* ── Specialties ── */}
         {clinic.specialties?.length > 0 && (
-          <Card title="Services & Specialties">
+          <SectionCard title="Services & Specialties">
             <div className="flex flex-wrap gap-2">
               {clinic.specialties.map((s) => (
-                <span key={s}
-                  className="rounded-full border border-violet-200 bg-violet-50
-                    px-3.5 py-1.5 text-sm font-medium text-violet-700">
+                <span
+                  key={s}
+                  className="inline-flex items-center rounded-full border
+                    border-violet-200 bg-violet-50 px-3.5 py-1.5 text-sm
+                    font-medium text-violet-700"
+                >
                   {s}
                 </span>
               ))}
             </div>
-          </Card>
+          </SectionCard>
         )}
 
         {/* ── Opening hours ── */}
         {hours.length > 0 && (
-          <Card title="Opening Hours">
+          <SectionCard title="Opening Hours">
             <div className="space-y-0.5">
-              {(showAllHours ? DAYS_ORDER : DAYS_ORDER.slice(0, 3)).map((day) => {
+              {(showAllHours ? DAYS_ORDER : DAYS_ORDER).map((day, i) => {
                 const slot    = hours.find((h) => h.day === day);
-                const isToday = day === DAYS_ORDER[(new Date().getDay() + 6) % 7];
+                const todayIdx = (new Date().getDay() + 6) % 7;
+                const isToday  = i === todayIdx;
+                if (!showAllHours && !isToday && i > todayIdx + 1) return null;
                 return (
-                  <div key={day}
+                  <div
+                    key={day}
                     className={`flex items-center justify-between rounded-xl
-                      px-3 py-2 text-sm transition-colors
-                      ${isToday ? "bg-violet-50" : ""}`}>
+                      px-3 py-2 text-sm transition-colors ${
+                        isToday
+                          ? "bg-violet-50 ring-1 ring-violet-100"
+                          : "hover:bg-gray-50"
+                      }`}
+                  >
                     <span className={`font-medium ${
                       isToday ? "text-violet-700" : "text-gray-700"
                     }`}>
                       {day}
                       {isToday && (
-                        <span className="ml-1.5 text-[10px] font-bold
-                          text-violet-500 uppercase tracking-wide">Today</span>
+                        <span className="ml-2 inline-block rounded-full
+                          bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold
+                          text-violet-600 uppercase tracking-wide">
+                          Today
+                        </span>
                       )}
                     </span>
                     {slot ? (
-                      <span className={isToday ? "text-violet-600 font-semibold" : "text-gray-500"}>
-                        {to12h(slot.from)} – {to12h(slot.to)}
+                      <span className={`tabular-nums ${
+                        isToday
+                          ? "font-bold text-violet-700"
+                          : "text-gray-500"
+                      }`}>
+                        {to12h(slot.from)}–{to12h(slot.to)}
                       </span>
                     ) : (
-                      <span className="text-gray-400 italic text-xs">Closed</span>
+                      <span className="text-gray-400 text-xs italic">Closed</span>
                     )}
                   </div>
                 );
               })}
             </div>
-            {DAYS_ORDER.length > 3 && (
-              <button
-                onClick={() => setShowAllHours((v) => !v)}
-                className="mt-2 text-xs font-semibold text-violet-600
-                  hover:text-violet-800 transition-colors">
-                {showAllHours ? "Show less" : `Show all ${DAYS_ORDER.length} days`}
-              </button>
-            )}
-          </Card>
+            <button
+              onClick={() => setShowAllHours((v) => !v)}
+              className="mt-2 text-xs font-bold text-violet-600
+                hover:text-violet-800 transition-colors"
+            >
+              {showAllHours ? "Show less" : "Show all hours"}
+            </button>
+          </SectionCard>
         )}
 
-        {/* ── Contact info ── */}
+        {/* ── Contact ── */}
         {(clinic.phone || clinic.email || clinic.website) && (
-          <Card title="Contact">
-            <div className="space-y-3">
+          <SectionCard title="Contact">
+            <div className="space-y-1">
               {clinic.phone && (
                 <ContactRow
-                  icon={<PhoneIcon />}
+                  icon={<PhoneIcon className="h-4 w-4" />}
                   label="Phone"
                   value={clinic.phone}
                   href={`tel:${clinic.phone}`}
@@ -739,7 +701,7 @@ export default function MassageClinicDetail() {
               )}
               {clinic.email && (
                 <ContactRow
-                  icon={<EmailIcon />}
+                  icon={<MailIcon className="h-4 w-4" />}
                   label="Email"
                   value={clinic.email}
                   href={`mailto:${clinic.email}`}
@@ -747,7 +709,7 @@ export default function MassageClinicDetail() {
               )}
               {clinic.website && (
                 <ContactRow
-                  icon={<WebIcon />}
+                  icon={<GlobeIcon className="h-4 w-4" />}
                   label="Website"
                   value={clinic.website.replace(/^https?:\/\//, "")}
                   href={clinic.website}
@@ -755,40 +717,40 @@ export default function MassageClinicDetail() {
                 />
               )}
             </div>
-          </Card>
+          </SectionCard>
         )}
 
-        {/* ── Reviews ── */}
-        <Card title={`Reviews${clinic.review_count ? ` (${clinic.review_count})` : ""}`}>
-
-          {/* ✅ Owner info message */}
+        {/* ══ REVIEWS ══════════════════════════════════════════════ */}
+        <SectionCard
+          title={`Reviews${clinic.review_count ? ` · ${clinic.review_count}` : ""}`}
+        >
+          {/* Owner notice */}
           {isOwner && (
-            <div className="mb-4 rounded-xl bg-blue-50 border border-blue-100 p-4 
-              flex items-start gap-3">
-              <svg className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" fill="none" 
-                viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" 
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-blue-900">This is your clinic</p>
-                <p className="text-xs text-blue-700 mt-0.5">
-                  As the owner, you cannot leave a review for your own listing.
+            <div className="mb-4 flex items-start gap-3 rounded-2xl
+              bg-blue-50 border border-blue-100 p-4">
+              <InfoIcon className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-blue-900">This is your clinic</p>
+                <p className="text-xs text-blue-600 mt-0.5">
+                  Owners can't review their own listing.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Write / edit review CTA */}
+          {/* Write / edit CTA */}
           {user && !isOwner && (
             <div className="mb-4">
               {!reviewMode ? (
                 <button
                   onClick={() => setReviewMode(true)}
-                  className="w-full rounded-2xl border border-violet-200 bg-violet-50
-                    py-3 text-sm font-semibold text-violet-700 hover:bg-violet-100
-                    transition-colors">
-                  {myReview ? "Edit Your Review" : "Write a Review"}
+                  className="w-full rounded-2xl border border-violet-200
+                    bg-gradient-to-br from-violet-50 to-fuchsia-50/50
+                    py-3 text-sm font-bold text-violet-700
+                    hover:from-violet-100 hover:to-fuchsia-100
+                    active:scale-[0.99] transition-all"
+                >
+                  {myReview ? "✏️ Edit Your Review" : "⭐ Write a Review"}
                 </button>
               ) : (
                 <ReviewForm
@@ -797,7 +759,7 @@ export default function MassageClinicDetail() {
                   onSubmit={handleReviewSubmit}
                   onCancel={() => {
                     setReviewMode(false);
-                    setReviewError(""); // Clear error when canceling
+                    setReviewError("");
                   }}
                   submitting={reviewSubmitting}
                   error={reviewError}
@@ -808,63 +770,114 @@ export default function MassageClinicDetail() {
             </div>
           )}
 
-          {/* Sign in prompt for non-users */}
+          {/* Sign-in prompt */}
           {!user && (
-            <div className="mb-4 rounded-xl bg-gray-50 border border-gray-100 p-4 
-              text-center">
+            <div className="mb-4 rounded-2xl bg-gray-50 border border-gray-100
+              p-4 text-center">
               <p className="text-sm text-gray-600">
-                <button 
-                  onClick={() => navigate('/sign-in', { state: { returnTo: window.location.pathname } })}
-                  className="font-semibold text-violet-600 hover:text-violet-700 
-                    underline decoration-violet-300 underline-offset-2">
+                <button
+                  onClick={() => navigate("/sign-in", {
+                    state: { returnTo: window.location.pathname },
+                  })}
+                  className="font-bold text-violet-600 hover:underline"
+                >
                   Sign in
                 </button>
-                {' '}to leave a review
+                {" "}to leave a review
               </p>
             </div>
           )}
 
-          {/* Review list */}
+          {/* List */}
           {loadingReviews ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {[1, 2].map((i) => <ReviewSkeleton key={i} />)}
             </div>
           ) : reviews.length === 0 ? (
-            <p className="text-center text-sm text-gray-400 py-4">
-              No reviews yet. Be the first!
-            </p>
+            <div className="py-8 text-center">
+              <p className="text-3xl mb-2">💬</p>
+              <p className="text-sm font-semibold text-gray-700">No reviews yet</p>
+              <p className="text-xs text-gray-400 mt-1">Be the first to share your experience!</p>
+            </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {reviews.map((r) => (
-                <ReviewCard key={r.id} review={r} />
+                <ReviewCard key={r.id} review={r} isMyReview={r.id === myReview?.id} />
               ))}
             </div>
           )}
-        </Card>
-
+        </SectionCard>
       </div>
     </div>
   );
 }
 
 /* ================================================================
-   SUB-COMPONENTS
+   QUICK ACTION STRIP ITEM
    ================================================================ */
 
-// ── Section card wrapper ──────────────────────────────────────────
-
-function Card({ title, children }) {
+function QuickAction({ href, icon, label, external = false, first, last }) {
   return (
-    <div className="rounded-2xl bg-white border border-gray-100 p-5 shadow-sm">
-      <h2 className="mb-3 text-sm font-bold text-gray-900">{title}</h2>
+    <a
+      href={href}
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      className={`flex flex-col items-center gap-1.5 py-4 text-violet-600
+        hover:bg-violet-50 active:bg-violet-100 transition-colors
+        ${first  ? "rounded-bl-3xl" : ""}
+        ${last   ? "rounded-br-3xl" : ""}
+        border-r border-gray-100 last:border-r-0`}
+    >
+      {icon}
+      <span className="text-[11px] font-semibold text-gray-600">{label}</span>
+    </a>
+  );
+}
+
+/* ================================================================
+   SECTION CARD
+   ================================================================ */
+
+function SectionCard({ title, children }) {
+  return (
+    <div className="rounded-3xl bg-white border border-gray-100 shadow-sm p-5">
+      <h2 className="mb-4 text-sm font-bold text-gray-900 tracking-tight">
+        {title}
+      </h2>
       {children}
     </div>
   );
 }
 
-// ── Star row ─────────────────────────────────────────────────────
+/* ================================================================
+   EXPANDABLE TEXT
+   ================================================================ */
 
-function StarRow({ rating, interactive = false, onRate }) {
+function ExpandableText({ text, maxChars = 200 }) {
+  const [expanded, setExpanded] = useState(false);
+  const needsTrunc = text.length > maxChars;
+  const shown = expanded || !needsTrunc ? text : `${text.slice(0, maxChars).trimEnd()}…`;
+  return (
+    <div>
+      <p className="text-sm text-gray-600 leading-relaxed">{shown}</p>
+      {needsTrunc && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-800
+            transition-colors"
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
+   STAR ROW
+   ================================================================ */
+
+function StarRow({ rating, interactive = false, onRate, size = "md" }) {
+  const sz = size === "sm" ? "h-4 w-4" : "h-5 w-5";
   return (
     <div className="flex items-center gap-0.5">
       {[1, 2, 3, 4, 5].map((star) => (
@@ -873,98 +886,118 @@ function StarRow({ rating, interactive = false, onRate }) {
           type={interactive ? "button" : undefined}
           onClick={interactive ? () => onRate(star) : undefined}
           disabled={!interactive}
-          className={interactive ? "cursor-pointer" : "cursor-default"}
-          aria-label={interactive ? `Rate ${star} star${star > 1 ? "s" : ""}` : undefined}
+          className={interactive ? "cursor-pointer hover:scale-110 transition-transform" : "cursor-default"}
+          aria-label={interactive ? `Rate ${star} star${star !== 1 ? "s" : ""}` : undefined}
         >
-          <svg
-            className={`h-5 w-5 transition-colors ${
-              star <= rating ? "text-amber-400" : "text-gray-200"
-            } ${interactive ? "hover:text-amber-300" : ""}`}
-            fill="currentColor" viewBox="0 0 20 20"
-          >
-            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1
-              1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1
-              1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8
-              -2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539
-              -1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38
-              -1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-          </svg>
+          <StarIcon
+            className={`${sz} transition-colors ${
+              star <= Math.round(rating) ? "text-amber-400" : "text-gray-200"
+            }`}
+            filled
+          />
         </button>
       ))}
     </div>
   );
 }
 
-// ── Review form ───────────────────────────────────────────────────
+/* ================================================================
+   REVIEW FORM
+   ================================================================ */
 
 function ReviewForm({ draft, onChange, onSubmit, onCancel,
   submitting, error, isEdit, onDelete }) {
   return (
-    <form onSubmit={onSubmit} className="rounded-2xl border border-violet-100
-      bg-violet-50/40 p-4 space-y-3">
+    <form
+      onSubmit={onSubmit}
+      className="rounded-2xl border border-violet-100 bg-gradient-to-br
+        from-violet-50/60 to-fuchsia-50/30 p-4 space-y-4"
+    >
+      {/* Star picker */}
       <div>
-        <p className="mb-1.5 text-xs font-semibold text-gray-700">Your Rating</p>
-        <StarRow
-          rating={draft.rating}
-          interactive
-          onRate={(r) => onChange((d) => ({ ...d, rating: r }))}
-        />
+        <p className="text-xs font-bold text-gray-700 mb-2">Your Rating *</p>
+        <div className="flex items-center gap-2">
+          <StarRow
+            rating={draft.rating}
+            interactive
+            onRate={(r) => onChange((d) => ({ ...d, rating: r }))}
+            size="lg"
+          />
+          {draft.rating > 0 && (
+            <span className="text-sm font-bold text-amber-500">
+              {["", "Poor", "Fair", "Good", "Very Good", "Excellent"][draft.rating]}
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Text area */}
       <div>
-        <p className="mb-1.5 text-xs font-semibold text-gray-700">
-          Your Review <span className="text-gray-400 font-normal">(optional)</span>
+        <p className="text-xs font-bold text-gray-700 mb-1.5">
+          Your Review
+          <span className="ml-1 font-normal text-gray-400">(optional)</span>
         </p>
         <textarea
           value={draft.body}
           onChange={(e) => onChange((d) => ({ ...d, body: e.target.value }))}
           placeholder="Share your experience…"
           rows={3}
-          maxLength={1000}
-          className="w-full resize-none rounded-xl border border-gray-200
-            bg-white px-3 py-2.5 text-sm text-gray-800 placeholder:text-gray-400
-            focus:outline-none focus:ring-2 focus:ring-violet-300"
+          maxLength={1_000}
+          className="w-full resize-none rounded-2xl border border-gray-200
+            bg-white px-4 py-3 text-sm text-gray-800 placeholder:text-gray-400
+            focus:outline-none focus:border-violet-300 focus:ring-2
+            focus:ring-violet-100 transition-all"
         />
-        <p className="mt-0.5 text-right text-xs text-gray-400">
+        <p className="mt-1 text-right text-xs text-gray-400">
           {draft.body.length}/1000
         </p>
       </div>
-      
-      {/* ✅ Enhanced error display */}
+
+      {/* Error */}
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 p-3 flex 
-          items-start gap-2">
-          <svg className="h-5 w-5 text-red-500 shrink-0" fill="none" 
-            viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" 
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-sm text-red-700 font-medium">{error}</p>
+        <div className="flex items-start gap-2.5 rounded-xl bg-red-50
+          border border-red-200 px-4 py-3">
+          <WarningIcon className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
+      {/* Buttons */}
       <div className="flex items-center gap-2">
-        <button type="submit" disabled={submitting}
-          className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-semibold
-            text-white hover:bg-violet-700 disabled:opacity-60 transition-colors">
-          {submitting ? "Saving…" : isEdit ? "Update Review" : "Submit Review"}
+        <button
+          type="submit"
+          disabled={submitting}
+          className="flex-1 rounded-2xl bg-violet-600 py-2.5 text-sm font-bold
+            text-white hover:bg-violet-700 disabled:opacity-60
+            active:scale-[0.98] transition-all"
+        >
+          {submitting
+            ? <span className="inline-flex items-center gap-2">
+                <SpinnerIcon className="h-4 w-4" />
+                Saving…
+              </span>
+            : isEdit ? "Update Review" : "Submit Review"
+          }
         </button>
-        <button type="button" onClick={onCancel}
-          className="rounded-xl border border-gray-200 bg-white px-4 py-2.5
-            text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5
+            text-sm font-medium text-gray-600 hover:bg-gray-50
+            active:scale-[0.98] transition-all"
+        >
           Cancel
         </button>
         {onDelete && (
-          <button type="button" onClick={onDelete}
-            className="rounded-xl bg-red-50 px-3 py-2.5 text-sm font-medium
-              text-red-500 hover:bg-red-100 transition-colors"
-            aria-label="Delete review">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-              stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round"
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
-                   01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1
-                   1 0 00-1 1v3M4 7h16" />
-            </svg>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="flex h-10 w-10 items-center justify-center rounded-2xl
+              bg-red-50 text-red-500 hover:bg-red-100 active:scale-90
+              transition-all"
+            aria-label="Delete review"
+          >
+            <TrashIcon className="h-4 w-4" />
           </button>
         )}
       </div>
@@ -972,37 +1005,53 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
   );
 }
 
-// ── Review card ───────────────────────────────────────────────────
+/* ================================================================
+   REVIEW CARD
+   ================================================================ */
 
-function ReviewCard({ review }) {
+function ReviewCard({ review, isMyReview }) {
   const author = review.profiles;
-  const date   = new Date(review.created_at).toLocaleDateString([], {
-    month: "short", day: "numeric", year: "numeric",
-  });
-
   return (
-    <div className="flex gap-3">
+    <div className={`flex gap-3 ${isMyReview ? "p-3 rounded-2xl bg-violet-50/50 border border-violet-100" : ""}`}>
       {/* Avatar */}
       <div className="shrink-0">
         {author?.avatar_url ? (
-          <img src={author.avatar_url} alt={author.display_name}
-            className="h-9 w-9 rounded-full object-cover" loading="lazy" />
+          <img
+            src={author.avatar_url}
+            alt={author.display_name}
+            className="h-9 w-9 rounded-full object-cover ring-2 ring-white"
+            loading="lazy"
+          />
         ) : (
-          <div className="h-9 w-9 rounded-full bg-violet-100 grid
-            place-items-center text-sm font-bold text-violet-600">
+          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-400
+            to-fuchsia-400 flex items-center justify-center text-sm font-bold text-white
+            ring-2 ring-white">
             {(author?.display_name?.[0] ?? "?").toUpperCase()}
           </div>
         )}
       </div>
+
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-gray-900 truncate">
-            {author?.display_name ?? "Anonymous"}
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-sm font-bold text-gray-900 truncate">
+              {author?.display_name ?? "Anonymous"}
+            </span>
+            {isMyReview && (
+              <span className="shrink-0 rounded-full bg-violet-100 px-2 py-0.5
+                text-[10px] font-bold text-violet-700">
+                You
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-gray-400 shrink-0">
+            {timeAgo(review.created_at)}
           </span>
-          <span className="text-xs text-gray-400 shrink-0">{date}</span>
         </div>
-        <StarRow rating={review.rating} />
+
+        <StarRow rating={review.rating} size="sm" />
+
         {review.body && (
           <p className="mt-1.5 text-sm text-gray-600 leading-relaxed">
             {review.body}
@@ -1013,59 +1062,73 @@ function ReviewCard({ review }) {
   );
 }
 
-// ── Contact row ───────────────────────────────────────────────────
+/* ================================================================
+   CONTACT ROW
+   ================================================================ */
 
 function ContactRow({ icon, label, value, href, external }) {
   return (
-    <a href={href}
+    <a
+      href={href}
       {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-      className="flex items-center gap-3 rounded-xl px-3 py-2.5 -mx-1
-        hover:bg-gray-50 transition-colors group">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full
-        bg-violet-50 text-violet-600 group-hover:bg-violet-100 transition-colors">
+      className="flex items-center gap-3 rounded-2xl px-3 py-2.5
+        hover:bg-gray-50 active:bg-gray-100 transition-colors group"
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center
+        rounded-xl bg-violet-50 text-violet-600 group-hover:bg-violet-100
+        transition-colors">
         {icon}
       </div>
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
           {label}
         </p>
         <p className="text-sm text-gray-800 truncate">{value}</p>
       </div>
-      <svg className="h-4 w-4 text-gray-300 ml-auto shrink-0" fill="none"
-        viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-      </svg>
+      <ChevronRightIcon className="h-4 w-4 text-gray-300 shrink-0
+        group-hover:text-gray-400 transition-colors" />
     </a>
   );
 }
 
-// ── Skeletons ─────────────────────────────────────────────────────
+/* ================================================================
+   SKELETONS
+   ================================================================ */
 
-function DetailSkeleton() {
+function DetailSkeleton({ onBack }) {
   return (
-    <div className="animate-pulse">
-      <div className="h-72 w-full bg-gray-200" />
-      <div className="mx-auto max-w-lg px-4 pt-5 space-y-4">
-        <div className="rounded-2xl bg-white border border-gray-100 p-5">
+    <div className="min-h-dvh bg-gray-50 animate-pulse">
+      <div className="relative h-72 bg-gray-200">
+        <button
+          onClick={onBack}
+          className="absolute left-4 top-4 flex h-10 w-10 items-center justify-center
+            rounded-2xl bg-black/30 text-white"
+        >
+          <ChevronLeftIcon className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="mx-auto max-w-lg px-4 pt-4 space-y-4">
+        <div className="rounded-3xl bg-white border border-gray-100 p-5 space-y-3">
           <div className="h-6 bg-gray-200 rounded-full w-2/3" />
-          <div className="mt-2 h-4 bg-gray-100 rounded-full w-1/2" />
-          <div className="mt-3 flex gap-1">
+          <div className="h-4 bg-gray-100 rounded-full w-1/2" />
+          <div className="flex gap-1">
             {[1,2,3,4,5].map((i) => (
-              <div key={i} className="h-5 w-5 rounded bg-gray-200" />
+              <div key={i} className="h-4 w-4 rounded bg-gray-200" />
+            ))}
+          </div>
+          <div className="border-t border-gray-100 pt-3 grid grid-cols-3 gap-2">
+            {[1,2,3].map((i) => (
+              <div key={i} className="h-16 rounded-2xl bg-gray-100" />
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
-          {[1,2,3].map((i) => (
-            <div key={i} className="rounded-2xl bg-gray-100 h-20" />
-          ))}
-        </div>
-        <div className="rounded-2xl bg-white border border-gray-100 p-5">
-          <div className="h-4 bg-gray-200 rounded-full w-24 mb-3" />
-          <div className="space-y-2">
-            {[1,2,3].map((i) => <div key={i} className="h-3 bg-gray-100 rounded-full" />)}
+        {[1, 2].map((i) => (
+          <div key={i} className="rounded-3xl bg-white border border-gray-100 p-5 space-y-2">
+            <div className="h-4 bg-gray-200 rounded-full w-24" />
+            <div className="h-3 bg-gray-100 rounded-full w-full" />
+            <div className="h-3 bg-gray-100 rounded-full w-4/5" />
           </div>
-        </div>
+        ))}
       </div>
     </div>
   );
@@ -1075,7 +1138,7 @@ function ReviewSkeleton() {
   return (
     <div className="flex gap-3 animate-pulse">
       <div className="h-9 w-9 shrink-0 rounded-full bg-gray-100" />
-      <div className="flex-1 space-y-2">
+      <div className="flex-1 space-y-2 pt-1">
         <div className="h-3.5 bg-gray-100 rounded-full w-1/3" />
         <div className="h-3 bg-gray-100 rounded-full w-1/4" />
         <div className="h-3 bg-gray-100 rounded-full w-2/3" />
@@ -1084,34 +1147,180 @@ function ReviewSkeleton() {
   );
 }
 
-// ── Inline SVG icons ──────────────────────────────────────────────
+/* ================================================================
+   SVG ICONS
+   ================================================================ */
 
-const PhoneIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-    stroke="currentColor" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round"
-      d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0
-         01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13
-         -2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2
-         2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-  </svg>
-);
+function ChevronLeftIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
 
-const EmailIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-    stroke="currentColor" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round"
-      d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0
-         002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-  </svg>
-);
+function ChevronRightIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
 
-const WebIcon = () => (
-  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24"
-    stroke="currentColor" strokeWidth={2}>
-    <path strokeLinecap="round" strokeLinejoin="round"
-      d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0
-         01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657
-         0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-  </svg>
-);
+function CheckIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+function ShareIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59"  y2="10.49" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5" />
+      <path d="M17.586 3.586a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  );
+}
+
+function MapPinIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
+      <circle cx="12" cy="9" r="2.5" />
+    </svg>
+  );
+}
+
+function StarIcon({ className = "h-5 w-5", filled = false }) {
+  return (
+    <svg className={className} fill={filled ? "currentColor" : "none"}
+      viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round"
+        d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969
+           0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755
+           1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197
+           -1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588
+           -1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+    </svg>
+  );
+}
+
+function PhoneIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07
+        9.81 19.79 19.79 0 01.22 1.18 2 2 0 012.18 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7
+        2.81 2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.18 6.18l1.27-1.52a2 2 0 012.11-.45
+        12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
+    </svg>
+  );
+}
+
+function MailIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+      <polyline points="22,6 12,13 2,6" />
+    </svg>
+  );
+}
+
+function GlobeIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
+    </svg>
+  );
+}
+
+function DirectionsIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="3 11 22 2 13 21 11 13 3 11" />
+    </svg>
+  );
+}
+
+function WarningIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1="12" y1="9"  x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function InfoIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="8" strokeWidth={2.5} />
+      <line x1="12" y1="12" x2="12" y2="16" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "h-4 w-4" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+    </svg>
+  );
+}
+
+function SpinnerIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10"
+        stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" />
+    </svg>
+  );
+}
+
+function VerifiedIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path fillRule="evenodd" clipRule="evenodd"
+        d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0
+           001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066
+           0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066
+           0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066
+           0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066
+           0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9
+           10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
+    </svg>
+  );
+}
