@@ -30,37 +30,88 @@ const UserManagement = () => {
   }, [users, searchTerm, filters])
 
   const loadUsers = async () => {
-    try {
-      setLoading(true)
-      const { data, error } = await supabaseAdmin
-        .from('profiles')
-        .select(`
-          *,
-          user_subscriptions (
-            id,
-            plan,
-            status,
-            expires_at
-          ),
-          photos (
-            id,
-            path,
-            is_primary
-          ),
-          streams (count),
-          massage_clinics (count)
-        `)
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-      setUsers(data || [])
-    } catch (error) {
-      console.error('Error loading users:', error)
-    } finally {
-      setLoading(false)
+  try {
+    setLoading(true)
+    console.log('🔍 Loading all registered users...')
+    
+    // Get all users from auth.users
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers()
+    
+    if (authError) {
+      console.error('❌ Auth query error:', authError)
+      throw authError
     }
-  }
 
+    const authUsers = authData.users || []
+    console.log('👥 Found', authUsers.length, 'registered users')
+
+    // Get their profile data (if exists)
+    const userIds = authUsers.map(user => user.id)
+    const { data: profiles, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select(`
+        *,
+        user_subscriptions!left (
+          id,
+          plan,
+          status,
+          expires_at
+        ),
+        photos!left (
+          id,
+          path,
+          is_primary
+        )
+      `)
+      .in('id', userIds)
+
+    if (profileError) {
+      console.warn('⚠️ Profile query error:', profileError)
+    }
+
+    // Merge auth users with their profile data
+    const mergedUsers = authUsers.map(authUser => {
+      const profile = profiles?.find(p => p.id === authUser.id) || {}
+      
+      return {
+        // Auth data
+        id: authUser.id,
+        email: authUser.email,
+        email_confirmed_at: authUser.email_confirmed_at,
+        last_sign_in_at: authUser.last_sign_in_at,
+        created_at: authUser.created_at,
+        
+        // Profile data (might be empty for incomplete profiles)
+        display_name: profile.display_name || authUser.email?.split('@')[0] || 'Unknown',
+        bio: profile.bio,
+        avatar_url: profile.avatar_url,
+        city: profile.city,
+        gender: profile.gender,
+        dob: profile.dob,
+        profession: profile.profession,
+        is_premium: profile.is_premium || false,
+        is_verified: profile.is_verified || false,
+        is_admin: profile.is_admin || false,
+        
+        // Related data
+        user_subscriptions: profile.user_subscriptions || [],
+        photos: profile.photos || [],
+        
+        // Mark if profile is complete
+        profile_complete: !!(profile.display_name && profile.dob)
+      }
+    })
+
+    console.log('✅ Merged', mergedUsers.length, 'users with profile data')
+    setUsers(mergedUsers)
+
+  } catch (error) {
+    console.error('❌ Error loading users:', error)
+    setUsers([])
+  } finally {
+    setLoading(false)
+  }
+}
   const filterUsers = () => {
     let filtered = [...users]
 
