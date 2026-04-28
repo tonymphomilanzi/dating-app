@@ -6,10 +6,6 @@ import { supabase } from "../lib/supabase.client.js";
 
 const EXCHANGE_TIMEOUT_MS = 15_000;
 
-/**
- * Error message substrings that mean the OAuth code was already consumed.
- * This typically happens when the user refreshes the callback URL.
- */
 const USED_CODE_INDICATORS = [
   "both auth code and code verifier should be non-empty",
   "invalid request",
@@ -18,11 +14,6 @@ const USED_CODE_INDICATORS = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Map a raw error to a user-friendly message.
- * @param {Error|object|null} err
- * @returns {string}
- */
 function toUserMessage(err) {
   const msg = (err?.message ?? "").toLowerCase();
 
@@ -38,25 +29,13 @@ function toUserMessage(err) {
   return "We couldn't complete sign‑in. Please try again.";
 }
 
-/**
- * Check whether the user has previously completed the profile-setup flow.
- * @param {string} uid
- * @returns {boolean}
- */
 function isSetupComplete(uid) {
   return (
     localStorage.getItem(`SETUP_OK_${uid}`) === "1" ||
-    // Legacy key — kept for backwards compatibility
     localStorage.getItem("SETUP_OK") === "1"
   );
 }
 
-/**
- * Race a promise against a hard timeout.
- * @param {Promise}  promise
- * @param {number}   ms
- * @returns {Promise}
- */
 function withTimeout(promise, ms) {
   let timerId;
   const timeout = new Promise((_, reject) => {
@@ -71,8 +50,6 @@ function withTimeout(promise, ms) {
 }
 
 // ─── Module-level exchange guard ──────────────────────────────────────────────
-// Module scope ensures the exchange runs at most once per page load,
-// even under React 18 Strict Mode (mount → unmount → remount).
 let exchangeStarted = false;
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -80,13 +57,12 @@ let exchangeStarted = false;
 export default function AuthCallback() {
   const nav = useNavigate();
 
-  const [status, setStatus]     = useState(/** @type {"pending"|"error"} */ ("pending"));
+  const [status, setStatus]     = useState("pending");
   const [errorMsg, setErrorMsg] = useState("");
 
   const abortRef = useRef(null);
 
   useEffect(() => {
-    // ── One-shot guard ──────────────────────────────────────────────────────
     if (exchangeStarted) return;
     exchangeStarted = true;
 
@@ -95,73 +71,81 @@ export default function AuthCallback() {
 
     const run = async () => {
       try {
-        // ── Step 1: Extract the code from the URL ───────────────────────────
-        // Supabase Google OAuth (PKCE flow) appends ?code=... to the callback URL.
-        // We pull it out manually so we can detect "no code" early and give
-        // a clear error instead of letting Supabase throw a cryptic one.
-        const params = new URLSearchParams(window.location.search);
-        const code   = params.get("code");
+        // ── Debug: log exactly what arrived in the URL ──────────────────────
+        console.log("[AuthCallback] href   :", window.location.href);
+        console.log("[AuthCallback] search :", window.location.search);
+        console.log("[AuthCallback] hash   :", window.location.hash);
 
-        // Also check for an error param — Google/Supabase can return
-        // ?error=access_denied when the user cancels the Google consent screen.
+        // ── Handle OAuth errors returned from Google/Supabase ───────────────
+        const params     = new URLSearchParams(window.location.search);
         const oauthError = params.get("error");
+
         if (oauthError) {
           throw new Error(
             params.get("error_description") ?? oauthError
           );
         }
 
-        if (!code) {
-          // No code and no error — URL was probably opened directly.
-          throw new Error("No authorisation code found in the URL.");
+        // ── PKCE flow: code in query string ─────────────────────────────────
+        const code = params.get("code");
+
+        if (code) {
+          console.log("[AuthCallback] PKCE code found, exchanging…");
+
+          const { error: exchErr } = await withTimeout(
+            supabase.auth.exchangeCodeForSession(code),
+            EXCHANGE_TIMEOUT_MS
+          );
+
+          if (ac.signal.aborted) return;
+          if (exchErr) throw exchErr;
+
+        } else {
+          // ── Implicit flow fallback: tokens in URL hash ───────────────────
+          // detectSessionInUrl:true makes Supabase parse the hash automatically.
+          // We just need to wait for getSession() to resolve.
+          console.log(
+            "[AuthCallback] No code in query string — " +
+            "checking for implicit-flow hash tokens…"
+          );
+
+          // Give detectSessionInUrl a tick to finish parsing
+          await new Promise((r) => setTimeout(r, 100));
+
+          if (ac.signal.aborted) return;
         }
 
-        // ── Step 2: Exchange the code for a session ─────────────────────────
-        // IMPORTANT: pass the code string, NOT window.location.href.
-        // supabase-js v2 `exchangeCodeForSession` accepts the raw code value.
-        const { error: exchErr } = await withTimeout(
-          supabase.auth.exchangeCodeForSession(code),
-          EXCHANGE_TIMEOUT_MS
-        );
-
-        if (ac.signal.aborted) return;
-
-        if (exchErr) {
-          console.warn("[AuthCallback] exchange error:", exchErr.message);
-          throw exchErr;
-        }
-
-        // ── Step 3: Read the resulting session ──────────────────────────────
+        // ── Read the resulting session ──────────────────────────────────────
         const { data, error: sessionErr } = await supabase.auth.getSession();
 
         if (ac.signal.aborted) return;
+        if (sessionErr) throw sessionErr;
 
-        if (sessionErr) {
-          console.warn("[AuthCallback] getSession error:", sessionErr.message);
-          throw sessionErr;
-        }
-
-        // ── Step 4: Redirect based on setup status ──────────────────────────
         const user = data?.session?.user;
 
         if (user) {
+          console.log("[AuthCallback] session OK, uid:", user.id);
+
           const destination = isSetupComplete(user.id)
             ? "/discover"
             : "/setup/basics";
 
           nav(destination, { replace: true });
         } else {
-          throw new Error("No session returned after exchange.");
+          throw new Error(
+            "No session found after exchange. " +
+            "URL was: " + window.location.href
+          );
         }
 
       } catch (err) {
         if (ac.signal.aborted) return;
 
-        console.warn("[AuthCallback] fatal:", err?.message ?? err);
+        console.error("[AuthCallback] fatal:", err?.message ?? err);
         setErrorMsg(toUserMessage(err));
         setStatus("error");
 
-        // Reset the guard so a retry (navigating back to /auth/callback) works.
+        // Reset so a retry works
         exchangeStarted = false;
       }
     };
@@ -169,20 +153,17 @@ export default function AuthCallback() {
     run();
 
     return () => {
-      // Cancel async work when the component unmounts — prevents state
-      // updates on an unmounted component and stale-response handling.
       ac.abort();
     };
   }, [nav]);
 
-  // ── Error state ───────────────────────────────────────────────────────────
+  // ── Error UI ──────────────────────────────────────────────────────────────
 
   if (status === "error") {
     return (
       <div className="grid min-h-dvh place-items-center bg-white p-6">
         <div className="flex flex-col items-center gap-6 text-center max-w-sm">
 
-          {/* Error icon */}
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
             <svg
               className="h-7 w-7 text-red-500"
@@ -202,7 +183,6 @@ export default function AuthCallback() {
             </svg>
           </div>
 
-          {/* Message */}
           <div>
             <h1 className="text-base font-semibold text-gray-900">
               Sign‑in failed
@@ -210,7 +190,6 @@ export default function AuthCallback() {
             <p className="mt-2 text-sm text-gray-500">{errorMsg}</p>
           </div>
 
-          {/* Recovery actions */}
           <div className="flex flex-col gap-3 w-full">
             <Link
               to="/auth"
@@ -239,7 +218,7 @@ export default function AuthCallback() {
     );
   }
 
-  // ── Pending (default) ─────────────────────────────────────────────────────
+  // ── Pending UI ────────────────────────────────────────────────────────────
 
   return (
     <div className="grid min-h-dvh place-items-center bg-white p-6">

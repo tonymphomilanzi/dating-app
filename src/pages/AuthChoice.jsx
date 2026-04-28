@@ -63,16 +63,16 @@ export default function AuthChoice() {
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
           queryParams: {
-            prompt: "select_account", // always show account picker
-            access_type: "offline",   // get refresh token
+            prompt: "select_account",
+            access_type: "offline",
           },
         },
       });
 
       if (oauthError) throw oauthError;
-      // browser redirects — nothing else runs here
+      // browser redirects away — nothing below runs
     } catch (err) {
-      console.error("Google sign-in error:", err);
+      console.error("[Auth] Google sign-in error:", err);
       setError(err.message || "Google sign-in failed. Please try again.");
       setLoading(false);
     }
