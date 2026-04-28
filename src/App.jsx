@@ -49,6 +49,9 @@ import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
+// Add these imports at the top of your App.jsx
+import AdminApp from "./admin/AdminApp.jsx";
+
 
 export default function App() {
   return (
@@ -57,6 +60,9 @@ export default function App() {
         <Toaster richColors closeButton position="top-center" />
 
         <Routes>
+           {/* ── ADMIN PANEL (completely separate from main app) ──── */}
+          <Route path="/admin/*" element={<AdminApp />} />
+          
           <Route element={<RootLayout />}>
 
             {/* ── Public — no auth needed ──────────────────────────────────── */}
