@@ -39,15 +39,50 @@ const ClinicPreviewModal = ({ clinic, onClose, onAction }) => {
     return (sum / clinic.clinic_reviews.length).toFixed(1)
   }
 
+
   const formatOpeningHours = (hours) => {
-    if (!hours) return 'Not specified'
+  if (!hours) return 'Not specified'
+  
+  let hoursObj
+  
+  // Handle both string and object cases
+  if (typeof hours === 'string') {
     try {
-      const parsed = JSON.parse(hours)
-      return Object.entries(parsed).map(([day, time]) => `${day}: ${time}`).join('\n')
+      hoursObj = JSON.parse(hours)
     } catch {
-      return hours
+      return hours // If parsing fails, return as-is
     }
+  } else if (typeof hours === 'object') {
+    hoursObj = hours
+  } else {
+    return 'Invalid format'
   }
+  
+  // If it's an object, format it nicely
+  if (typeof hoursObj === 'object' && hoursObj !== null) {
+    const daysOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    
+    // Try to format in day order if days are present
+    const formattedHours = daysOrder
+      .filter(day => hoursObj[day] || hoursObj[day.toLowerCase()] || hoursObj[day.charAt(0).toUpperCase() + day.slice(1)])
+      .map(day => {
+        const time = hoursObj[day] || hoursObj[day.toLowerCase()] || hoursObj[day.charAt(0).toUpperCase() + day.slice(1)]
+        const dayName = day.charAt(0).toUpperCase() + day.slice(1)
+        return `${dayName}: ${time}`
+      })
+    
+    if (formattedHours.length > 0) {
+      return formattedHours.join('\n')
+    }
+    
+    // Fallback: just display all key-value pairs
+    return Object.entries(hoursObj)
+      .map(([day, time]) => `${day}: ${time}`)
+      .join('\n')
+  }
+  
+  return 'Invalid format'
+}
 
   const averageRating = getAverageRating()
   const reviewCount = clinic.clinic_reviews?.length || 0
@@ -57,62 +92,7 @@ const ClinicPreviewModal = ({ clinic, onClose, onAction }) => {
 
 
 
-
-  const OpeningHoursDisplay = ({ hours }) => {
-  if (!hours) return <span className="text-gray-400">Not specified</span>
   
-  let hoursObj
-  
-  if (typeof hours === 'string') {
-    try {
-      hoursObj = JSON.parse(hours)
-    } catch {
-      return <span className="text-white">{hours}</span>
-    }
-  } else if (typeof hours === 'object') {
-    hoursObj = hours
-  } else {
-    return <span className="text-gray-400">Invalid format</span>
-  }
-  
-  if (typeof hoursObj === 'object' && hoursObj !== null) {
-    const daysOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    
-    const orderedDays = daysOrder
-      .map(day => {
-        const time = hoursObj[day] || hoursObj[day.toLowerCase()] || hoursObj[day.charAt(0).toUpperCase() + day.slice(1)]
-        return time ? { day: day.charAt(0).toUpperCase() + day.slice(1), time } : null
-      })
-      .filter(Boolean)
-    
-    if (orderedDays.length > 0) {
-      return (
-        <div className="space-y-1">
-          {orderedDays.map(({ day, time }) => (
-            <div key={day} className="flex justify-between">
-              <span className="text-gray-400">{day}:</span>
-              <span className="text-white">{time}</span>
-            </div>
-          ))}
-        </div>
-      )
-    }
-    
-    // Fallback for non-standard format
-    return (
-      <div className="space-y-1">
-        {Object.entries(hoursObj).map(([day, time]) => (
-          <div key={day} className="flex justify-between">
-            <span className="text-gray-400">{day}:</span>
-            <span className="text-white">{time}</span>
-          </div>
-        ))}
-      </div>
-    )
-  }
-  
-  return <span className="text-gray-400">Invalid format</span>
-}
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -283,7 +263,9 @@ const ClinicPreviewModal = ({ clinic, onClose, onAction }) => {
 
                   <div>
                     <h3 className="text-lg font-semibold text-white mb-3">Opening Hours</h3>
-                     <OpeningHoursDisplay hours={clinic.opening_hours} />
+                    <pre className="text-white text-sm whitespace-pre-wrap">
+                      {formatOpeningHours(clinic.opening_hours)}
+                    </pre>
                   </div>
                 </div>
               </div>
