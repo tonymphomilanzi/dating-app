@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabaseAdmin } from '../utils/supabase'
+import bcrypt from 'bcryptjs'
 
 const AuthContext = createContext({})
 
@@ -27,14 +28,14 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true)
       
-      // Use a different localStorage key to avoid conflicts with main app
+      // Get session from storage
       const adminData = localStorage.getItem('admin_panel_session')
       
       if (adminData) {
         try {
           const parsed = JSON.parse(adminData)
           
-          // Verify the session is still valid by checking if admin user exists
+          // Verify session against DB to ensure user is still active/exists
           const { data: adminUser, error } = await supabaseAdmin
             .from('admin_users')
             .select('id, username, is_active')
@@ -43,7 +44,6 @@ export const AuthProvider = ({ children }) => {
             .single()
           
           if (error || !adminUser) {
-            // Session is invalid, clear it
             localStorage.removeItem('admin_panel_session')
             setAdmin(null)
           } else {
@@ -67,29 +67,35 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (username, password) => {
     try {
-      const { data, error } = await supabaseAdmin
+      // 1. Fetch user by username
+      const { data: adminUser, error } = await supabaseAdmin
         .from('admin_users')
         .select('*')
         .eq('username', username)
         .eq('is_active', true)
         .single()
 
-      if (error || !data) {
+      if (error || !adminUser) {
         throw new Error('Invalid credentials')
       }
 
-      // Simple password check (change this to bcrypt in production)
-      if (password !== 'admin123') {
+      // 2. Compare provided password with hashed password in DB
+      const isValid = await bcrypt.compare(password, adminUser.password_hash)
+
+      if (!isValid) {
         throw new Error('Invalid credentials')
       }
 
-      // Update last login
+      // 3. Prepare session
+      const adminData = { id: adminUser.id, username: adminUser.username }
+
+      // 4. Update last login timestamp in DB
       await supabaseAdmin
         .from('admin_users')
         .update({ last_login: new Date().toISOString() })
-        .eq('id', data.id)
+        .eq('id', adminUser.id)
 
-      const adminData = { id: data.id, username: data.username }
+      // 5. Update local state and storage
       setAdmin(adminData)
       localStorage.setItem('admin_panel_session', JSON.stringify(adminData))
 
