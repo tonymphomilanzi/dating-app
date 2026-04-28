@@ -1,5 +1,4 @@
-// src/admin/AdminApp.jsx
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -12,6 +11,7 @@ import Layout from './components/Layout'
 
 const ProtectedRoute = ({ children }) => {
   const { admin, loading } = useAuth()
+  const location = useLocation()
   
   if (loading) {
     return (
@@ -22,59 +22,96 @@ const ProtectedRoute = ({ children }) => {
   }
   
   if (!admin) {
-    return <Navigate to="/admin/login" replace />
+    // Redirect to login but preserve the intended destination
+    return <Navigate to="/admin/login" state={{ from: location }} replace />
   }
   
   return <Layout>{children}</Layout>
 }
 
 const AdminRoutes = () => {
+  const { admin, loading } = useAuth()
+
+  // Show loading while checking auth status
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-white">Loading admin panel...</div>
+      </div>
+    )
+  }
+
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      <Route 
+        path="/login" 
+        element={
+          admin ? <Navigate to="/admin/dashboard" replace /> : <Login />
+        } 
+      />
+      
       <Route path="/dashboard" element={
         <ProtectedRoute>
           <Dashboard />
         </ProtectedRoute>
       } />
+      
       <Route path="/users" element={
         <ProtectedRoute>
           <UserManagement />
         </ProtectedRoute>
       } />
+      
       <Route path="/streams" element={
         <ProtectedRoute>
           <StreamManagement />
         </ProtectedRoute>
       } />
+      
       <Route path="/clinics" element={
         <ProtectedRoute>
           <ClinicManagement />
         </ProtectedRoute>
       } />
+      
       <Route path="/subscriptions" element={
         <ProtectedRoute>
           <SubscriptionManagement />
         </ProtectedRoute>
       } />
+      
       <Route path="/notifications" element={
         <ProtectedRoute>
           <NotificationCenter />
         </ProtectedRoute>
       } />
+      
       {/* Handle /admin root path */}
-      <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
+      <Route 
+        path="/" 
+        element={
+          admin ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/admin/login" replace />
+        } 
+      />
+      
       {/* Handle any other /admin/* paths */}
-      <Route path="/*" element={<Navigate to="/admin/dashboard" replace />} />
+      <Route 
+        path="/*" 
+        element={
+          admin ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/admin/login" replace />
+        } 
+      />
     </Routes>
   )
 }
 
 const AdminApp = () => {
   return (
-    <AuthProvider>
-      <AdminRoutes />
-    </AuthProvider>
+    <div className="min-h-screen bg-gray-950">
+      <AuthProvider>
+        <AdminRoutes />
+      </AuthProvider>
+    </div>
   )
 }
 

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 const Login = () => {
   const [username, setUsername] = useState('')
@@ -7,7 +8,17 @@ const Login = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   
-  const { login } = useAuth()
+  const { login, admin } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (admin) {
+      const from = location.state?.from?.pathname || '/admin/dashboard'
+      navigate(from, { replace: true })
+    }
+  }, [admin, navigate, location])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -18,6 +29,9 @@ const Login = () => {
     
     if (!result.success) {
       setError(result.error)
+    } else {
+      const from = location.state?.from?.pathname || '/admin/dashboard'
+      navigate(from, { replace: true })
     }
     
     setLoading(false)
