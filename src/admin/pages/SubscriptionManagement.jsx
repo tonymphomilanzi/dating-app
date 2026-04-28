@@ -32,37 +32,118 @@ const SubscriptionManagement = () => {
   const loadData = async () => {
     try {
       setLoading(true)
+      console.log('🔍 Loading subscription data...')
       
-      // Load subscriptions with user data
+      // 1. Get all users first (from auth.users and profiles)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers()
+      
+      if (authError) {
+        console.error('❌ Auth users error:', authError)
+        throw authError
+      }
+
+      const authUsers = authData.users || []
+      console.log('👥 Found', authUsers.length, 'total users')
+
+      // 2. Get profile data for users
+      const userIds = authUsers.map(user => user.id)
+      const { data: profiles, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, display_name, avatar_url, city, is_premium, is_verified')
+        .in('id', userIds)
+
+      if (profileError) {
+        console.warn('⚠️ Profile query error:', profileError)
+      }
+
+      // 3. Get all subscription data
       const { data: subscriptionData, error: subError } = await supabaseAdmin
         .from('user_subscriptions')
-        .select(`
-          *,
-          profiles (
-            id,
-            display_name,
-            avatar_url,
-            city,
-            is_premium,
-            is_verified
-          )
-        `)
+        .select('*')
+        .in('user_id', userIds)
         .order('created_at', { ascending: false })
 
-      if (subError) throw subError
+      if (subError) {
+        console.warn('⚠️ Subscription query error:', subError)
+      }
 
-      // Load all users for granting new subscriptions
-      const { data: userData, error: userError } = await supabaseAdmin
-        .from('profiles')
-        .select('id, display_name, avatar_url, city')
-        .order('display_name')
+      console.log('💳 Found', subscriptionData?.length || 0, 'subscription records')
 
-      if (userError) throw userError
+      // 4. Create subscription records for all users (including free users)
+      const userSubscriptions = authUsers.map(authUser => {
+        const profile = profiles?.find(p => p.id === authUser.id) || {}
+        const userSubs = subscriptionData?.filter(s => s.user_id === authUser.id) || []
+        
+        // Get the most recent/active subscription
+        const activeSubscription = userSubs.find(s => s.status === 'active')
+        const latestSubscription = userSubs.length > 0 ? userSubs[0] : null
 
-      setSubscriptions(subscriptionData || [])
-      setUsers(userData || [])
+        // Determine current plan and status
+        let currentPlan = 'free'
+        let currentStatus = 'free'
+        let subscriptionRecord = null
+
+        if (activeSubscription) {
+          currentPlan = activeSubscription.plan
+          currentStatus = activeSubscription.status
+          subscriptionRecord = activeSubscription
+        } else if (latestSubscription) {
+          currentPlan = latestSubscription.plan
+          currentStatus = latestSubscription.status
+          subscriptionRecord = latestSubscription
+        }
+
+        // Create a unified subscription record
+        return {
+          // Subscription info (use existing record or create virtual free record)
+          id: subscriptionRecord?.id || `free-${authUser.id}`,
+          user_id: authUser.id,
+          plan: currentPlan,
+          status: currentStatus,
+          started_at: subscriptionRecord?.started_at || authUser.created_at,
+          expires_at: subscriptionRecord?.expires_at,
+          cancelled_at: subscriptionRecord?.cancelled_at,
+          granted_by_admin: subscriptionRecord?.granted_by_admin || false,
+          created_at: subscriptionRecord?.created_at || authUser.created_at,
+          updated_at: subscriptionRecord?.updated_at || authUser.created_at,
+          
+          // User profile info
+          profiles: {
+            id: authUser.id,
+            display_name: profile.display_name || authUser.email?.split('@')[0] || 'Unknown User',
+            avatar_url: profile.avatar_url,
+            city: profile.city,
+            is_premium: profile.is_premium || false,
+            is_verified: profile.is_verified || false,
+            email: authUser.email
+          },
+          
+          // Helper flags
+          is_virtual_free: !subscriptionRecord, // True if user has no subscription records
+          all_subscriptions: userSubs // All subscription history for this user
+        }
+      })
+
+      console.log('✅ Created', userSubscriptions.length, 'unified subscription records')
+      setSubscriptions(userSubscriptions)
+
+      // Set users for grant modal
+      const usersForGrant = authUsers.map(authUser => {
+        const profile = profiles?.find(p => p.id === authUser.id) || {}
+        return {
+          id: authUser.id,
+          display_name: profile.display_name || authUser.email?.split('@')[0] || 'Unknown User',
+          avatar_url: profile.avatar_url,
+          city: profile.city,
+          email: authUser.email
+        }
+      })
+      setUsers(usersForGrant)
+
     } catch (error) {
-      console.error('Error loading data:', error)
+      console.error('❌ Error loading data:', error)
+      setSubscriptions([])
+      setUsers([])
     } finally {
       setLoading(false)
     }
@@ -78,13 +159,18 @@ const SubscriptionManagement = () => {
 
     // Status filter
     if (filters.status !== 'all') {
-      filtered = filtered.filter(sub => sub.status === filters.status)
+      if (filters.status === 'free') {
+        filtered = filtered.filter(sub => sub.plan === 'free' || sub.status === 'free')
+      } else {
+        filtered = filtered.filter(sub => sub.status === filters.status)
+      }
     }
 
     // Search filter
     if (filters.search) {
       filtered = filtered.filter(sub => 
         sub.profiles?.display_name?.toLowerCase().includes(filters.search.toLowerCase()) ||
+        sub.profiles?.email?.toLowerCase().includes(filters.search.toLowerCase()) ||
         sub.profiles?.city?.toLowerCase().includes(filters.search.toLowerCase())
       )
     }
@@ -109,79 +195,113 @@ const SubscriptionManagement = () => {
 
   const handleSubscriptionAction = async (action, subscription, data = {}) => {
     try {
-      let updateData = {}
       let logMessage = ''
 
-      switch (action) {
-        case 'activate':
-          updateData = { status: 'active' }
-          logMessage = `Activated subscription for ${subscription.profiles?.display_name}`
-          break
-        case 'cancel':
-          updateData = { 
-            status: 'cancelled', 
-            cancelled_at: new Date().toISOString() 
-          }
-          logMessage = `Cancelled subscription for ${subscription.profiles?.display_name}`
-          break
-        case 'expire':
-          updateData = { 
-            status: 'expired',
-            expires_at: new Date().toISOString()
-          }
-          logMessage = `Expired subscription for ${subscription.profiles?.display_name}`
-          break
-        case 'extend':
-          const currentExpiry = subscription.expires_at ? new Date(subscription.expires_at) : new Date()
-          const newExpiry = new Date(currentExpiry.getTime() + (data.months * 30 * 24 * 60 * 60 * 1000))
-          updateData = { 
-            expires_at: newExpiry.toISOString(),
-            status: 'active'
-          }
-          logMessage = `Extended subscription for ${subscription.profiles?.display_name} by ${data.months} month(s)`
-          break
-        case 'delete':
-          const { error: deleteError } = await supabaseAdmin
-            .from('user_subscriptions')
-            .delete()
-            .eq('id', subscription.id)
+      // Handle virtual free users (no subscription record exists)
+      if (subscription.is_virtual_free && action !== 'delete') {
+        // Create a real subscription record for virtual free users
+        const newSubscriptionData = {
+          user_id: subscription.user_id,
+          plan: action === 'activate' ? 'basic' : 'free',
+          status: action === 'activate' ? 'active' : 'cancelled',
+          granted_by_admin: true
+        }
 
-          if (deleteError) throw deleteError
+        if (action === 'extend') {
+          const expiresAt = new Date()
+          expiresAt.setMonth(expiresAt.getMonth() + (data.months || 1))
+          newSubscriptionData.expires_at = expiresAt.toISOString()
+          newSubscriptionData.plan = 'basic'
+          newSubscriptionData.status = 'active'
+        }
 
-          // Update user premium status if this was their only active subscription
-          const { data: otherSubs } = await supabaseAdmin
-            .from('user_subscriptions')
-            .select('id')
-            .eq('user_id', subscription.user_id)
-            .eq('status', 'active')
+        const { error } = await supabaseAdmin
+          .from('user_subscriptions')
+          .insert(newSubscriptionData)
 
-          if (!otherSubs || otherSubs.length === 0) {
-            await supabaseAdmin
-              .from('profiles')
-              .update({ is_premium: false })
-              .eq('id', subscription.user_id)
-          }
+        if (error) throw error
+        logMessage = `Created ${newSubscriptionData.plan} subscription for ${subscription.profiles?.display_name}`
+      } else {
+        // Handle existing subscription records
+        let updateData = {}
+        
+        switch (action) {
+          case 'activate':
+            updateData = { status: 'active' }
+            logMessage = `Activated subscription for ${subscription.profiles?.display_name}`
+            break
+          case 'cancel':
+            updateData = { 
+              status: 'cancelled', 
+              cancelled_at: new Date().toISOString() 
+            }
+            logMessage = `Cancelled subscription for ${subscription.profiles?.display_name}`
+            break
+          case 'expire':
+            updateData = { 
+              status: 'expired',
+              expires_at: new Date().toISOString()
+            }
+            logMessage = `Expired subscription for ${subscription.profiles?.display_name}`
+            break
+          case 'extend':
+            const currentExpiry = subscription.expires_at ? new Date(subscription.expires_at) : new Date()
+            const newExpiry = new Date(currentExpiry.getTime() + (data.months * 30 * 24 * 60 * 60 * 1000))
+            updateData = { 
+              expires_at: newExpiry.toISOString(),
+              status: 'active'
+            }
+            logMessage = `Extended subscription for ${subscription.profiles?.display_name} by ${data.months} month(s)`
+            break
+          case 'delete':
+            if (subscription.is_virtual_free) {
+              // Can't delete a virtual free subscription
+              alert('Cannot delete a free user subscription (no record exists)')
+              return
+            }
+            
+            const { error: deleteError } = await supabaseAdmin
+              .from('user_subscriptions')
+              .delete()
+              .eq('id', subscription.id)
 
-          await logAction('delete', 'subscription', subscription.id, {
-            user_name: subscription.profiles?.display_name,
-            plan: subscription.plan
-          })
+            if (deleteError) throw deleteError
 
-          await loadData()
-          setConfirmAction(null)
-          alert('Subscription deleted successfully!')
-          return
+            // Update user premium status
+            const { data: otherSubs } = await supabaseAdmin
+              .from('user_subscriptions')
+              .select('id')
+              .eq('user_id', subscription.user_id)
+              .eq('status', 'active')
+
+            if (!otherSubs || otherSubs.length === 0) {
+              await supabaseAdmin
+                .from('profiles')
+                .update({ is_premium: false })
+                .eq('id', subscription.user_id)
+            }
+
+            await logAction('delete', 'subscription', subscription.id, {
+              user_name: subscription.profiles?.display_name,
+              plan: subscription.plan
+            })
+
+            await loadData()
+            setConfirmAction(null)
+            alert('Subscription deleted successfully!')
+            return
+        }
+
+        const { error } = await supabaseAdmin
+          .from('user_subscriptions')
+          .update(updateData)
+          .eq('id', subscription.id)
+
+        if (error) throw error
       }
 
-      const { error } = await supabaseAdmin
-        .from('user_subscriptions')
-        .update(updateData)
-        .eq('id', subscription.id)
-
-      if (error) throw error
-
-      // Update user premium status based on subscription
-      const isPremium = updateData.status === 'active' && subscription.plan !== 'free'
+      // Update user premium status
+      const isPremium = (action === 'activate' || action === 'extend') && subscription.plan !== 'free'
       await supabaseAdmin
         .from('profiles')
         .update({ is_premium: isPremium })
@@ -256,12 +376,33 @@ const SubscriptionManagement = () => {
         return
       }
 
+      const selectedSubscriptions = filteredSubscriptions.filter(s => bulkSelected.has(s.id))
+      const realSubscriptions = selectedSubscriptions.filter(s => !s.is_virtual_free)
+      
+      if (realSubscriptions.length === 0 && action !== 'activate') {
+        alert('No real subscription records found for selected users')
+        return
+      }
+
       let updateData = {}
       switch (action) {
         case 'cancel':
           updateData = { status: 'cancelled', cancelled_at: new Date().toISOString() }
           break
         case 'activate':
+          // For virtual free users, create actual subscription records
+          for (const sub of selectedSubscriptions) {
+            if (sub.is_virtual_free) {
+              await supabaseAdmin
+                .from('user_subscriptions')
+                .insert({
+                  user_id: sub.user_id,
+                  plan: 'basic',
+                  status: 'active',
+                  granted_by_admin: true
+                })
+            }
+          }
           updateData = { status: 'active' }
           break
         case 'expire':
@@ -269,12 +410,14 @@ const SubscriptionManagement = () => {
           break
       }
 
-      const { error } = await supabaseAdmin
-        .from('user_subscriptions')
-        .update(updateData)
-        .in('id', Array.from(bulkSelected))
+      if (realSubscriptions.length > 0) {
+        const { error } = await supabaseAdmin
+          .from('user_subscriptions')
+          .update(updateData)
+          .in('id', realSubscriptions.map(s => s.id))
 
-      if (error) throw error
+        if (error) throw error
+      }
 
       await logAction(`bulk_${action}`, 'subscription', null, {
         count: bulkSelected.size,
@@ -296,6 +439,7 @@ const SubscriptionManagement = () => {
       active: subscriptions.filter(s => s.status === 'active').length,
       expired: subscriptions.filter(s => s.status === 'expired').length,
       cancelled: subscriptions.filter(s => s.status === 'cancelled').length,
+      free: subscriptions.filter(s => s.plan === 'free' || s.is_virtual_free).length,
       expiringSoon: subscriptions.filter(s => {
         if (s.status !== 'active' || !s.expires_at) return false
         const expiry = new Date(s.expires_at)
@@ -308,7 +452,7 @@ const SubscriptionManagement = () => {
 
   const getPlanStats = () => {
     return {
-      free: subscriptions.filter(s => s.plan === 'free' && s.status === 'active').length,
+      free: subscriptions.filter(s => s.plan === 'free' || s.is_virtual_free).length,
       basic: subscriptions.filter(s => s.plan === 'basic' && s.status === 'active').length,
       premium: subscriptions.filter(s => s.plan === 'premium' && s.status === 'active').length,
       vip: subscriptions.filter(s => s.plan === 'vip' && s.status === 'active').length
@@ -345,10 +489,14 @@ const SubscriptionManagement = () => {
       </div>
 
       {/* Status Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-          <div className="text-gray-400 text-sm">Total Subscriptions</div>
+          <div className="text-gray-400 text-sm">Total Users</div>
           <div className="text-white text-xl font-bold">{statusStats.total}</div>
+        </div>
+        <div className="bg-gray-900/20 border border-gray-600 rounded-lg p-4">
+          <div className="text-gray-400 text-sm">Free</div>
+          <div className="text-white text-xl font-bold">{statusStats.free}</div>
         </div>
         <div className="bg-green-900/20 border border-green-600 rounded-lg p-4">
           <div className="text-green-400 text-sm">Active</div>
@@ -414,6 +562,7 @@ const SubscriptionManagement = () => {
               className="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Status</option>
+              <option value="free">Free</option>
               <option value="active">Active</option>
               <option value="expired">Expired</option>
               <option value="cancelled">Cancelled</option>
