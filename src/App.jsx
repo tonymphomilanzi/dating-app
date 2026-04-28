@@ -9,7 +9,7 @@ import SetupGate from "./components/SetupGate.jsx";
 
 import Onboarding from "./pages/Onboarding.jsx";
 import AuthChoice from "./pages/AuthChoice.jsx";
-import EmailLogin from "./pages/EmailLogin.jsx";
+// REMOVED: EmailLogin — consolidating with SignInEmail
 import EmailVerify from "./pages/EmailVerify.jsx";
 import AuthCallback from "./pages/AuthCallback.jsx";
 import SignUp from "./pages/SignUp.jsx";
@@ -49,79 +49,81 @@ import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
+
 export default function App() {
   return (
     <AuthFlowProvider>
-        <NotificationProvider>
-      <Toaster richColors closeButton position="top-center" />
+      <NotificationProvider>
+        <Toaster richColors closeButton position="top-center" />
 
-      <Routes>
-        <Route element={<RootLayout />}>
+        <Routes>
+          <Route element={<RootLayout />}>
 
-          {/* ── Public — no auth needed ──────────────────────────────────── */}
-          <Route path="/auth/callback" element={<AuthCallback />} />
+            {/* ── Public — no auth needed ──────────────────────────────────── */}
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* ── Guest only (redirect to /discover if already signed in) ──── */}
-          <Route element={<GuestOnly />}>
-            <Route path="/"                   element={<Onboarding />} />
-            <Route path="/auth"               element={<AuthChoice />} />
-            <Route path="/auth/email"         element={<EmailLogin />} />
-            <Route path="/auth/email-verify"  element={<EmailVerify />} />
-            <Route path="/auth/verify"        element={<EmailVerify />} />
-            <Route path="/auth/signup"        element={<SignUp />} />
-            <Route path="/auth/signin/email"  element={<SignInEmail />} />
+            {/* ── Guest only (redirect to /discover if already signed in) ──── */}
+            <Route element={<GuestOnly />}>
+              <Route path="/"                   element={<Onboarding />} />
+              <Route path="/auth"               element={<AuthChoice />} />
+              {/* FIXED: Consolidated both email routes to use SignInEmail */}
+              <Route path="/auth/email"         element={<SignInEmail />} />
+              <Route path="/auth/signin/email"  element={<SignInEmail />} />
+              <Route path="/auth/email-verify"  element={<EmailVerify />} />
+              <Route path="/auth/verify"        element={<EmailVerify />} />
+              <Route path="/auth/signup"        element={<SignUp />} />
 
-            {/*    Forgot password — guest only so logged-in users        */}
-            {/*    can't accidentally hit it and lose their session       */}
-            <Route path="/auth/forgot-password" element={<ForgotPassword />} />
-          </Route>
-
-          {/* ── Requires a valid session ─────────────────────────────────── */}
-          <Route element={<RequireAuth />}>
-
-            {/* Setup wizard — shown before profile is complete */}
-            <Route path="/setup/basics"    element={<SetupBasics />} />
-            <Route path="/setup/dob"       element={<SetupDOB />} />
-            <Route path="/setup/gender"    element={<SetupGender />} />
-            <Route path="/setup/interests" element={<SetupInterests />} />
-            <Route path="/setup/photo"     element={<SetupPhoto />} />
-
-            {/* ── Requires completed profile (SetupGate) ──────────────── */}
-            <Route element={<SetupGate />}>
-
-              {/* Bottom-tab pages */}
-              <Route element={<TabsLayout />}>
-                <Route path="/discover"  element={<Discover />} />
-                <Route path="/matches"   element={<Matches />} />
-                <Route path="/messages"  element={<Messages />} />
-                <Route path="/events"    element={<Events />} />
-                <Route path="/massage-clinics" element={<MassageClinic />} />
-              </Route>
-
-              {/* Full-screen protected pages (no tab bar) */}
-              <Route path="/streams"              element={<Streams />} />
-              <Route path="/notifications"        element={<Notifications />} />
-              <Route path="/profile"              element={<ProfileYou />} />
-              <Route path="/profile/:id"          element={<ProfileView />} />
-              <Route path="/profile/:id/gallery"  element={<ProfileGallery />} />
-              <Route path="/filters"              element={<Filters />} />
-              <Route path="/chat/:id"             element={<Chat />} />
-              <Route path="/match"                element={<MatchSuccess />} />
-              <Route path="/stories/new"          element={<StoryComposer />} />
-              <Route path="/stories/:userId"      element={<StoryPage />} />
-              <Route path="/events/new"           element={<CreateEvent />} />
-              <Route path="/events/:id"           element={<EventDetail />} />
-              <Route path="/calendar"             element={<Calendar />} />
-              <Route path="/massage-clinics/new"  element={<CreateMassageClinic />} />
-              <Route path="/massage-clinics/:id"  element={<MassageClinicDetail />} />
+              {/*    Forgot password — guest only so logged-in users        */}
+              {/*    can't accidentally hit it and lose their session       */}
+              <Route path="/auth/forgot-password" element={<ForgotPassword />} />
             </Route>
+
+            {/* ── Requires a valid session ─────────────────────────────────── */}
+            <Route element={<RequireAuth />}>
+
+              {/* Setup wizard — shown before profile is complete */}
+              <Route path="/setup/basics"    element={<SetupBasics />} />
+              <Route path="/setup/dob"       element={<SetupDOB />} />
+              <Route path="/setup/gender"    element={<SetupGender />} />
+              <Route path="/setup/interests" element={<SetupInterests />} />
+              <Route path="/setup/photo"     element={<SetupPhoto />} />
+
+              {/* ── Requires completed profile (SetupGate) ──────────────── */}
+              <Route element={<SetupGate />}>
+
+                {/* Bottom-tab pages */}
+                <Route element={<TabsLayout />}>
+                  <Route path="/discover"  element={<Discover />} />
+                  <Route path="/matches"   element={<Matches />} />
+                  <Route path="/messages"  element={<Messages />} />
+                  <Route path="/events"    element={<Events />} />
+                  <Route path="/massage-clinics" element={<MassageClinic />} />
+                </Route>
+
+                {/* Full-screen protected pages (no tab bar) */}
+                <Route path="/streams"              element={<Streams />} />
+                <Route path="/notifications"        element={<Notifications />} />
+                <Route path="/profile"              element={<ProfileYou />} />
+                <Route path="/profile/:id"          element={<ProfileView />} />
+                <Route path="/profile/:id/gallery"  element={<ProfileGallery />} />
+                <Route path="/filters"              element={<Filters />} />
+                <Route path="/chat/:id"             element={<Chat />} />
+                <Route path="/match"                element={<MatchSuccess />} />
+                <Route path="/stories/new"          element={<StoryComposer />} />
+                <Route path="/stories/:userId"      element={<StoryPage />} />
+                <Route path="/events/new"           element={<CreateEvent />} />
+                <Route path="/events/:id"           element={<EventDetail />} />
+                <Route path="/calendar"             element={<Calendar />} />
+                <Route path="/massage-clinics/new"  element={<CreateMassageClinic />} />
+                <Route path="/massage-clinics/:id"  element={<MassageClinicDetail />} />
+              </Route>
+            </Route>
+
+            {/* ── Catch-all ────────────────────────────────────────────────── */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+
           </Route>
-
-          {/* ── Catch-all ────────────────────────────────────────────────── */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-
-        </Route>
-      </Routes>
+        </Routes>
       </NotificationProvider>
     </AuthFlowProvider>
   );

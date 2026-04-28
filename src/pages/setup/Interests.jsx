@@ -1,6 +1,8 @@
+// src/pages/setup/SetupInterests.jsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase.client.js";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext.jsx";
 
 const DEFAULT_INTERESTS = [
   "Photography","Art","Travel","Cooking","Dogs","Fitness","Hiking",
@@ -10,7 +12,6 @@ const DEFAULT_INTERESTS = [
 
 const norm = (s) => s.trim().toLowerCase();
 
-// Simple icon mapper (Lineicons). Falls back gracefully.
 const ICONS = {
   photography: "lni lni-camera",
   art: "lni lni-brush",
@@ -39,14 +40,14 @@ const iconFor = (label) => ICONS[norm(label)] || "lni lni-heart";
 
 export default function SetupInterests(){
   const nav = useNavigate();
-  const [all, setAll] = useState([]);              // [{ id?, label }]
-  const [pickedLabels, setPickedLabels] = useState([]); // ['Art', ...]
+  const { reloadProfile, markSetupComplete } = useAuth();
+  const [all, setAll] = useState([]);
+  const [pickedLabels, setPickedLabels] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [usingFallback, setUsingFallback] = useState(false);
   const [error, setError] = useState("");
 
-  // label -> id map
   const idByLabel = useMemo(() => {
     const m = {};
     for (const i of all) if (i?.id) m[norm(i.label)] = i.id;
@@ -59,7 +60,6 @@ export default function SetupInterests(){
       setLoading(true);
       setError("");
       try {
-        // 1) Load catalog
         const { data: interests, error: err1 } = await supabase
           .from("interests")
           .select("id,label")
@@ -69,7 +69,6 @@ export default function SetupInterests(){
         let fallback = false;
 
         if (err1 || !interests || interests.length === 0) {
-          // Fallback to local defaults if DB empty or error
           finalAll = DEFAULT_INTERESTS.map(l => ({ label: l }));
           fallback = true;
         } else {
@@ -80,7 +79,6 @@ export default function SetupInterests(){
         setAll(finalAll);
         setUsingFallback(fallback);
 
-        // 2) Load my current picks (if authenticated)
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) { setLoading(false); return; }
 
@@ -119,11 +117,9 @@ export default function SetupInterests(){
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // Map labels to IDs
       let map = { ...idByLabel };
       const missing = pickedLabels.filter(l => !map[norm(l)]);
 
-      // If any picked labels don't exist in DB (e.g., fallback), try to upsert them (requires insert policy)
       if (missing.length > 0) {
         const payload = missing.map(l => ({ label: l }));
         const { error: upErr } = await supabase
@@ -133,7 +129,6 @@ export default function SetupInterests(){
           throw new Error("Interests not seeded and insert blocked. Run the SQL seed or enable insert policy.");
         }
 
-        // Re-fetch IDs for all picked labels
         const { data: rows, error: refetchErr } = await supabase
           .from("interests")
           .select("id,label")
@@ -148,7 +143,6 @@ export default function SetupInterests(){
         throw new Error("Some selected interests are missing IDs. Please retry.");
       }
 
-      // Replace user_interests with the current selection
       const { error: delErr } = await supabase.from("user_interests").delete().eq("user_id", user.id);
       if (delErr) throw delErr;
 
@@ -158,11 +152,30 @@ export default function SetupInterests(){
         if (insErr) throw insErr;
       }
 
+      // CRITICAL FIX: Ensure completion flag is maintained and reload profile
+      markSetupComplete();
+      await reloadProfile();
+
       nav("/setup/photo");
     } catch (e) {
       setError(e.message || "Failed to save");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const skip = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // CRITICAL FIX: Maintain completion flag when skipping
+        markSetupComplete();
+        await reloadProfile();
+      }
+      nav("/setup/photo");
+    } catch (e) {
+      console.warn("Failed to update profile on skip:", e);
+      nav("/setup/photo");
     }
   };
 
@@ -181,7 +194,7 @@ export default function SetupInterests(){
             <i className="lni lni-chevron-left text-lg" />
           </button>
           <button
-            onClick={() => nav("/setup/photo")}
+            onClick={skip}
             className="ml-auto text-sm font-medium text-violet-600 hover:text-violet-700"
           >
             Skip
@@ -211,7 +224,6 @@ export default function SetupInterests(){
           <div className="mt-8 text-sm text-gray-500">Loading interests…</div>
         ) : (
           <>
-            {/* Chips grid (2 columns) */}
             <div className="mt-6 grid grid-cols-2 gap-3">
               {all.map((i) => {
                 const label = i.label;
@@ -241,7 +253,6 @@ export default function SetupInterests(){
               })}
             </div>
 
-            {/* Helper: count + requirement */}
             <div className="mt-4 flex items-center justify-between text-xs">
               <span className="text-gray-600">Pick at least 5</span>
               <span className={`font-medium ${pickedLabels.length >= 5 ? "text-violet-700" : "text-gray-500"}`}>

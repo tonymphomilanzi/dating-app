@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
+import { useAuth } from "../contexts/AuthContext.jsx";
 
 /* Simple digit-box OTP input */
 function OTPInput({ length = 6, onChange }) {
@@ -56,6 +57,7 @@ function OTPInput({ length = 6, onChange }) {
 
 export default function EmailVerify() {
   const nav = useNavigate();
+  const { reloadProfile } = useAuth();
   const { email, displayName, pendingPassword, otpType, clearFlow } = useAuthFlow();
   const [code, setCode] = useState("");
   const [timeLeft, setTimeLeft] = useState(60);
@@ -81,8 +83,6 @@ export default function EmailVerify() {
     setVerifying(true);
 
     try {
-      // Try "email" type first (works for both login OTP and signup OTP in newer Supabase)
-      // Fall back to "signup" if needed
       let verifyError = null;
 
       const { error: e1 } = await supabase.auth.verifyOtp({
@@ -92,18 +92,16 @@ export default function EmailVerify() {
       });
       verifyError = e1;
 
-      // If the primary type failed, try the alternate
       if (verifyError) {
         const { error: e2 } = await supabase.auth.verifyOtp({
           email,
           token: code,
           type: "signup",
         });
-        if (e2) throw verifyError; // throw original error
+        if (e2) throw verifyError;
         verifyError = null;
       }
 
-      // OTP verified — session is now active
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -125,7 +123,10 @@ export default function EmailVerify() {
 
       clearFlow();
 
-      // Decide where to go
+      // CRITICAL FIX: Always reload profile after verification
+      await reloadProfile();
+
+      // Decide where to go based on updated profile state
       const setupDone = localStorage.getItem(`SETUP_OK_${user?.id}`) === "1";
       nav(setupDone ? "/discover" : "/setup/basics", { replace: true });
     } catch (e) {

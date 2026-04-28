@@ -1,14 +1,17 @@
+// src/pages/setup/SetupPhoto.jsx
 import { useEffect, useRef, useState } from "react";
 import TopBar from "../../components/TopBar.jsx";
 import Button from "../../components/Button.jsx";
 import Avatar from "../../components/Avatar.jsx";
 import { supabase } from "../../lib/supabase.client.js";  
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext.jsx";
 
 const MAX_MB = 10;
 
 export default function SetupPhoto(){
   const nav = useNavigate();
+  const { reloadProfile, markSetupComplete } = useAuth();
   const inputRef = useRef(null);
   const [preview, setPreview] = useState("");
   const [file, setFile] = useState(null);
@@ -16,7 +19,6 @@ export default function SetupPhoto(){
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    // Clean preview URL on unmount/change
     return () => { if (preview) URL.revokeObjectURL(preview); };
   }, [preview]);
 
@@ -43,13 +45,13 @@ export default function SetupPhoto(){
     setUploading(true);
     setErr("");
 
-    // Watchdog: if something stalls > 20s, bail out loudly
     let watchdog;
     const failTimeout = (label, extra)=> {
       console.error("[Photo] timeout:", label, extra || {});
       setErr("Upload timed out. Check your connection and try again.");
       setUploading(false);
     };
+    
     try {
       const { data: { user }, error: uErr } = await supabase.auth.getUser();
       if (uErr) throw uErr;
@@ -58,7 +60,6 @@ export default function SetupPhoto(){
       const path = `${user.id}/${Date.now()}-${file.name}`;
       console.info("[Photo] uploading to:", { bucket: "profiles", path });
 
-      // 1) Upload to Storage
       watchdog = setTimeout(()=>failTimeout("storage.upload", { bucket:"profiles", path }), 20000);
       const { data: up, error: upErr } = await supabase.storage
         .from("profiles")
@@ -69,7 +70,6 @@ export default function SetupPhoto(){
         throw new Error(upErr.message || "Upload failed (storage).");
       }
 
-      // 2) Get public URL (or generate signed URL if bucket is private)
       const { data: pub } = supabase.storage.from("profiles").getPublicUrl(path);
       const publicUrl = pub?.publicUrl;
       if (!publicUrl) {
@@ -81,20 +81,16 @@ export default function SetupPhoto(){
           console.error("[Photo] createSignedUrl error:", sErr);
           throw new Error("Could not create accessible URL for avatar.");
         }
-        // Use the signed URL if your bucket is private
-        // For public buckets, getPublicUrl should be fine.
       }
 
       console.info("[Photo] public URL resolved");
 
-      // 3) Insert into photos (best-effort; log but don’t block user if it fails)
       console.info("[Photo] inserting into photos table…");
       const { error: photoErr } = await supabase
         .from("photos")
         .insert({ user_id: user.id, path, is_primary: true });
       if (photoErr) console.warn("[Photo] photos insert error (non-fatal):", photoErr.message);
 
-      // 4) Update profile avatar_url
       console.info("[Photo] updating profile avatar_url…");
       watchdog = setTimeout(()=>failTimeout("profiles.update avatar_url"), 10000);
       const { error: profErr } = await supabase
@@ -107,7 +103,6 @@ export default function SetupPhoto(){
         throw new Error("Failed to save avatar (profile update blocked by RLS?).");
       }
 
-      // 5) Verify avatar_url actually saved (avoid SetupGate race)
       console.info("[Photo] verifying avatar_url saved…");
       watchdog = setTimeout(()=>failTimeout("verify avatar_url"), 8000);
       const { data: prof, error: vErr } = await supabase
@@ -125,13 +120,13 @@ export default function SetupPhoto(){
       }
 
       console.info("[Photo] success; navigating → /discover");
+      
+      // CRITICAL FIX: Use correct flag format and reload profile
+      markSetupComplete();
+      await reloadProfile();
+      
       setUploading(false);
-      // Navigate out; SetupGate will pass now that avatar_url is set
-
-      // After verifying avatar_url:
-window.localStorage.setItem("SETUP_OK", "1");
-setUploading(false);
-nav("/discover", { replace: true });
+      nav("/discover", { replace: true });
 
     } catch (e) {
       clearTimeout(watchdog);
@@ -141,9 +136,44 @@ nav("/discover", { replace: true });
     }
   };
 
+  const skip = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // CRITICAL FIX: Maintain completion flag when skipping
+        markSetupComplete();
+        await reloadProfile();
+      }
+      nav("/discover", { replace: true });
+    } catch (e) {
+      console.warn("Failed to update profile on skip:", e);
+      nav("/discover", { replace: true });
+    }
+  };
+
   return (
     <div className="min-h-dvh">
-      <TopBar title="Add a photo" />
+      <div className="sticky top-0 z-10 bg-white/90 px-4 pt-4 backdrop-blur">
+        <div className="mx-auto flex max-w-md items-center">
+          <button
+            onClick={() => nav(-1)}
+            aria-label="Back"
+            className="grid h-10 w-10 place-items-center rounded-2xl border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            <i className="lni lni-chevron-left text-lg" />
+          </button>
+          <div className="mx-auto">
+            <h1 className="text-lg font-semibold">Add a photo</h1>
+          </div>
+          <button
+            onClick={skip}
+            className="text-sm font-medium text-violet-600 hover:text-violet-700"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+
       <div className="space-y-6 p-6">
         <div className="flex items-center gap-4">
           <Avatar size={82} src={preview}/>
