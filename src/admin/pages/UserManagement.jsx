@@ -29,12 +29,12 @@ const UserManagement = () => {
     filterUsers()
   }, [users, searchTerm, filters])
 
-  const loadUsers = async () => {
+const loadUsers = async () => {
   try {
     setLoading(true)
     console.log('🔍 Loading all registered users...')
     
-    // Get all users from auth.users
+    // 1. Get all users from auth.users
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers()
     
     if (authError) {
@@ -45,33 +45,63 @@ const UserManagement = () => {
     const authUsers = authData.users || []
     console.log('👥 Found', authUsers.length, 'registered users')
 
-    // Get their profile data (if exists)
+    if (authUsers.length === 0) {
+      setUsers([])
+      return
+    }
+
     const userIds = authUsers.map(user => user.id)
+
+    // 2. Get profiles data
     const { data: profiles, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select(`
-        *,
-        user_subscriptions!left (
-          id,
-          plan,
-          status,
-          expires_at
-        ),
-        photos!left (
-          id,
-          path,
-          is_primary
-        )
-      `)
+      .select('*')
       .in('id', userIds)
 
     if (profileError) {
       console.warn('⚠️ Profile query error:', profileError)
     }
 
-    // Merge auth users with their profile data
+    // 3. Get subscriptions data (separate query since no direct FK)
+    const { data: subscriptions, error: subscriptionError } = await supabaseAdmin
+      .from('user_subscriptions')
+      .select('*')
+      .in('user_id', userIds)
+      .order('created_at', { ascending: false })
+
+    if (subscriptionError) {
+      console.warn('⚠️ Subscription query error:', subscriptionError)
+    }
+
+    // 4. Get photos data
+    const profileIds = profiles?.map(p => p.id) || []
+    const { data: photos, error: photoError } = await supabaseAdmin
+      .from('photos')
+      .select('*')
+      .in('user_id', profileIds)
+
+    if (photoError) {
+      console.warn('⚠️ Photos query error:', photoError)
+    }
+
+    // 5. Get stream and clinic counts
+    const { data: streamCounts, error: streamError } = await supabaseAdmin
+      .from('streams')
+      .select('user_id')
+      .in('user_id', profileIds)
+
+    const { data: clinicCounts, error: clinicError } = await supabaseAdmin
+      .from('massage_clinics')
+      .select('owner_id')
+      .in('owner_id', userIds)
+
+    // 6. Merge all data together
     const mergedUsers = authUsers.map(authUser => {
       const profile = profiles?.find(p => p.id === authUser.id) || {}
+      const userSubscriptions = subscriptions?.filter(s => s.user_id === authUser.id) || []
+      const userPhotos = photos?.filter(p => p.user_id === authUser.id) || []
+      const streamCount = streamCounts?.filter(s => s.user_id === authUser.id).length || 0
+      const clinicCount = clinicCounts?.filter(c => c.owner_id === authUser.id).length || 0
       
       return {
         // Auth data
@@ -81,8 +111,8 @@ const UserManagement = () => {
         last_sign_in_at: authUser.last_sign_in_at,
         created_at: authUser.created_at,
         
-        // Profile data (might be empty for incomplete profiles)
-        display_name: profile.display_name || authUser.email?.split('@')[0] || 'Unknown',
+        // Profile data
+        display_name: profile.display_name || authUser.email?.split('@')[0] || 'Unknown User',
         bio: profile.bio,
         avatar_url: profile.avatar_url,
         city: profile.city,
@@ -92,26 +122,54 @@ const UserManagement = () => {
         is_premium: profile.is_premium || false,
         is_verified: profile.is_verified || false,
         is_admin: profile.is_admin || false,
+        updated_at: profile.updated_at || authUser.created_at,
         
-        // Related data
-        user_subscriptions: profile.user_subscriptions || [],
-        photos: profile.photos || [],
+        // Related data (formatted to match expected structure)
+        user_subscriptions: userSubscriptions,
+        photos: userPhotos,
+        streams: [{ count: streamCount }], // Format expected by UserTable
+        massage_clinics: [{ count: clinicCount }], // Format expected by UserTable
         
-        // Mark if profile is complete
-        profile_complete: !!(profile.display_name && profile.dob)
+        // Helper flags
+        profile_complete: !!(profile.display_name && profile.dob),
+        has_active_subscription: userSubscriptions.some(s => s.status === 'active')
       }
     })
 
-    console.log('✅ Merged', mergedUsers.length, 'users with profile data')
+    console.log('✅ Successfully merged', mergedUsers.length, 'users')
+    console.log('📊 Sample user data:', mergedUsers[0])
     setUsers(mergedUsers)
 
   } catch (error) {
     console.error('❌ Error loading users:', error)
-    setUsers([])
+    
+    // Fallback: Just get profiles without related data
+    try {
+      const { data: basicProfiles, error: basicError } = await supabaseAdmin
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (!basicError && basicProfiles) {
+        console.log('🔄 Using basic profiles as fallback:', basicProfiles.length)
+        setUsers(basicProfiles.map(profile => ({
+          ...profile,
+          user_subscriptions: [],
+          photos: [],
+          streams: [{ count: 0 }],
+          massage_clinics: [{ count: 0 }],
+          profile_complete: !!(profile.display_name && profile.dob)
+        })))
+      }
+    } catch (fallbackError) {
+      console.error('❌ Fallback query also failed:', fallbackError)
+      setUsers([])
+    }
   } finally {
     setLoading(false)
   }
 }
+
   const filterUsers = () => {
     let filtered = [...users]
 
