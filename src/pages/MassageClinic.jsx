@@ -53,7 +53,7 @@ const todayHours = (openingHours) => {
 };
 
 /* ================================================================
-   ICONS (PROPERLY SIZED)
+   SVG ICONS
    ================================================================ */
 
 const MapPinIcon = ({ className = "w-5 h-5" }) => (
@@ -128,6 +128,18 @@ const RefreshIcon = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
+const AlertIcon = ({ className = "w-6 h-6" }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+);
+
+const MassageIcon = ({ className = "w-12 h-12" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+    <path d="M7 2a2 2 0 11-4 0 2 2 0 014 0zM7 2v5a4 4 0 008 0V2m-9 6a2 2 0 11-4 0 2 2 0 014 0zm8 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+  </svg>
+);
+
 /* ================================================================
    HOOKS
    ================================================================ */
@@ -194,7 +206,7 @@ function useGeolocation() {
 }
 
 /* ================================================================
-   LOCATION SEARCH BAR (COMPLETE)
+   LOCATION SEARCH BAR
    ================================================================ */
 
 function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
@@ -207,6 +219,7 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
   const abortRef = useRef(null);
   const inputRef = useRef(null);
   const mountedRef = useRef(true);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -215,6 +228,20 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
       abortRef.current?.abort();
     };
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        closeSearch();
+      }
+    };
+
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [isOpen]);
 
   // Search debounce
   useEffect(() => {
@@ -296,7 +323,7 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
   }
 
   return (
-    <div className="relative flex-1 min-w-0">
+    <div className="relative flex-1 min-w-0" ref={dropdownRef}>
       <div className="flex items-center gap-3 bg-white border-2 border-violet-300 rounded-2xl px-4 py-2.5 shadow-sm">
         {isSearching ? (
           <SpinnerIcon className="w-4 h-4 text-violet-500 shrink-0" />
@@ -419,13 +446,18 @@ export default function MassageClinic() {
 
         if (fetchError) throw fetchError;
 
-        let processed = (data || []).map((clinic) => ({
-          ...clinic,
-          specialties: clinic.clinic_specialties?.map((s) => s.name) || [],
-          distance_km: searchLocation 
-            ? haversineKm(searchLocation, { lat: Number(clinic.lat), lng: Number(clinic.lng) })
-            : null,
-        }));
+        let processed = (data || []).map((clinic) => {
+          const latNum = typeof clinic.lat === "string" ? parseFloat(clinic.lat) : clinic.lat;
+          const lngNum = typeof clinic.lng === "string" ? parseFloat(clinic.lng) : clinic.lng;
+          
+          return {
+            ...clinic,
+            specialties: clinic.clinic_specialties?.map((s) => s.name) || [],
+            distance_km: searchLocation && !isNaN(latNum) && !isNaN(lngNum)
+              ? haversineKm(searchLocation, { lat: latNum, lng: lngNum })
+              : null,
+          };
+        });
 
         if (viewMode === "nearby" && searchLocation) {
           processed = processed.filter((c) => c.distance_km === null || c.distance_km <= radiusKm);
@@ -433,16 +465,17 @@ export default function MassageClinic() {
 
         // Apply sorting
         if (sortBy === "name") {
-          processed.sort((a, b) => a.name.localeCompare(b.name));
+          processed.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         } else if (sortBy === "distance" && viewMode === "nearby") {
           processed.sort((a, b) => (a.distance_km || Infinity) - (b.distance_km || Infinity));
-        } else if (sortBy === "rating") {
+        } else {
+          // Default: rating
           processed.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
         }
 
         setClinics(processed);
       } catch (err) {
-        console.error(err);
+        console.error("Error loading clinics:", err);
         setError("Failed to load clinics. Please try again.");
       } finally {
         setIsLoading(false);
@@ -459,9 +492,9 @@ export default function MassageClinic() {
     const q = searchQuery.toLowerCase();
     return clinics.filter(
       (c) =>
-        c.name?.toLowerCase().includes(q) ||
-        c.address?.toLowerCase().includes(q) ||
-        c.city?.toLowerCase().includes(q)
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.address && c.address.toLowerCase().includes(q)) ||
+        (c.city && c.city.toLowerCase().includes(q))
     );
   }, [clinics, searchQuery]);
 
@@ -478,8 +511,8 @@ export default function MassageClinic() {
     } else if (mode === "nearby") {
       if (userLocation && !searchLocation) {
         setSearchLocation(userLocation);
-      } else if (!userLocation) {
-        requestLocation();
+      } else if (!userLocation && locationStatus === "granted") {
+        setSearchLocation(userLocation);
       }
     }
   };
@@ -571,9 +604,9 @@ export default function MassageClinic() {
                 onChange={(e) => setSortBy(e.target.value)}
                 className="bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-violet-300"
               >
-                <option value="rating">★ Top Rated</option>
-                {viewMode === "nearby" && <option value="distance">📍 Nearest</option>}
-                <option value="name">🔤 A-Z</option>
+                <option value="rating">Top Rated</option>
+                {viewMode === "nearby" && <option value="distance">Nearest</option>}
+                <option value="name">A-Z</option>
               </select>
 
               <div className="flex-1 relative">
@@ -631,13 +664,15 @@ export default function MassageClinic() {
 }
 
 /* ================================================================
-   STATES & COMPONENTS
+   STATE COMPONENTS
    ================================================================ */
 
 function LocationDeniedState({ onRequestLocation, onViewAll }) {
   return (
     <div className="text-center py-20 bg-white rounded-3xl border border-gray-100">
-      <MapPinIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <MapPinIcon className="w-8 h-8 text-gray-400" />
+      </div>
       <h3 className="text-lg font-bold text-gray-900 mb-2">Location Access Needed</h3>
       <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
         Enable location to find massage clinics near you, or browse all clinics.
@@ -645,14 +680,14 @@ function LocationDeniedState({ onRequestLocation, onViewAll }) {
       <div className="space-y-3">
         <button
           onClick={onRequestLocation}
-          className="flex items-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto"
+          className="flex items-center justify-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto hover:bg-violet-700 transition-colors"
         >
           <TargetIcon className="w-4 h-4" />
           Enable Location
         </button>
         <button
           onClick={onViewAll}
-          className="block text-violet-600 text-sm font-medium mx-auto"
+          className="block text-violet-600 text-sm font-medium mx-auto hover:text-violet-700 transition-colors"
         >
           View all clinics instead
         </button>
@@ -684,13 +719,13 @@ function ErrorState({ error, onRetry }) {
   return (
     <div className="text-center py-20 bg-white rounded-3xl border border-gray-100">
       <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
-        <span className="text-2xl">⚠️</span>
+        <AlertIcon className="w-8 h-8 text-red-500" />
       </div>
       <h3 className="text-lg font-bold text-gray-900 mb-2">Something went wrong</h3>
       <p className="text-sm text-red-500 mb-6 max-w-xs mx-auto">{error}</p>
       <button
         onClick={onRetry}
-        className="flex items-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto"
+        className="flex items-center justify-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto hover:bg-violet-700 transition-colors"
       >
         <RefreshIcon className="w-4 h-4" />
         Try Again
@@ -703,7 +738,7 @@ function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
   return (
     <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
       <div className="w-20 h-20 bg-gradient-to-br from-violet-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-        <span className="text-3xl">💆‍♀️</span>
+        <MassageIcon className="w-12 h-12 text-violet-500 opacity-40" />
       </div>
       <h3 className="text-lg font-bold text-gray-900 mb-2">No Clinics Found</h3>
       <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
@@ -715,7 +750,7 @@ function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
       </p>
       <button
         onClick={onCreateClinic}
-        className="flex items-center gap-2 bg-gradient-to-r from-violet-500 to-violet-700 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto shadow-lg"
+        className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-500 to-violet-700 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto shadow-lg hover:shadow-xl transition-shadow"
       >
         <PlusIcon className="w-4 h-4" />
         List Your Clinic
@@ -742,29 +777,38 @@ function ClinicCard({ clinic, viewMode }) {
   const navigate = useNavigate();
   const hours = todayHours(clinic.opening_hours);
   const rating = Number(clinic.rating) || 0;
+  const reviewCount = Number(clinic.review_count) || 0;
+
+  const handleCardClick = () => {
+    navigate(`/massage-clinics/${clinic.id}`);
+  };
+
+  const handlePhoneClick = (e) => {
+    e.stopPropagation();
+  };
 
   return (
     <div
-      onClick={() => navigate(`/massage-clinics/${clinic.id}`)}
+      onClick={handleCardClick}
       className="bg-white rounded-3xl border border-gray-100 hover:border-violet-200 hover:shadow-xl transition-all cursor-pointer group overflow-hidden"
     >
       {/* Cover Image */}
-      <div className="relative h-48 overflow-hidden">
+      <div className="relative h-48 overflow-hidden bg-gradient-to-br from-violet-100 to-fuchsia-100">
         {clinic.cover_url ? (
           <img
             src={clinic.cover_url}
-            alt={clinic.name}
+            alt={clinic.name || "Clinic"}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-violet-100 to-fuchsia-100 flex items-center justify-center">
-            <span className="text-6xl opacity-20">💆‍♀️</span>
+          <div className="w-full h-full flex items-center justify-center">
+            <MassageIcon className="w-16 h-16 text-violet-300 opacity-40" />
           </div>
         )}
 
         {/* Distance Badge */}
-        {clinic.distance_km && viewMode === "nearby" && (
+        {clinic.distance_km !== null && clinic.distance_km !== undefined && viewMode === "nearby" && (
           <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-2xl text-xs font-bold text-violet-700 shadow-sm">
             {formatDistance(clinic.distance_km)}
           </div>
@@ -782,7 +826,9 @@ function ClinicCard({ clinic, viewMode }) {
       <div className="p-5">
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
-          <h3 className="font-bold text-lg text-gray-900 line-clamp-1 pr-2">{clinic.name}</h3>
+          <h3 className="font-bold text-lg text-gray-900 line-clamp-1 pr-2">
+            {clinic.name || "Unnamed Clinic"}
+          </h3>
           {rating > 0 && (
             <div className="flex items-center gap-1 bg-amber-50 text-amber-600 px-3 py-1 rounded-2xl text-sm font-bold shrink-0">
               <StarIcon className="w-4 h-4" filled />
@@ -810,7 +856,7 @@ function ClinicCard({ clinic, viewMode }) {
         )}
 
         {/* Specialties */}
-        {clinic.specialties?.length > 0 && (
+        {clinic.specialties && clinic.specialties.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-4">
             {clinic.specialties.slice(0, 3).map((specialty, i) => (
               <span
@@ -834,7 +880,7 @@ function ClinicCard({ clinic, viewMode }) {
           <div className="flex items-center gap-2 text-xs text-gray-500">
             {rating > 0 ? (
               <>
-                <div className="flex">
+                <div className="flex gap-0.5">
                   {[...Array(5)].map((_, i) => (
                     <StarIcon
                       key={i}
@@ -843,7 +889,7 @@ function ClinicCard({ clinic, viewMode }) {
                     />
                   ))}
                 </div>
-                {clinic.review_count > 0 && <span>({clinic.review_count} reviews)</span>}
+                {reviewCount > 0 && <span>({reviewCount} reviews)</span>}
               </>
             ) : (
               <span>No reviews yet</span>
@@ -854,7 +900,7 @@ function ClinicCard({ clinic, viewMode }) {
           {clinic.phone && (
             <a
               href={`tel:${clinic.phone}`}
-              onClick={(e) => e.stopPropagation()}
+              onClick={handlePhoneClick}
               className="flex items-center gap-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
             >
               <PhoneIcon className="w-3 h-3" />
