@@ -54,6 +54,66 @@ const ClinicPreviewModal = ({ clinic, onClose, onAction }) => {
   const mediaCount = clinic.clinic_media?.length || 0
   const specialtyCount = clinic.clinic_specialties?.length || 0
 
+
+
+
+
+  const OpeningHoursDisplay = ({ hours }) => {
+  if (!hours) return <span className="text-gray-400">Not specified</span>
+  
+  let hoursObj
+  
+  if (typeof hours === 'string') {
+    try {
+      hoursObj = JSON.parse(hours)
+    } catch {
+      return <span className="text-white">{hours}</span>
+    }
+  } else if (typeof hours === 'object') {
+    hoursObj = hours
+  } else {
+    return <span className="text-gray-400">Invalid format</span>
+  }
+  
+  if (typeof hoursObj === 'object' && hoursObj !== null) {
+    const daysOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    
+    const orderedDays = daysOrder
+      .map(day => {
+        const time = hoursObj[day] || hoursObj[day.toLowerCase()] || hoursObj[day.charAt(0).toUpperCase() + day.slice(1)]
+        return time ? { day: day.charAt(0).toUpperCase() + day.slice(1), time } : null
+      })
+      .filter(Boolean)
+    
+    if (orderedDays.length > 0) {
+      return (
+        <div className="space-y-1">
+          {orderedDays.map(({ day, time }) => (
+            <div key={day} className="flex justify-between">
+              <span className="text-gray-400">{day}:</span>
+              <span className="text-white">{time}</span>
+            </div>
+          ))}
+        </div>
+      )
+    }
+    
+    // Fallback for non-standard format
+    return (
+      <div className="space-y-1">
+        {Object.entries(hoursObj).map(([day, time]) => (
+          <div key={day} className="flex justify-between">
+            <span className="text-gray-400">{day}:</span>
+            <span className="text-white">{time}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  
+  return <span className="text-gray-400">Invalid format</span>
+}
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden">
@@ -223,9 +283,7 @@ const ClinicPreviewModal = ({ clinic, onClose, onAction }) => {
 
                   <div>
                     <h3 className="text-lg font-semibold text-white mb-3">Opening Hours</h3>
-                    <pre className="text-white text-sm whitespace-pre-wrap">
-                      {formatOpeningHours(clinic.opening_hours)}
-                    </pre>
+                     <OpeningHoursDisplay hours={clinic.opening_hours} />
                   </div>
                 </div>
               </div>
