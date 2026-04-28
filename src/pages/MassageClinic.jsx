@@ -146,21 +146,9 @@ const ArrowRightIcon = ({ className = "w-4 h-4" }) => (
   </svg>
 );
 
-const CheckIcon = ({ className = "w-5 h-5" }) => (
-  <svg className={className} fill="currentColor" viewBox="0 0 20 20">
-    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-  </svg>
-);
-
-const UsersIcon = ({ className = "w-4 h-4" }) => (
+const SliderIcon = ({ className = "w-5 h-5" }) => (
   <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-2a6 6 0 0112 0v2zm0 0h6v-2a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-  </svg>
-);
-
-const AwardIcon = ({ className = "w-4 h-4" }) => (
-  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 100 2h16a1 1 0 100-2H3zM3 12a1 1 0 100 2h16a1 1 0 100-2H3zM3 20a1 1 0 100 2h16a1 1 0 100-2H3z" />
   </svg>
 );
 
@@ -332,21 +320,12 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
   };
 
   if (!isOpen) {
-    return (
-      <button
-        onClick={openSearch}
-        className="flex items-center gap-2.5 bg-white/80 backdrop-blur-md border border-gray-200/50 hover:border-violet-300/50 rounded-full px-5 py-3 text-sm font-medium text-gray-700 transition-all hover:bg-white shadow-sm hover:shadow-md"
-      >
-        <MapPinIcon className="w-4 h-4 text-violet-600 shrink-0" />
-        <span className="truncate text-gray-600">{currentLabel || "Choose location"}</span>
-        <ChevronDownIcon className="w-3 h-3 text-gray-400 shrink-0" />
-      </button>
-    );
+    return null;
   }
 
   return (
     <div className="relative flex-1 min-w-0" ref={dropdownRef}>
-      <div className="flex items-center gap-3 bg-white border-2 border-violet-300 rounded-full px-5 py-3 shadow-lg">
+      <div className="flex items-center gap-3 bg-white border-2 border-violet-300 rounded-full px-5 py-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300">
         {isSearching ? (
           <SpinnerIcon className="w-4 h-4 text-violet-600 shrink-0" />
         ) : (
@@ -356,7 +335,7 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search city or address..."
+          placeholder="Search location..."
           className="flex-1 bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none min-w-0"
         />
         <button
@@ -368,10 +347,10 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
       </div>
 
       {(results.length > 0 || searchError || query.length >= 3) && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-3 overflow-hidden rounded-3xl border border-gray-100/50 bg-white shadow-2xl backdrop-blur-xl">
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-3xl border border-gray-100/50 bg-white shadow-2xl">
           <button
             onClick={handleUseMyLocation}
-            className="flex w-full items-center gap-3 px-5 py-4 text-sm font-medium text-violet-700 hover:bg-violet-50/80 transition-colors border-b border-gray-100/50"
+            className="flex w-full items-center gap-3 px-5 py-3 text-sm font-medium text-violet-700 hover:bg-violet-50/80 transition-colors border-b border-gray-100/50"
           >
             <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
               <TargetIcon className="w-4 h-4 text-violet-600" />
@@ -391,7 +370,7 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
             <button
               key={i}
               onClick={() => handleSelect(result)}
-              className="flex w-full items-start gap-3 px-5 py-4 text-left text-sm hover:bg-gray-50/80 transition-colors border-b border-gray-50 last:border-0"
+              className="flex w-full items-start gap-3 px-5 py-3 text-left text-sm hover:bg-gray-50/80 transition-colors border-b border-gray-50 last:border-0"
             >
               <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
               <span className="text-gray-700 text-xs line-clamp-2">{result.label}</span>
@@ -414,6 +393,8 @@ export default function MassageClinic() {
   const [searchQuery, setSearchQuery] = useState("");
   const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
   const [sortBy, setSortBy] = useState("rating");
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [showLocationFilter, setShowLocationFilter] = useState(false);
 
   const { userLocation, locationLabel, status: locationStatus, requestLocation, setManualLocation } = useGeolocation();
   const [searchLocation, setSearchLocation] = useState(null);
@@ -517,6 +498,7 @@ export default function MassageClinic() {
     setSearchLocation(pos);
     setManualLocation(pos, label);
     setViewMode("nearby");
+    setShowLocationFilter(false);
   };
 
   const toggleViewMode = (mode) => {
@@ -538,72 +520,145 @@ export default function MassageClinic() {
   return (
     <div className="min-h-dvh bg-gradient-to-br from-slate-50 via-white to-slate-50/50 pb-32">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="sticky top-0 z-20 bg-white/70 backdrop-blur-2xl border-b border-gray-100/50">
-          <div className="px-4 md:px-6 py-5">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-3xl font-black bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent">
+        {/* COMPACT HEADER */}
+        <div className="sticky top-0 z-20 bg-white/70 backdrop-blur-2xl border-b border-gray-100/50 shadow-sm">
+          <div className="px-4 md:px-6 py-4">
+            {/* Header Title Row */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-black bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent">
                   Massage Clinics
                 </h1>
-                <p className="text-sm text-gray-500 mt-1.5 font-medium">
-                  {viewMode === "all" 
-                    ? `All clinics • ${filteredClinics.length} available`
-                    : effectiveLocationLabel 
-                    ? `Near ${effectiveLocationLabel} • ${filteredClinics.length} found`
-                    : "Find wellness centers near you"}
-                </p>
+              </div>
+
+              {/* Top Right Controls */}
+              <div className="flex items-center gap-2">
+                {/* Search Button */}
+                <button
+                  onClick={() => setIsSearchExpanded(!isSearchExpanded)}
+                  className="p-2.5 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900"
+                >
+                  <SearchIcon className="w-5 h-5" />
+                </button>
+
+                {/* Sort Dropdown */}
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="hidden sm:flex items-center bg-white border border-gray-200/50 rounded-full px-4 py-2 text-xs font-bold focus:outline-none focus:border-violet-300 text-gray-700 hover:bg-gray-50 transition-all cursor-pointer"
+                >
+                  <option value="rating">Top Rated</option>
+                  {viewMode === "nearby" && <option value="distance">Nearest</option>}
+                  <option value="name">A-Z</option>
+                </select>
+
+                {/* View Mode Toggle */}
+                <div className="flex bg-gradient-to-r from-gray-100 to-gray-50 rounded-full p-1 w-fit">
+                  <button
+                    onClick={() => toggleViewMode("nearby")}
+                    className={`py-1.5 px-4 text-xs font-bold rounded-full transition-all ${
+                      viewMode === "nearby"
+                        ? "bg-white shadow-lg text-violet-700"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                    disabled={locationStatus === "loading"}
+                  >
+                    Near Me
+                  </button>
+                  <button
+                    onClick={() => toggleViewMode("all")}
+                    className={`py-1.5 px-4 text-xs font-bold rounded-full transition-all ${
+                      viewMode === "all"
+                        ? "bg-white shadow-lg text-violet-700"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    All
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* View Mode Toggle */}
-            <div className="flex bg-gradient-to-r from-gray-100 to-gray-50 rounded-full p-1.5 mb-5 w-fit">
-              <button
-                onClick={() => toggleViewMode("nearby")}
-                className={`py-2.5 px-6 text-sm font-bold rounded-full transition-all ${
-                  viewMode === "nearby"
-                    ? "bg-white shadow-lg shadow-violet-100 text-violet-700"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-                disabled={locationStatus === "loading"}
-              >
-                {locationStatus === "loading" ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <SpinnerIcon className="w-4 h-4" />
-                    Locating...
-                  </span>
-                ) : (
-                  "Near Me"
-                )}
-              </button>
-              <button
-                onClick={() => toggleViewMode("all")}
-                className={`py-2.5 px-6 text-sm font-bold rounded-full transition-all ${
-                  viewMode === "all"
-                    ? "bg-white shadow-lg shadow-violet-100 text-violet-700"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                View All
-              </button>
-            </div>
+            {/* Expanded Search Bar */}
+            {isSearchExpanded && (
+              <div className="mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex-1 relative">
+                  <SearchIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search clinics by name or location..."
+                    autoFocus
+                    className="w-full pl-11 pr-4 py-3 bg-white border border-gray-200/50 rounded-full text-sm focus:outline-none focus:border-violet-300 focus:ring-2 focus:ring-violet-100"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <XIcon className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
-            {/* Location & Radius */}
+            {/* Location & Filter Row */}
             {viewMode === "nearby" && locationStatus !== "loading" && (
-              <div className="flex flex-col sm:flex-row gap-3 mb-5">
-                <LocationSearchBar
-                  currentLabel={effectiveLocationLabel}
-                  onSelect={handleLocationSelect}
-                  onUseMyLocation={requestLocation}
-                />
+              <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top duration-300">
+                {/* Location Selector */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowLocationFilter(!showLocationFilter)}
+                    className="flex items-center gap-2 bg-white border border-gray-200/50 hover:border-violet-300/50 rounded-full px-3.5 py-2 text-xs font-bold text-gray-700 transition-all hover:bg-white shadow-sm hover:shadow-md whitespace-nowrap"
+                  >
+                    <MapPinIcon className="w-3.5 h-3.5 text-violet-600 shrink-0" />
+                    <span className="hidden sm:inline truncate max-w-[120px]">{effectiveLocationLabel || "Location"}</span>
+                    <span className="sm:hidden truncate max-w-[80px]">{effectiveLocationLabel ? effectiveLocationLabel.split(" ")[0] : "Loc"}</span>
+                    <ChevronDownIcon className="w-3 h-3 text-gray-400 shrink-0" />
+                  </button>
 
+                  {/* Location Dropdown */}
+                  {showLocationFilter && (
+                    <div className="absolute left-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 min-w-[250px]">
+                      {/* Search Location Input */}
+                      <div className="p-3 border-b border-gray-100">
+                        <div className="relative">
+                          <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search location..."
+                            className="w-full pl-10 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-violet-300"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Use Current Location */}
+                      <button
+                        onClick={() => {
+                          requestLocation();
+                          setShowLocationFilter(false);
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-xs font-bold text-violet-700 hover:bg-violet-50 transition-colors border-b border-gray-100"
+                      >
+                        <div className="w-7 h-7 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
+                          <TargetIcon className="w-3.5 h-3.5 text-violet-600" />
+                        </div>
+                        Use my location
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Radius Selector */}
                 {searchLocation && (
-                  <div className="flex items-center bg-white border border-gray-200/50 rounded-full px-5 py-3 shadow-sm hover:shadow-md transition-shadow">
-                    <span className="text-xs font-bold text-gray-500 mr-3">Within</span>
+                  <div className="flex items-center bg-white border border-gray-200/50 rounded-full px-3.5 py-2 shadow-sm hover:shadow-md transition-shadow text-xs font-bold">
+                    <span className="text-gray-500 mr-2 hidden sm:inline">Within</span>
                     <select
                       value={radiusKm}
                       onChange={(e) => setRadiusKm(Number(e.target.value))}
-                      className="bg-transparent text-sm font-bold focus:outline-none text-violet-700"
+                      className="bg-transparent text-violet-700 focus:outline-none cursor-pointer"
                     >
                       {[5, 10, 25, 50, 100].map((r) => (
                         <option key={r} value={r}>{r}km</option>
@@ -611,40 +666,19 @@ export default function MassageClinic() {
                     </select>
                   </div>
                 )}
+
+                {/* Mobile Sort */}
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="sm:hidden ml-auto bg-white border border-gray-200/50 rounded-full px-3 py-2 text-xs font-bold focus:outline-none focus:border-violet-300 text-gray-700"
+                >
+                  <option value="rating">Top Rated</option>
+                  {viewMode === "nearby" && <option value="distance">Nearest</option>}
+                  <option value="name">A-Z</option>
+                </select>
               </div>
             )}
-
-            {/* Sort & Search */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="bg-white border border-gray-200/50 rounded-full px-5 py-3 text-sm font-bold focus:outline-none focus:border-violet-300 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <option value="rating">Top Rated</option>
-                {viewMode === "nearby" && <option value="distance">Nearest</option>}
-                <option value="name">A-Z</option>
-              </select>
-
-              <div className="flex-1 relative">
-                <SearchIcon className="absolute left-5 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search clinics..."
-                  className="w-full pl-12 pr-5 py-3 bg-white border border-gray-200/50 rounded-full text-sm focus:outline-none focus:border-violet-300 shadow-sm hover:shadow-md transition-shadow"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="absolute right-5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    <XIcon className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
           </div>
         </div>
 
@@ -785,7 +819,7 @@ function ClinicsList({ clinics, viewMode }) {
 }
 
 /* ================================================================
-   CLINIC CARD - INSTAGRAM STYLE
+   CLINIC CARD
    ================================================================ */
 
 function ClinicCard({ clinic, viewMode }) {
