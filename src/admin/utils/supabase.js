@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
+// Single shared instance — never call createClient() more than once
+const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey  = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 
 // Admin client with service role key for full access
 export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
