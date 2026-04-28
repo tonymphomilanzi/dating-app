@@ -1,118 +1,144 @@
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { AuthProvider, useAuth } from './hooks/useAuth'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import UserManagement from './pages/UserManagement'
-import StreamManagement from './pages/StreamManagement'
-import ClinicManagement from './pages/ClinicManagement'
-import SubscriptionManagement from './pages/SubscriptionManagement'
-import NotificationCenter from './pages/NotificationCenter'
-import Layout from './components/Layout'
+// src/admin/AdminApp.jsx
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 
-const ProtectedRoute = ({ children }) => {
-  const { admin, loading } = useAuth()
-  const location = useLocation()
-  
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
-    )
-  }
-  
-  if (!admin) {
-    // Redirect to login but preserve the intended destination
-    return <Navigate to="/admin/login" state={{ from: location }} replace />
-  }
-  
-  return <Layout>{children}</Layout>
+import { AuthProvider, useAuth } from "./hooks/useAuth";
+
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import UserManagement from "./pages/UserManagement";
+import StreamManagement from "./pages/StreamManagement";
+import ClinicManagement from "./pages/ClinicManagement";
+import SubscriptionManagement from "./pages/SubscriptionManagement";
+import NotificationCenter from "./pages/NotificationCenter";
+
+import Layout from "./components/Layout";
+
+function AdminLoading() {
+  return (
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="text-white text-sm">Loading admin panel...</div>
+    </div>
+  );
 }
 
-const AdminRoutes = () => {
-  const { admin, loading } = useAuth()
+function ProtectedRoute({ children }) {
+  const { admin, loading } = useAuth();
+  const location = useLocation();
 
-  // Show loading while checking auth status
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-white">Loading admin panel...</div>
-      </div>
-    )
+    return <AdminLoading />;
   }
 
+  if (!admin) {
+    return (
+      <Navigate
+        to="/admin/login"
+        state={{ from: location }}
+        replace
+      />
+    );
+  }
+
+  return <Layout>{children}</Layout>;
+}
+
+function PublicAdminRoute({ children }) {
+  const { admin, loading } = useAuth();
+
+  if (loading) {
+    return <AdminLoading />;
+  }
+
+  if (admin) {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  return children;
+}
+
+function AdminRoutes() {
   return (
     <Routes>
-      <Route 
-        path="/login" 
+      {/* Admin root */}
+      <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
+
+      {/* Login */}
+      <Route
+        path="/admin/login"
         element={
-          admin ? <Navigate to="/admin/dashboard" replace /> : <Login />
-        } 
+          <PublicAdminRoute>
+            <Login />
+          </PublicAdminRoute>
+        }
       />
-      
-      <Route path="/dashboard" element={
-        <ProtectedRoute>
-          <Dashboard />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/users" element={
-        <ProtectedRoute>
-          <UserManagement />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/streams" element={
-        <ProtectedRoute>
-          <StreamManagement />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/clinics" element={
-        <ProtectedRoute>
-          <ClinicManagement />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/subscriptions" element={
-        <ProtectedRoute>
-          <SubscriptionManagement />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/notifications" element={
-        <ProtectedRoute>
-          <NotificationCenter />
-        </ProtectedRoute>
-      } />
-      
-      {/* Handle /admin root path */}
-      <Route 
-        path="/" 
+
+      {/* Protected admin pages */}
+      <Route
+        path="/admin/dashboard"
         element={
-          admin ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/admin/login" replace />
-        } 
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
       />
-      
-      {/* Handle any other /admin/* paths */}
-      <Route 
-        path="/*" 
+
+      <Route
+        path="/admin/users"
         element={
-          admin ? <Navigate to="/admin/dashboard" replace /> : <Navigate to="/admin/login" replace />
-        } 
+          <ProtectedRoute>
+            <UserManagement />
+          </ProtectedRoute>
+        }
       />
+
+      <Route
+        path="/admin/streams"
+        element={
+          <ProtectedRoute>
+            <StreamManagement />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/clinics"
+        element={
+          <ProtectedRoute>
+            <ClinicManagement />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/subscriptions"
+        element={
+          <ProtectedRoute>
+            <SubscriptionManagement />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/notifications"
+        element={
+          <ProtectedRoute>
+            <NotificationCenter />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Admin catch-all */}
+      <Route path="/admin/*" element={<Navigate to="/admin/login" replace />} />
     </Routes>
-  )
+  );
 }
 
-const AdminApp = () => {
+export default function AdminApp() {
   return (
     <div className="min-h-screen bg-gray-950">
       <AuthProvider>
         <AdminRoutes />
       </AuthProvider>
     </div>
-  )
+  );
 }
-
-export default AdminApp
