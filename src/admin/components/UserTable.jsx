@@ -1,8 +1,15 @@
 import { useState } from 'react'
 
-const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) => {
+const UserTable = ({ 
+  users, 
+  loading, 
+  onViewUser, 
+  onUserAction, 
+  onBulkAction 
+}) => {
   const [selectedUsers, setSelectedUsers] = useState(new Set())
   const [sortConfig, setSortConfig] = useState({ key: 'created_at', direction: 'desc' })
+  const [imageErrors, setImageErrors] = useState(new Set())
 
   const handleSelectAll = (checked) => {
     if (checked) {
@@ -25,6 +32,17 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
   const handleSort = (key) => {
     const direction = sortConfig.key === key && sortConfig.direction === 'asc' ? 'desc' : 'asc'
     setSortConfig({ key, direction })
+  }
+
+  const handleImageError = (userId) => {
+    setImageErrors(prev => new Set([...prev, userId]))
+  }
+
+  const getImageUrl = (user) => {
+    if (imageErrors.has(user.id) || !user.avatar_url) {
+      return '/default-avatar.png'
+    }
+    return user.avatar_url
   }
 
   const sortedUsers = [...users].sort((a, b) => {
@@ -52,8 +70,8 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
   }
 
   const getSubscriptionPlan = (user) => {
-    const subscription = user.user_subscriptions?.[0]
-    if (!subscription || subscription.status !== 'active') return 'Free'
+    const subscription = user.user_subscriptions?.find(s => s.status === 'active')
+    if (!subscription) return 'Free'
     return subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)
   }
 
@@ -70,6 +88,10 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
     
     if (user.is_premium) {
       badges.push({ text: 'Premium', color: 'bg-yellow-900 text-yellow-300' })
+    }
+
+    if (!user.profile_complete) {
+      badges.push({ text: 'Incomplete', color: 'bg-gray-900 text-gray-300' })
     }
 
     return badges
@@ -141,6 +163,13 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                 onClick={() => handleSort('display_name')}
               >
                 User
+                {sortConfig.key === 'display_name' && (
+                  <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                )}
+              </th>
+              
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                Contact
               </th>
               
               <th 
@@ -148,6 +177,9 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                 onClick={() => handleSort('created_at')}
               >
                 Joined
+                {sortConfig.key === 'created_at' && (
+                  <span className="ml-1">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                )}
               </th>
               
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
@@ -175,7 +207,7 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
               const clinicCount = user.massage_clinics?.[0]?.count || 0
               
               return (
-                <tr key={user.id} className="hover:bg-gray-700/50">
+                <tr key={user.id} className="hover:bg-gray-700/50 transition-colors">
                   <td className="px-6 py-4">
                     <input
                       type="checkbox"
@@ -186,30 +218,45 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                   </td>
                   
                   <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0 h-10 w-10">
+                    <div className="flex items-center space-x-4">
+                      <div className="flex-shrink-0 h-12 w-12">
                         <img
-                          className="h-10 w-10 rounded-full object-cover"
-                          src={user.avatar_url || '/default-avatar.png'}
+                          className="h-12 w-12 rounded-full object-cover border border-gray-600"
+                          src={getImageUrl(user)}
                           alt={user.display_name || 'User'}
-                          onError={(e) => {
-                            e.target.src = '/default-avatar.png'
-                          }}
+                          onError={() => handleImageError(user.id)}
+                          loading="lazy"
                         />
                       </div>
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-white">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-white truncate">
                           {user.display_name || 'No name'}
                         </div>
-                        <div className="text-sm text-gray-400">
-                          {user.city || 'No location'} • {user.profession || 'No profession'}
+                        <div className="text-sm text-gray-400 truncate">
+                          ID: {user.id.substring(0, 8)}...
                         </div>
                       </div>
                     </div>
                   </td>
                   
+                  <td className="px-6 py-4">
+                    <div className="text-sm space-y-1">
+                      <div className="text-white truncate max-w-xs">{user.email}</div>
+                      <div className="text-gray-400 text-xs">
+                        {user.city || 'No location'} • {user.profession || 'No profession'}
+                      </div>
+                    </div>
+                  </td>
+                  
                   <td className="px-6 py-4 text-sm text-gray-300">
-                    {formatDate(user.created_at)}
+                    <div>
+                      {formatDate(user.created_at)}
+                    </div>
+                    {user.last_sign_in_at && (
+                      <div className="text-xs text-gray-500">
+                        Last seen: {formatDate(user.last_sign_in_at)}
+                      </div>
+                    )}
                   </td>
                   
                   <td className="px-6 py-4">
@@ -217,25 +264,25 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                       {statusBadges.map((badge, index) => (
                         <span
                           key={index}
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.color}`}
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${badge.color}`}
                         >
                           {badge.text}
                         </span>
                       ))}
-                      {statusBadges.length === 0 && (
-                        <span className="text-gray-400 text-sm">Regular User</span>
-                      )}
                     </div>
                   </td>
                   
-                  <td className="px-6 py-4 text-sm text-gray-300">
-                    {getSubscriptionPlan(user)}
+                  <td className="px-6 py-4 text-sm">
+                    <div className="text-white">{getSubscriptionPlan(user)}</div>
+                    {user.has_active_subscription && (
+                      <div className="text-xs text-green-400">Active</div>
+                    )}
                   </td>
                   
                   <td className="px-6 py-4 text-sm text-gray-300">
-                    <div className="flex space-x-4">
-                      <span>{streamCount} streams</span>
-                      <span>{clinicCount} clinics</span>
+                    <div className="space-y-1">
+                      <div>{streamCount} streams</div>
+                      <div>{clinicCount} clinics</div>
                     </div>
                   </td>
                   
@@ -243,7 +290,7 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                     <div className="flex justify-end space-x-2">
                       <button
                         onClick={() => onViewUser(user)}
-                        className="text-blue-400 hover:text-blue-300"
+                        className="text-blue-400 hover:text-blue-300 p-1 rounded"
                         title="View Details"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -254,8 +301,12 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                       
                       <button
                         onClick={() => onUserAction('verify', user)}
-                        className={`${user.is_verified ? 'text-yellow-400 hover:text-yellow-300' : 'text-green-400 hover:text-green-300'}`}
-                        title={user.is_verified ? 'Unverify' : 'Verify'}
+                        className={`p-1 rounded transition-colors ${
+                          user.is_verified 
+                            ? 'text-yellow-400 hover:text-yellow-300' 
+                            : 'text-green-400 hover:text-green-300'
+                        }`}
+                        title={user.is_verified ? 'Remove Verification' : 'Verify User'}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -264,7 +315,11 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                       
                       <button
                         onClick={() => onUserAction('admin', user)}
-                        className={`${user.is_admin ? 'text-red-400 hover:text-red-300' : 'text-purple-400 hover:text-purple-300'}`}
+                        className={`p-1 rounded transition-colors ${
+                          user.is_admin 
+                            ? 'text-red-400 hover:text-red-300' 
+                            : 'text-purple-400 hover:text-purple-300'
+                        }`}
                         title={user.is_admin ? 'Remove Admin' : 'Make Admin'}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -274,7 +329,7 @@ const UserTable = ({ users, loading, onViewUser, onUserAction, onBulkAction }) =
                       
                       <button
                         onClick={() => onUserAction('delete', user)}
-                        className="text-red-400 hover:text-red-300"
+                        className="text-red-400 hover:text-red-300 p-1 rounded transition-colors"
                         title="Delete User"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
