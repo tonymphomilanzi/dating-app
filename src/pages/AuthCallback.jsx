@@ -1,15 +1,12 @@
+// src/pages/AuthCallback.jsx
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/**
- * How long to wait for Supabase to auto-exchange the code.
- * detectSessionInUrl does this on client init — usually <2 s.
- */
-const POLL_INTERVAL_MS  = 150;
-const POLL_TIMEOUT_MS   = 15_000;
+const POLL_INTERVAL_MS = 150;
+const POLL_TIMEOUT_MS = 15_000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,11 +30,76 @@ function toUserMessage(err) {
   return "We couldn't complete sign‑in. Please try again.";
 }
 
-function isSetupComplete(uid) {
+/**
+ * Check if profile is complete based on database data
+ */
+function isProfileComplete(profile) {
+  if (!profile) return false;
   return (
-    localStorage.getItem(`SETUP_OK_${uid}`) === "1" ||
-    localStorage.getItem("SETUP_OK") === "1"
+    !!String(profile.display_name ?? "").trim() &&
+    !!profile.dob &&
+    !!String(profile.gender ?? "").trim()
   );
+}
+
+/**
+ * Set setup completion flags in localStorage
+ */
+function setSetupComplete(uid) {
+  if (!uid) return;
+  try {
+    localStorage.setItem(`SETUP_OK_${uid}`, "1");
+    localStorage.setItem("SETUP_OK", "1"); // Legacy compatibility
+  } catch (err) {
+    console.warn("Could not set localStorage flags:", err);
+  }
+}
+
+/**
+ * Ensure profile row exists and get profile data
+ */
+async function ensureAndLoadProfile(user) {
+  if (!user) return null;
+
+  try {
+    // First check if profile exists
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("id, display_name, dob, gender, avatar_url, city")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (existing) {
+      return existing;
+    }
+
+    // Create profile row if it doesn't exist (for new OAuth users)
+    const display_name =
+      user.user_metadata?.display_name ||
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      null;
+
+    const avatar_url =
+      user.user_metadata?.avatar_url ||
+      user.user_metadata?.picture ||
+      null;
+
+    const { data: created } = await supabase
+      .from("profiles")
+      .insert({ 
+        id: user.id, 
+        display_name, 
+        avatar_url 
+      })
+      .select("id, display_name, dob, gender, avatar_url, city")
+      .single();
+
+    return created;
+  } catch (err) {
+    console.error("[AuthCallback] Profile error:", err);
+    return null;
+  }
 }
 
 // ─── Module-level guard ───────────────────────────────────────────────────────
@@ -48,7 +110,7 @@ let exchangeStarted = false;
 export default function AuthCallback() {
   const nav = useNavigate();
 
-  const [status, setStatus]     = useState("pending");
+  const [status, setStatus] = useState("pending");
   const [errorMsg, setErrorMsg] = useState("");
 
   const abortRef = useRef(null);
@@ -62,61 +124,55 @@ export default function AuthCallback() {
 
     const run = async () => {
       try {
-        // ── Log exactly what arrived ──────────────────────────────────────
-        console.log("[AuthCallback] href   :", window.location.href);
-        console.log("[AuthCallback] search :", window.location.search);
-        console.log("[AuthCallback] hash   :", window.location.hash);
+        console.log("[AuthCallback] Starting OAuth callback process...");
+        console.log("[AuthCallback] href:", window.location.href);
 
         // ── Check for OAuth error param ───────────────────────────────────
-        const params     = new URLSearchParams(window.location.search);
+        const params = new URLSearchParams(window.location.search);
         const oauthError = params.get("error");
 
         if (oauthError) {
-          throw new Error(
-            params.get("error_description") ?? oauthError
-          );
+          throw new Error(params.get("error_description") ?? oauthError);
         }
 
         // ── Wait for Supabase to auto-exchange the code ───────────────────
-        //
-        // When detectSessionInUrl:true + flowType:"pkce" are set, the
-        // Supabase client exchanges ?code= automatically during createClient().
-        // We poll getSession() until it resolves with a user.
-        //
-        // We do NOT call exchangeCodeForSession() manually — that's what
-        // caused "code verifier not found": calling it a second time after
-        // Supabase already consumed the verifier internally.
-
-        console.log("[AuthCallback] waiting for auto-exchange…");
-
+        console.log("[AuthCallback] Waiting for session...");
         const session = await pollForSession(ac.signal);
 
         if (ac.signal.aborted) return;
 
         const user = session?.user;
-
         if (!user) {
-          throw new Error(
-            "No session after exchange. " +
-            "href: " + window.location.href
-          );
+          throw new Error("No session after exchange");
         }
 
-        console.log("[AuthCallback] session OK, uid:", user.id);
+        console.log("[AuthCallback] Session established for user:", user.id);
 
-        const destination = isSetupComplete(user.id)
-          ? "/discover"
-          : "/setup/basics";
+        // ── CRITICAL FIX: Check actual profile data from database ─────────
+        console.log("[AuthCallback] Loading profile from database...");
+        const profile = await ensureAndLoadProfile(user);
 
-        nav(destination, { replace: true });
+        if (ac.signal.aborted) return;
+
+        const setupComplete = isProfileComplete(profile);
+        console.log("[AuthCallback] Profile complete:", setupComplete, profile);
+
+        if (setupComplete) {
+          // Set localStorage flags for future quick checks
+          setSetupComplete(user.id);
+          console.log("[AuthCallback] Redirecting to /discover");
+          nav("/discover", { replace: true });
+        } else {
+          console.log("[AuthCallback] Redirecting to /setup/basics");
+          nav("/setup/basics", { replace: true });
+        }
 
       } catch (err) {
         if (ac.signal.aborted) return;
 
-        console.error("[AuthCallback] fatal:", err?.message ?? err);
+        console.error("[AuthCallback] Error:", err);
         setErrorMsg(toUserMessage(err));
         setStatus("error");
-
         exchangeStarted = false;
       }
     };
@@ -134,7 +190,6 @@ export default function AuthCallback() {
     return (
       <div className="grid min-h-dvh place-items-center bg-white p-6">
         <div className="flex flex-col items-center gap-6 text-center max-w-sm">
-
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
             <svg
               className="h-7 w-7 text-red-500"
@@ -147,43 +202,30 @@ export default function AuthCallback() {
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0
-                   2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333
-                   -3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
               />
             </svg>
           </div>
 
           <div>
-            <h1 className="text-base font-semibold text-gray-900">
-              Sign‑in failed
-            </h1>
+            <h1 className="text-base font-semibold text-gray-900">Sign‑in failed</h1>
             <p className="mt-2 text-sm text-gray-500">{errorMsg}</p>
           </div>
 
           <div className="flex flex-col gap-3 w-full">
             <Link
               to="/auth"
-              className="
-                w-full rounded-full bg-violet-600 px-6 py-2.5
-                text-sm font-medium text-white text-center
-                hover:bg-violet-700 transition-colors
-              "
+              className="w-full rounded-full bg-violet-600 px-6 py-2.5 text-sm font-medium text-white text-center hover:bg-violet-700 transition-colors"
             >
               Back to sign in
             </Link>
             <Link
               to="/"
-              className="
-                w-full rounded-full border border-gray-200 bg-white
-                px-6 py-2.5 text-sm font-medium text-gray-700 text-center
-                hover:bg-gray-50 transition-colors
-              "
+              className="w-full rounded-full border border-gray-200 bg-white px-6 py-2.5 text-sm font-medium text-gray-700 text-center hover:bg-gray-50 transition-colors"
             >
               Go home
             </Link>
           </div>
-
         </div>
       </div>
     );
@@ -195,12 +237,11 @@ export default function AuthCallback() {
     <div className="grid min-h-dvh place-items-center bg-white p-6">
       <div className="flex flex-col items-center gap-4 text-center">
         <div
-          className="h-10 w-10 animate-spin rounded-full border-4
-                     border-violet-200 border-t-violet-600"
+          className="h-10 w-10 animate-spin rounded-full border-4 border-violet-200 border-t-violet-600"
           role="status"
           aria-label="Loading"
         />
-        <p className="text-sm text-gray-600">Finishing sign‑in…</p>
+        <p className="text-sm text-gray-600">Completing sign‑in...</p>
       </div>
     </div>
   );
@@ -208,16 +249,6 @@ export default function AuthCallback() {
 
 // ─── pollForSession ───────────────────────────────────────────────────────────
 
-/**
- * Poll supabase.auth.getSession() until a session appears or we time out.
- *
- * Supabase exchanges the PKCE code asynchronously during client init.
- * Polling is safer than a one-shot getSession() which can run before
- * the exchange promise resolves.
- *
- * @param {AbortSignal} signal
- * @returns {Promise<import("@supabase/supabase-js").Session>}
- */
 async function pollForSession(signal) {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
 
@@ -226,16 +257,14 @@ async function pollForSession(signal) {
 
     const { data, error } = await supabase.auth.getSession();
 
-    // Surface real errors immediately
     if (error) throw error;
 
     if (data?.session) {
       return data.session;
     }
 
-    // Not ready yet — wait a tick and retry
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 
-  throw new Error(`timeout after ${POLL_TIMEOUT_MS}ms waiting for session`);
+  throw new Error(`Timeout after ${POLL_TIMEOUT_MS}ms waiting for session`);
 }

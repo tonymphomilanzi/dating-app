@@ -53,30 +53,32 @@ export default function AuthChoice() {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
 
-  const handleGoogleSignIn = async () => {
-    try {
-      setError("");
-      setLoading(true);
 
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-          queryParams: {
-            prompt: "select_account",
-            access_type: "offline",
-          },
+const handleGoogleSignIn = async () => {
+  try {
+    setError("");
+    setLoading(true);
+
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: {
+          prompt: "select_account",
+          access_type: "offline",
         },
-      });
+        // ADDED: Request additional scopes for better profile data
+        scopes: "openid email profile",
+      },
+    });
 
-      if (oauthError) throw oauthError;
-      // browser redirects away — nothing below runs
-    } catch (err) {
-      console.error("[Auth] Google sign-in error:", err);
-      setError(err.message || "Google sign-in failed. Please try again.");
-      setLoading(false);
-    }
-  };
+    if (oauthError) throw oauthError;
+  } catch (err) {
+    console.error("[Auth] Google sign-in error:", err);
+    setError(err.message || "Google sign-in failed. Please try again.");
+    setLoading(false);
+  }
+};
 
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center bg-white px-6 py-12 text-gray-900">
