@@ -1,3 +1,4 @@
+// src/admin/AdminApp.jsx
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import Login from './pages/Login'
@@ -61,8 +62,10 @@ const AdminRoutes = () => {
           <NotificationCenter />
         </ProtectedRoute>
       } />
+      {/* Handle /admin root path */}
       <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
+      {/* Handle any other /admin/* paths */}
+      <Route path="/*" element={<Navigate to="/admin/dashboard" replace />} />
     </Routes>
   )
 }

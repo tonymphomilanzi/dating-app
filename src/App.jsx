@@ -1,5 +1,5 @@
 // src/App.jsx
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import RootLayout from "./layouts/RootLayout.jsx";
 import TabsLayout from "./layouts/TabsLayout.jsx";
 
@@ -9,7 +9,6 @@ import SetupGate from "./components/SetupGate.jsx";
 
 import Onboarding from "./pages/Onboarding.jsx";
 import AuthChoice from "./pages/AuthChoice.jsx";
-// REMOVED: EmailLogin — consolidating with SignInEmail
 import EmailVerify from "./pages/EmailVerify.jsx";
 import AuthCallback from "./pages/AuthCallback.jsx";
 import SignUp from "./pages/SignUp.jsx";
@@ -49,20 +48,18 @@ import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
-// Add these imports at the top of your App.jsx
+
+// Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
 
-
-export default function App() {
+// Main App Component (wrapped in providers)
+const MainApp = () => {
   return (
     <AuthFlowProvider>
       <NotificationProvider>
         <Toaster richColors closeButton position="top-center" />
 
         <Routes>
-           {/* ── ADMIN PANEL (completely separate from main app) ──── */}
-          <Route path="/admin/*" element={<AdminApp />} />
-          
           <Route element={<RootLayout />}>
 
             {/* ── Public — no auth needed ──────────────────────────────────── */}
@@ -72,15 +69,11 @@ export default function App() {
             <Route element={<GuestOnly />}>
               <Route path="/"                   element={<Onboarding />} />
               <Route path="/auth"               element={<AuthChoice />} />
-              {/* FIXED: Consolidated both email routes to use SignInEmail */}
               <Route path="/auth/email"         element={<SignInEmail />} />
               <Route path="/auth/signin/email"  element={<SignInEmail />} />
               <Route path="/auth/email-verify"  element={<EmailVerify />} />
               <Route path="/auth/verify"        element={<EmailVerify />} />
               <Route path="/auth/signup"        element={<SignUp />} />
-
-              {/*    Forgot password — guest only so logged-in users        */}
-              {/*    can't accidentally hit it and lose their session       */}
               <Route path="/auth/forgot-password" element={<ForgotPassword />} />
             </Route>
 
@@ -133,4 +126,20 @@ export default function App() {
       </NotificationProvider>
     </AuthFlowProvider>
   );
+};
+
+// Root App Component (handles routing between admin and main app)
+export default function App() {
+  const location = useLocation();
+  
+  // Check if we're on an admin route
+  const isAdminRoute = location.pathname.startsWith('/admin');
+  
+  // Render admin app without any main app providers
+  if (isAdminRoute) {
+    return <AdminApp />;
+  }
+  
+  // Render main app with all its providers
+  return <MainApp />;
 }
