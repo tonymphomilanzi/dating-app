@@ -65,14 +65,15 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
-  const login = async (username, password) => {
+ const login = async (username, password) => {
   try {
     console.log('🔐 Starting login process...')
-    console.log('📝 Username:', username)
-    console.log('🔑 Password provided:', password ? 'Yes' : 'No')
-
-    // 1. Fetch user by username
-    console.log('🔍 Querying database for user...')
+    
+    // TEMPORARY: Generate a new hash for the password you're typing
+    const testHash = await bcrypt.hash(password, 10)
+    console.log('🔨 Generated hash for your password:', testHash)
+    
+    // Rest of your login code...
     const { data: adminUser, error } = await supabaseAdmin
       .from('admin_users')
       .select('*')
@@ -80,69 +81,32 @@ export const AuthProvider = ({ children }) => {
       .eq('is_active', true)
       .single()
 
-    console.log('📊 Database query result:', { 
-      data: adminUser ? 'Found' : 'Not found', 
-      error: error ? error.message : 'No error' 
-    })
-
-    if (error) {
-      console.error('❌ Database error:', error)
+    if (error || !adminUser) {
       throw new Error('Invalid credentials')
     }
 
-    if (!adminUser) {
-      console.error('❌ No admin user found')
-      throw new Error('Invalid credentials')
-    }
-
-    console.log('✅ User found:', {
-      id: adminUser.id,
-      username: adminUser.username,
-      is_active: adminUser.is_active,
-      password_hash_exists: !!adminUser.password_hash,
-      password_hash_format: adminUser.password_hash ? adminUser.password_hash.substring(0, 7) + '...' : 'None'
-    })
-
-    // 2. Compare provided password with hashed password in DB
-    console.log('🔒 Comparing passwords...')
+    console.log('✅ User found')
     console.log('🔑 Hash from DB:', adminUser.password_hash)
+    console.log('🔑 Hash for your input:', testHash)
     
     const isValid = await bcrypt.compare(password, adminUser.password_hash)
     console.log('✅ Password comparison result:', isValid)
 
     if (!isValid) {
-      console.error('❌ Password comparison failed')
       throw new Error('Invalid credentials')
     }
 
-    // 3. Prepare session
-    console.log('🎫 Creating session...')
+    // Success flow...
     const adminData = { id: adminUser.id, username: adminUser.username }
-
-    // 4. Update last login timestamp in DB
-    console.log('📅 Updating last login...')
-    const { error: updateError } = await supabaseAdmin
-      .from('admin_users')
-      .update({ last_login: new Date().toISOString() })
-      .eq('id', adminUser.id)
-
-    if (updateError) {
-      console.warn('⚠️ Failed to update last login:', updateError)
-    }
-
-    // 5. Update local state and storage
-    console.log('💾 Saving session locally...')
     setAdmin(adminData)
     localStorage.setItem('admin_panel_session', JSON.stringify(adminData))
 
-    console.log('🎉 Login successful!')
     return { success: true }
   } catch (error) {
-    console.error('💥 Login process failed:', error.message)
+    console.error('💥 Login failed:', error.message)
     return { success: false, error: error.message }
   }
 }
-
   const logout = () => {
     setAdmin(null)
     localStorage.removeItem('admin_panel_session')
