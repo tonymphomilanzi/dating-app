@@ -13,6 +13,11 @@ const GEOCODE_TIMEOUT_MS = 8_000;
 const GEO_TIMEOUT_MS     = 12_000;
 const STORAGE_BUCKET     = "clinic-covers";
 
+// App lifecycle constants
+const HEARTBEAT_INTERVAL = 30_000; // 30 seconds
+const CONNECTION_TIMEOUT = 10_000;  // 10 seconds
+const MAX_RETRY_ATTEMPTS = 3;
+
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 
 const DAY_SHORT = {
@@ -33,6 +38,188 @@ const SPECIALTIES = [
   "Aromatherapy","Reflexology","Thai Massage","Prenatal Massage",
   "Lymphatic Drainage","Shiatsu",
 ];
+
+/* ================================================================
+   APP LIFECYCLE MANAGER
+   ================================================================ */
+
+class AppLifecycleManager {
+  constructor() {
+    this.isActive = true;
+    this.isOnline = navigator.onLine;
+    this.callbacks = new Set();
+    this.heartbeatInterval = null;
+    this.retryAttempts = 0;
+    
+    this.init();
+  }
+
+  init() {
+    // Visibility API - handle app going to background/foreground
+    document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+    
+    // Network connectivity
+    window.addEventListener('online', this.handleOnline.bind(this));
+    window.addEventListener('offline', this.handleOffline.bind(this));
+    
+    // Page focus/blur
+    window.addEventListener('focus', this.handleFocus.bind(this));
+    window.addEventListener('blur', this.handleBlur.bind(this));
+    
+    // Before unload cleanup
+    window.addEventListener('beforeunload', this.cleanup.bind(this));
+    
+    this.startHeartbeat();
+  }
+
+  handleVisibilityChange() {
+    const wasActive = this.isActive;
+    this.isActive = !document.hidden;
+    
+    if (this.isActive && !wasActive) {
+      console.log('[Lifecycle] App became active, reconnecting...');
+      this.handleAppResume();
+    } else if (!this.isActive && wasActive) {
+      console.log('[Lifecycle] App became inactive, pausing...');
+      this.handleAppPause();
+    }
+  }
+
+  handleFocus() {
+    if (!this.isActive) {
+      this.isActive = true;
+      this.handleAppResume();
+    }
+  }
+
+  handleBlur() {
+    // Don't immediately mark as inactive on blur, wait for visibility change
+  }
+
+  handleOnline() {
+    const wasOffline = !this.isOnline;
+    this.isOnline = true;
+    
+    if (wasOffline) {
+      console.log('[Lifecycle] Back online, reconnecting...');
+      this.retryAttempts = 0;
+      this.notifyCallbacks('online', { reconnected: true });
+    }
+  }
+
+  handleOffline() {
+    this.isOnline = false;
+    console.log('[Lifecycle] Gone offline');
+    this.notifyCallbacks('offline');
+  }
+
+  handleAppResume() {
+    this.startHeartbeat();
+    this.checkConnectivity();
+    this.notifyCallbacks('resume');
+  }
+
+  handleAppPause() {
+    this.stopHeartbeat();
+    this.notifyCallbacks('pause');
+  }
+
+  async checkConnectivity() {
+    if (!this.isOnline) return false;
+    
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT);
+      
+      const response = await fetch('/api/health', { 
+        signal: controller.signal,
+        cache: 'no-cache'
+      });
+      
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        this.retryAttempts = 0;
+        return true;
+      } else {
+        throw new Error(`Server responded with ${response.status}`);
+      }
+    } catch (error) {
+      console.warn('[Lifecycle] Connectivity check failed:', error.message);
+      this.handleConnectivityIssue();
+      return false;
+    }
+  }
+
+  handleConnectivityIssue() {
+    this.retryAttempts++;
+    
+    if (this.retryAttempts <= MAX_RETRY_ATTEMPTS) {
+      const delay = Math.min(1000 * Math.pow(2, this.retryAttempts), 10000);
+      console.log(`[Lifecycle] Retrying connectivity check in ${delay}ms (attempt ${this.retryAttempts})`);
+      
+      setTimeout(() => {
+        this.checkConnectivity();
+      }, delay);
+    } else {
+      console.error('[Lifecycle] Max retry attempts reached, notifying callbacks');
+      this.notifyCallbacks('connection-failed');
+    }
+  }
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    
+    this.heartbeatInterval = setInterval(async () => {
+      if (this.isActive && this.isOnline) {
+        const connected = await this.checkConnectivity();
+        if (!connected) {
+          console.warn('[Lifecycle] Heartbeat failed, connection issues detected');
+        }
+      }
+    }, HEARTBEAT_INTERVAL);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  subscribe(callback) {
+    this.callbacks.add(callback);
+    
+    return () => {
+      this.callbacks.delete(callback);
+    };
+  }
+
+  notifyCallbacks(event, data = {}) {
+    this.callbacks.forEach(callback => {
+      try {
+        callback(event, data);
+      } catch (error) {
+        console.error('[Lifecycle] Callback error:', error);
+      }
+    });
+  }
+
+  cleanup() {
+    this.stopHeartbeat();
+    this.callbacks.clear();
+    
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+    window.removeEventListener('online', this.handleOnline.bind(this));
+    window.removeEventListener('offline', this.handleOffline.bind(this));
+    window.removeEventListener('focus', this.handleFocus.bind(this));
+    window.removeEventListener('blur', this.handleBlur.bind(this));
+    window.removeEventListener('beforeunload', this.cleanup.bind(this));
+  }
+}
+
+// Singleton instance
+const appLifecycle = new AppLifecycleManager();
 
 /* ================================================================
    TIME HELPERS
@@ -109,24 +296,66 @@ function hoursPreview(hours) {
 }
 
 /* ================================================================
-   GEOCODING HELPERS
+   ENHANCED GEOCODING HELPERS
    ================================================================ */
 
 async function geocodeAddress(address, signal) {
   const url = `${NOMINATIM_BASE}/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`;
-  const res  = await fetch(url, { headers: { "Accept-Language": "en" }, signal });
-  if (!res.ok) throw new Error("Geocoding request failed");
-  const [first] = await res.json();
-  if (!first) throw new Error("Address not found. Try being more specific.");
-  return { lat: parseFloat(first.lat), lng: parseFloat(first.lon), display: first.display_name };
+  
+  try {
+    const res = await fetch(url, { 
+      headers: { "Accept-Language": "en" }, 
+      signal,
+      cache: 'no-cache' // Prevent stale cache issues
+    });
+    
+    if (!res.ok) {
+      throw new Error(`Geocoding request failed: ${res.status} ${res.statusText}`);
+    }
+    
+    const data = await res.json();
+    const [first] = data;
+    
+    if (!first) {
+      throw new Error("Address not found. Try being more specific.");
+    }
+    
+    return { 
+      lat: parseFloat(first.lat), 
+      lng: parseFloat(first.lon), 
+      display: first.display_name 
+    };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error("Request was cancelled");
+    }
+    throw error;
+  }
 }
 
 async function reverseGeocode(lat, lng, signal) {
   const url = `${NOMINATIM_BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-  const res  = await fetch(url, { headers: { "Accept-Language": "en" }, signal });
-  if (!res.ok) throw new Error("Reverse geocoding failed");
-  const data = await res.json();
-  return data?.display_name || "";
+  
+  try {
+    const res = await fetch(url, { 
+      headers: { "Accept-Language": "en" }, 
+      signal,
+      cache: 'no-cache'
+    });
+    
+    if (!res.ok) {
+      throw new Error(`Reverse geocoding failed: ${res.status}`);
+    }
+    
+    const data = await res.json();
+    return data?.display_name || "";
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error("Request was cancelled");
+    }
+    console.warn('Reverse geocoding failed:', error);
+    return "";
+  }
 }
 
 const isValidLatLng = (lat, lng) =>
@@ -135,7 +364,7 @@ const isValidLatLng = (lat, lng) =>
   !(lat === 0 && lng === 0);
 
 /* ================================================================
-   HOOK: useLocationPicker
+   ENHANCED HOOK: useLocationPicker
    ================================================================ */
 
 function useLocationPicker() {
@@ -146,79 +375,249 @@ function useLocationPicker() {
   const [geocoding,  setGeocoding]  = useState(false);
   const [geocodeErr, setGeocodeErr] = useState("");
 
-  const abortRef   = useRef(null);
+  const abortRef = useRef(null);
   const mountedRef = useRef(true);
+  const watchIdRef = useRef(null);
+  const timeoutRef = useRef(null);
+  const lifecycleUnsubscribeRef = useRef(null);
+
+  // Enhanced cleanup function
+  const cleanup = useCallback(() => {
+    mountedRef.current = false;
+    
+    // Abort any ongoing requests
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    
+    // Clear any timeouts
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
+    // Stop watching position
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    
+    // Unsubscribe from lifecycle events
+    if (lifecycleUnsubscribeRef.current) {
+      lifecycleUnsubscribeRef.current();
+      lifecycleUnsubscribeRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; abortRef.current?.abort(); };
-  }, []);
+    
+    // Subscribe to app lifecycle events
+    lifecycleUnsubscribeRef.current = appLifecycle.subscribe((event, data) => {
+      if (!mountedRef.current) return;
+      
+      switch (event) {
+        case 'pause':
+          // Pause any ongoing operations
+          if (abortRef.current) {
+            abortRef.current.abort();
+          }
+          break;
+          
+        case 'resume':
+        case 'online':
+          // Resume operations if needed
+          if (geocoding) {
+            setGeocoding(false);
+            setGeocodeErr("Connection restored. Please try again.");
+          }
+          break;
+          
+        case 'offline':
+          setGeoError("You're offline. Location services unavailable.");
+          setGeocodeErr("You're offline. Address lookup unavailable.");
+          break;
+          
+        case 'connection-failed':
+          setGeoError("Connection issues. Please check your internet and try again.");
+          setGeocodeErr("Connection issues. Please check your internet and try again.");
+          break;
+      }
+    });
+    
+    return cleanup;
+  }, [cleanup]);
 
   const confirmAddress = useCallback(async () => {
     if (!address.trim()) return;
-    abortRef.current?.abort();
+    if (!navigator.onLine) {
+      setGeocodeErr("You're offline. Please connect to the internet and try again.");
+      return;
+    }
+    
+    // Cleanup previous request
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    
     const ac = new AbortController();
     abortRef.current = ac;
-    const tid = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
-    setGeocoding(true); setGeocodeErr(""); setCoords(null);
+    
+    const timeoutId = setTimeout(() => {
+      ac.abort();
+    }, GEOCODE_TIMEOUT_MS);
+    
+    timeoutRef.current = timeoutId;
+    
+    setGeocoding(true);
+    setGeocodeErr("");
+    setCoords(null);
+    
     try {
-      const r = await geocodeAddress(address.trim(), ac.signal);
-      clearTimeout(tid);
+      const result = await geocodeAddress(address.trim(), ac.signal);
+      
+      clearTimeout(timeoutId);
+      
       if (!mountedRef.current || ac.signal.aborted) return;
-      setCoords({ lat: r.lat, lng: r.lng });
-      setAddress(r.display);
+      
+      setCoords({ lat: result.lat, lng: result.lng });
+      setAddress(result.display);
+      
     } catch (err) {
-      clearTimeout(tid);
+      clearTimeout(timeoutId);
+      
       if (!mountedRef.current || ac.signal.aborted) return;
-      setGeocodeErr(err?.name === "AbortError"
-        ? "Geocoding timed out." : err?.message || "Could not find that address.");
+      
+      let errorMessage = "Could not find that address.";
+      
+      if (err?.name === "AbortError") {
+        errorMessage = "Request timed out. Please try again.";
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setGeocodeErr(errorMessage);
+      
     } finally {
-      if (mountedRef.current) setGeocoding(false);
+      if (mountedRef.current) {
+        setGeocoding(false);
+      }
+      
+      timeoutRef.current = null;
     }
   }, [address]);
 
   const useMyLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
       setGeoStatus("denied");
-      setGeoError("Geolocation is not supported.");
+      setGeoError("Geolocation is not supported by this browser.");
       return;
     }
-    setGeoStatus("loading"); setGeoError("");
+    
+    if (!navigator.onLine) {
+      setGeoError("You're offline. Please connect to the internet and try again.");
+      return;
+    }
+
+    setGeoStatus("loading");
+    setGeoError("");
+
+    // Get current position with enhanced error handling
     navigator.geolocation.getCurrentPosition(
-      async ({ coords: c }) => {
-        const lat = c.latitude; const lng = c.longitude;
+      async (position) => {
+        const { latitude: lat, longitude: lng } = position.coords;
+        
         if (!isValidLatLng(lat, lng)) {
-          if (mountedRef.current) { setGeoStatus("error"); setGeoError("Invalid coordinates."); }
+          if (mountedRef.current) {
+            setGeoStatus("error");
+            setGeoError("Invalid coordinates received. Please enter address manually.");
+          }
           return;
         }
-        if (mountedRef.current) { setCoords({ lat, lng }); setGeoStatus("granted"); }
-        abortRef.current?.abort();
+
+        if (mountedRef.current) {
+          setCoords({ lat, lng });
+          setGeoStatus("granted");
+        }
+
+        // Reverse geocode to get address
+        if (abortRef.current) {
+          abortRef.current.abort();
+        }
+        
         const ac = new AbortController();
         abortRef.current = ac;
-        const tid = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+        
+        const timeoutId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+        timeoutRef.current = timeoutId;
+        
         try {
-          const label = await reverseGeocode(lat, lng, ac.signal);
-          clearTimeout(tid);
-          if (mountedRef.current && !ac.signal.aborted && label) setAddress(label);
-        } catch { clearTimeout(tid); }
+          const displayName = await reverseGeocode(lat, lng, ac.signal);
+          
+          clearTimeout(timeoutId);
+          
+          if (mountedRef.current && !ac.signal.aborted && displayName) {
+            setAddress(displayName);
+          }
+        } catch (error) {
+          clearTimeout(timeoutId);
+          // Non-fatal error - we have coordinates, just no address
+          console.warn('Reverse geocoding failed:', error);
+        } finally {
+          timeoutRef.current = null;
+        }
       },
-      (err) => {
+      (error) => {
         if (!mountedRef.current) return;
+
         setGeoStatus("denied");
-        setGeoError(err.code === 1
-          ? "Permission denied. Enable location in browser settings."
-          : "Could not get location. Enter it manually.");
+        
+        let errorMessage = "Could not get location. Please enter it manually.";
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Location permission denied. Please enable location access and try again.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Location information unavailable. Please enter address manually.";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Location request timed out. Please try again or enter address manually.";
+            break;
+        }
+        
+        setGeoError(errorMessage);
       },
-      { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: 60_000 }
+      {
+        enableHighAccuracy: true,
+        timeout: GEO_TIMEOUT_MS,
+        maximumAge: 60_000 // Cache position for 1 minute
+      }
     );
   }, []);
 
   const clearLocation = useCallback(() => {
-    setCoords(null); setAddress(""); setGeocodeErr(""); setGeoError(""); setGeoStatus("idle");
-  }, []);
+    cleanup();
+    setCoords(null);
+    setAddress("");
+    setGeocodeErr("");
+    setGeoError("");
+    setGeoStatus("idle");
+  }, [cleanup]);
 
-  return { address, setAddress, coords, geoStatus, geoError,
-           geocoding, geocodeErr, confirmAddress, useMyLocation, clearLocation };
+  return { 
+    address, 
+    setAddress, 
+    coords, 
+    geoStatus, 
+    geoError,
+    geocoding, 
+    geocodeErr, 
+    confirmAddress, 
+    useMyLocation, 
+    clearLocation 
+  };
 }
 
 /* ================================================================
@@ -403,7 +802,7 @@ function TimeSelect({ value, onChange, label, minTime }) {
    ================================================================ */
 
 export default function CreateMassageClinic() {
-  const navigate        = useNavigate();
+  const navigate = useNavigate();
   const { user, profile } = useAuth();
 
   // ── Form state ───────────────────────────────────────────────────
@@ -424,15 +823,80 @@ export default function CreateMassageClinic() {
   const [errors,      setErrors]      = useState({});
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [connectionStatus, setConnectionStatus] = useState("connected");
 
-  const loc        = useLocationPicker();
-  const fileRef    = useRef(null);
+  const loc = useLocationPicker();
+  const fileRef = useRef(null);
   const mountedRef = useRef(true);
+  const lifecycleUnsubscribeRef = useRef(null);
+  const createdObjectURLs = useRef(new Set());
+
+  // Enhanced cleanup function
+  const cleanup = useCallback(() => {
+    mountedRef.current = false;
+    
+    // Cleanup object URLs to prevent memory leaks
+    createdObjectURLs.current.forEach(url => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.warn('Error revoking object URL:', error);
+      }
+    });
+    createdObjectURLs.current.clear();
+    
+    // Cleanup form preview URL
+    if (form.coverPreview) {
+      try {
+        URL.revokeObjectURL(form.coverPreview);
+      } catch (error) {
+        console.warn('Error revoking cover preview URL:', error);
+      }
+    }
+    
+    // Unsubscribe from lifecycle events
+    if (lifecycleUnsubscribeRef.current) {
+      lifecycleUnsubscribeRef.current();
+      lifecycleUnsubscribeRef.current = null;
+    }
+  }, [form.coverPreview]);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+    
+    // Subscribe to app lifecycle events
+    lifecycleUnsubscribeRef.current = appLifecycle.subscribe((event, data) => {
+      if (!mountedRef.current) return;
+      
+      switch (event) {
+        case 'pause':
+          console.log('[CreateClinic] App paused');
+          break;
+          
+        case 'resume':
+          console.log('[CreateClinic] App resumed');
+          setConnectionStatus("connected");
+          break;
+          
+        case 'online':
+          setConnectionStatus("connected");
+          setSubmitError(""); // Clear any offline errors
+          break;
+          
+        case 'offline':
+          setConnectionStatus("offline");
+          setSubmitError("You're offline. Please connect to the internet to create your clinic.");
+          break;
+          
+        case 'connection-failed':
+          setConnectionStatus("failed");
+          setSubmitError("Connection issues detected. Please check your internet and try again.");
+          break;
+      }
+    });
+    
+    return cleanup;
+  }, [cleanup]);
 
   // ── Field helpers ────────────────────────────────────────────────
   const setField = useCallback((key, value) => {
@@ -452,17 +916,29 @@ export default function CreateMassageClinic() {
   const handleCoverChange = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
     if (file.size > 5 * 1024 * 1024) {
       setErrors((p) => ({ ...p, cover: "Image must be under 5 MB." }));
       return;
     }
+    
+    // Cleanup previous preview URL
+    if (form.coverPreview) {
+      URL.revokeObjectURL(form.coverPreview);
+      createdObjectURLs.current.delete(form.coverPreview);
+    }
+    
     const url = URL.createObjectURL(file);
-    setForm((p) => {
-      if (p.coverPreview) URL.revokeObjectURL(p.coverPreview);
-      return { ...p, coverFile: file, coverPreview: url };
-    });
+    createdObjectURLs.current.add(url);
+    
+    setForm((p) => ({
+      ...p,
+      coverFile: file,
+      coverPreview: url
+    }));
+    
     setErrors((p) => ({ ...p, cover: "" }));
-  }, []);
+  }, [form.coverPreview]);
 
   // ── Validation ───────────────────────────────────────────────────
   const validate = useCallback(() => {
@@ -478,13 +954,20 @@ export default function CreateMassageClinic() {
   }, [form, loc.address, loc.coords]);
 
   /* ──────────────────────────────────────────────────────────────
-     SUBMIT — writes directly to Supabase:
+     ENHANCED SUBMIT — writes directly to Supabase with better error handling:
        1. Upload cover image to Storage (if provided)
        2. Insert row into massage_clinics
        3. Bulk-insert specialties into clinic_specialties
      ────────────────────────────────────────────────────────────── */
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
+    
+    // Check connection status
+    if (!navigator.onLine || connectionStatus === "offline") {
+      setSubmitError("You're offline. Please connect to the internet and try again.");
+      return;
+    }
+    
     const validationErrors = validate();
     if (Object.keys(validationErrors).length) {
       setErrors(validationErrors);
@@ -502,83 +985,162 @@ export default function CreateMassageClinic() {
     setSubmitError("");
 
     try {
-      // ── 1. Upload cover image ───────────────────────────────────
+      // ── 1. Upload cover image with retry logic ──────────────────
       let coverUrl = null;
 
       if (form.coverFile) {
-        const ext      = form.coverFile.name.split(".").pop().toLowerCase();
+        const ext = form.coverFile.name.split(".").pop().toLowerCase();
         const filePath = `${user.id}/${crypto.randomUUID()}.${ext}`;
 
-        const { error: uploadErr } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .upload(filePath, form.coverFile, {
-            cacheControl : "3600",
-            upsert        : false,
-            contentType  : form.coverFile.type,
-          });
+        let uploadAttempts = 0;
+        const maxUploadAttempts = 3;
+        
+        while (uploadAttempts < maxUploadAttempts) {
+          try {
+            const { error: uploadErr } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .upload(filePath, form.coverFile, {
+                cacheControl: "3600",
+                upsert: false,
+                contentType: form.coverFile.type,
+              });
 
-        if (uploadErr) throw new Error(`Cover upload failed: ${uploadErr.message}`);
+            if (uploadErr) {
+              throw new Error(`Cover upload failed: ${uploadErr.message}`);
+            }
 
-        const { data: urlData } = supabase.storage
-          .from(STORAGE_BUCKET)
-          .getPublicUrl(filePath);
+            const { data: urlData } = supabase.storage
+              .from(STORAGE_BUCKET)
+              .getPublicUrl(filePath);
 
-        coverUrl = urlData?.publicUrl ?? null;
+            coverUrl = urlData?.publicUrl ?? null;
+            break; // Success, exit retry loop
+            
+          } catch (uploadError) {
+            uploadAttempts++;
+            console.warn(`[CreateClinic] Upload attempt ${uploadAttempts} failed:`, uploadError);
+            
+            if (uploadAttempts >= maxUploadAttempts) {
+              throw new Error(`Failed to upload cover image after ${maxUploadAttempts} attempts: ${uploadError.message}`);
+            }
+            
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000 * uploadAttempts));
+          }
+        }
       }
 
-      // ── 2. Insert clinic row ────────────────────────────────────
-      const { data: clinic, error: insertErr } = await supabase
-        .from("massage_clinics")
-        .insert({
-          owner_id     : user.id,
-          name         : form.name.trim(),
-          description  : form.description.trim() || null,
-          phone        : form.phone.trim()        || null,
-          email        : form.email.trim()        || null,
-          website      : form.website.trim()      || null,
-          address      : loc.address.trim(),
-          lat          : loc.coords.lat,
-          lng          : loc.coords.lng,
-          cover_url    : coverUrl,
-          // Store opening hours as a JSONB-compatible string
-          opening_hours: serializeHours(hours),
-          // Status starts as 'pending' — adjust default in DB if you
-          // want listings to go live immediately without moderation.
-          status       : "pending",
-        })
-        .select("id")
-        .single();
+      // ── 2. Insert clinic row with retry logic ──────────────────
+      let insertAttempts = 0;
+      const maxInsertAttempts = 3;
+      let clinic = null;
+      
+      while (insertAttempts < maxInsertAttempts) {
+        try {
+          const { data: clinicData, error: insertErr } = await supabase
+            .from("massage_clinics")
+            .insert({
+              owner_id: user.id,
+              name: form.name.trim(),
+              description: form.description.trim() || null,
+              phone: form.phone.trim() || null,
+              email: form.email.trim() || null,
+              website: form.website.trim() || null,
+              address: loc.address.trim(),
+              lat: loc.coords.lat,
+              lng: loc.coords.lng,
+              cover_url: coverUrl,
+              opening_hours: serializeHours(hours),
+              status: "pending",
+            })
+            .select("id")
+            .single();
 
-      if (insertErr) throw new Error(insertErr.message);
+          if (insertErr) {
+            throw new Error(`Database error: ${insertErr.message}`);
+          }
 
-      // ── 3. Insert specialties (bulk) ────────────────────────────
-      if (form.specialties.length) {
-        const { error: specErr } = await supabase
-          .from("clinic_specialties")
-          .insert(
-            form.specialties.map((name) => ({ clinic_id: clinic.id, name }))
-          );
+          clinic = clinicData;
+          break; // Success, exit retry loop
+          
+        } catch (insertError) {
+          insertAttempts++;
+          console.warn(`[CreateClinic] Insert attempt ${insertAttempts} failed:`, insertError);
+          
+          if (insertAttempts >= maxInsertAttempts) {
+            throw new Error(`Failed to create clinic after ${maxInsertAttempts} attempts: ${insertError.message}`);
+          }
+          
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * insertAttempts));
+        }
+      }
 
-        // Non-fatal — clinic is already created; log and continue
-        if (specErr) console.warn("[CreateClinic] specialties insert:", specErr.message);
+      // ── 3. Insert specialties (bulk) with error handling ────────
+      if (form.specialties.length && clinic) {
+        try {
+          const { error: specErr } = await supabase
+            .from("clinic_specialties")
+            .insert(
+              form.specialties.map((name) => ({ clinic_id: clinic.id, name }))
+            );
+
+          // Non-fatal — clinic is already created; log and continue
+          if (specErr) {
+            console.warn("[CreateClinic] specialties insert failed:", specErr.message);
+          }
+        } catch (specError) {
+          console.warn("[CreateClinic] specialties insert error:", specError);
+        }
       }
 
       // ── 4. Navigate away ────────────────────────────────────────
       if (mountedRef.current) {
-        navigate("/massage-clinics", { replace: true, state: { created: true } });
+        navigate("/massage-clinics", { 
+          replace: true, 
+          state: { 
+            created: true,
+            clinicId: clinic?.id 
+          } 
+        });
       }
     } catch (err) {
       if (!mountedRef.current) return;
+      
       console.error("[CreateClinic] submit error:", err);
-      setSubmitError(err?.message || "Failed to create clinic. Please try again.");
+      
+      let errorMessage = "Failed to create clinic. Please try again.";
+      
+      if (err?.message) {
+        errorMessage = err.message;
+      } else if (!navigator.onLine) {
+        errorMessage = "You're offline. Please connect to the internet and try again.";
+      }
+      
+      setSubmitError(errorMessage);
     } finally {
-      if (mountedRef.current) setSubmitting(false);
+      if (mountedRef.current) {
+        setSubmitting(false);
+      }
     }
-  }, [form, hours, loc.address, loc.coords, navigate, user, validate]);
+  }, [form, hours, loc.address, loc.coords, navigate, user, validate, connectionStatus]);
 
   // ── Render ───────────────────────────────────────────────────────
   return (
     <div className="min-h-dvh bg-gray-50 pb-32">
+
+      {/* ── Connection Status Banner ── */}
+      {connectionStatus !== "connected" && (
+        <div className={`w-full px-4 py-2 text-center text-sm font-medium ${
+          connectionStatus === "offline" 
+            ? "bg-red-100 text-red-800" 
+            : "bg-yellow-100 text-yellow-800"
+        }`}>
+          {connectionStatus === "offline" 
+            ? "You're offline. Please connect to the internet." 
+            : "Connection issues detected. Some features may not work properly."}
+        </div>
+      )}
 
       {/* ── Sticky header ── */}
       <header className="sticky top-0 z-10 flex items-center gap-3 border-b
@@ -608,10 +1170,11 @@ export default function CreateMassageClinic() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
+            disabled={connectionStatus === "offline"}
             className="relative w-full overflow-hidden rounded-2xl border-2 border-dashed
               border-gray-200 bg-white transition-colors hover:border-violet-300
               hover:bg-violet-50/30 focus-visible:outline-none focus-visible:ring-2
-              focus-visible:ring-violet-400"
+              focus-visible:ring-violet-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {form.coverPreview ? (
               <img src={form.coverPreview} alt="Cover preview"
@@ -636,6 +1199,7 @@ export default function CreateMassageClinic() {
             <button type="button"
               onClick={() => {
                 URL.revokeObjectURL(form.coverPreview);
+                createdObjectURLs.current.delete(form.coverPreview);
                 setForm((p) => ({ ...p, coverFile: null, coverPreview: null }));
               }}
               className="mt-1 text-xs text-red-500 hover:underline">
@@ -675,7 +1239,7 @@ export default function CreateMassageClinic() {
         {/* ── Location ── */}
         <Section title="Location" subtitle="Enter an address or use your current location">
           <button type="button" onClick={loc.useMyLocation}
-            disabled={loc.geoStatus === "loading"}
+            disabled={loc.geoStatus === "loading" || connectionStatus === "offline"}
             className="inline-flex w-full items-center justify-center gap-2 rounded-2xl
               border border-violet-200 bg-violet-50 py-3 text-sm font-semibold
               text-violet-700 transition-colors hover:bg-violet-100
@@ -717,7 +1281,7 @@ export default function CreateMassageClinic() {
                 placeholder="123 Main St, City, Country"
                 className={`flex-1 ${inputCls(errors.address || errors.coords)}`} />
               <button type="button" onClick={loc.confirmAddress}
-                disabled={loc.geocoding || !loc.address.trim()}
+                disabled={loc.geocoding || !loc.address.trim() || connectionStatus === "offline"}
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-2xl
                   bg-violet-600 px-4 py-3 text-sm font-semibold text-white
                   transition-colors hover:bg-violet-700
@@ -800,7 +1364,7 @@ export default function CreateMassageClinic() {
         )}
 
         {/* ── Submit ── */}
-        <button type="submit" disabled={submitting}
+        <button type="submit" disabled={submitting || connectionStatus === "offline"}
           className="w-full rounded-2xl bg-violet-600 py-4 text-base font-bold
             text-white shadow-sm transition-all hover:bg-violet-700
             active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed">
