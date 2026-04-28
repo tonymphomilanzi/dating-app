@@ -4,26 +4,30 @@ import { supabase } from "../lib/supabase.client.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const EXCHANGE_TIMEOUT_MS = 15_000;
-
-const USED_CODE_INDICATORS = [
-  "both auth code and code verifier should be non-empty",
-  "invalid request",
-  "code has already been used",
-];
+/**
+ * How long to wait for Supabase to auto-exchange the code.
+ * detectSessionInUrl does this on client init — usually <2 s.
+ */
+const POLL_INTERVAL_MS  = 150;
+const POLL_TIMEOUT_MS   = 15_000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function toUserMessage(err) {
   const msg = (err?.message ?? "").toLowerCase();
 
-  if (USED_CODE_INDICATORS.some((s) => msg.includes(s))) {
-    return "This sign‑in link has already been used. Please sign in again.";
+  if (
+    msg.includes("code verifier") ||
+    msg.includes("both auth code") ||
+    msg.includes("code has already been used") ||
+    msg.includes("invalid request")
+  ) {
+    return "This sign‑in link has already been used or expired. Please sign in again.";
   }
   if (msg.includes("network") || msg.includes("fetch")) {
     return "A network error occurred. Please check your connection and try again.";
   }
-  if (msg === "aborted" || msg.includes("timeout")) {
+  if (msg.includes("timeout")) {
     return "Sign‑in is taking too long. Please try again.";
   }
   return "We couldn't complete sign‑in. Please try again.";
@@ -36,20 +40,7 @@ function isSetupComplete(uid) {
   );
 }
 
-function withTimeout(promise, ms) {
-  let timerId;
-  const timeout = new Promise((_, reject) => {
-    timerId = setTimeout(
-      () => reject(new Error(`timeout after ${ms}ms`)),
-      ms
-    );
-  });
-  return Promise.race([promise, timeout]).finally(() =>
-    clearTimeout(timerId)
-  );
-}
-
-// ─── Module-level exchange guard ──────────────────────────────────────────────
+// ─── Module-level guard ───────────────────────────────────────────────────────
 let exchangeStarted = false;
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -71,12 +62,12 @@ export default function AuthCallback() {
 
     const run = async () => {
       try {
-        // ── Debug: log exactly what arrived in the URL ──────────────────────
+        // ── Log exactly what arrived ──────────────────────────────────────
         console.log("[AuthCallback] href   :", window.location.href);
         console.log("[AuthCallback] search :", window.location.search);
         console.log("[AuthCallback] hash   :", window.location.hash);
 
-        // ── Handle OAuth errors returned from Google/Supabase ───────────────
+        // ── Check for OAuth error param ───────────────────────────────────
         const params     = new URLSearchParams(window.location.search);
         const oauthError = params.get("error");
 
@@ -86,57 +77,38 @@ export default function AuthCallback() {
           );
         }
 
-        // ── PKCE flow: code in query string ─────────────────────────────────
-        const code = params.get("code");
+        // ── Wait for Supabase to auto-exchange the code ───────────────────
+        //
+        // When detectSessionInUrl:true + flowType:"pkce" are set, the
+        // Supabase client exchanges ?code= automatically during createClient().
+        // We poll getSession() until it resolves with a user.
+        //
+        // We do NOT call exchangeCodeForSession() manually — that's what
+        // caused "code verifier not found": calling it a second time after
+        // Supabase already consumed the verifier internally.
 
-        if (code) {
-          console.log("[AuthCallback] PKCE code found, exchanging…");
+        console.log("[AuthCallback] waiting for auto-exchange…");
 
-          const { error: exchErr } = await withTimeout(
-            supabase.auth.exchangeCodeForSession(code),
-            EXCHANGE_TIMEOUT_MS
-          );
-
-          if (ac.signal.aborted) return;
-          if (exchErr) throw exchErr;
-
-        } else {
-          // ── Implicit flow fallback: tokens in URL hash ───────────────────
-          // detectSessionInUrl:true makes Supabase parse the hash automatically.
-          // We just need to wait for getSession() to resolve.
-          console.log(
-            "[AuthCallback] No code in query string — " +
-            "checking for implicit-flow hash tokens…"
-          );
-
-          // Give detectSessionInUrl a tick to finish parsing
-          await new Promise((r) => setTimeout(r, 100));
-
-          if (ac.signal.aborted) return;
-        }
-
-        // ── Read the resulting session ──────────────────────────────────────
-        const { data, error: sessionErr } = await supabase.auth.getSession();
+        const session = await pollForSession(ac.signal);
 
         if (ac.signal.aborted) return;
-        if (sessionErr) throw sessionErr;
 
-        const user = data?.session?.user;
+        const user = session?.user;
 
-        if (user) {
-          console.log("[AuthCallback] session OK, uid:", user.id);
-
-          const destination = isSetupComplete(user.id)
-            ? "/discover"
-            : "/setup/basics";
-
-          nav(destination, { replace: true });
-        } else {
+        if (!user) {
           throw new Error(
-            "No session found after exchange. " +
-            "URL was: " + window.location.href
+            "No session after exchange. " +
+            "href: " + window.location.href
           );
         }
+
+        console.log("[AuthCallback] session OK, uid:", user.id);
+
+        const destination = isSetupComplete(user.id)
+          ? "/discover"
+          : "/setup/basics";
+
+        nav(destination, { replace: true });
 
       } catch (err) {
         if (ac.signal.aborted) return;
@@ -145,7 +117,6 @@ export default function AuthCallback() {
         setErrorMsg(toUserMessage(err));
         setStatus("error");
 
-        // Reset so a retry works
         exchangeStarted = false;
       }
     };
@@ -233,4 +204,38 @@ export default function AuthCallback() {
       </div>
     </div>
   );
+}
+
+// ─── pollForSession ───────────────────────────────────────────────────────────
+
+/**
+ * Poll supabase.auth.getSession() until a session appears or we time out.
+ *
+ * Supabase exchanges the PKCE code asynchronously during client init.
+ * Polling is safer than a one-shot getSession() which can run before
+ * the exchange promise resolves.
+ *
+ * @param {AbortSignal} signal
+ * @returns {Promise<import("@supabase/supabase-js").Session>}
+ */
+async function pollForSession(signal) {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) return null;
+
+    const { data, error } = await supabase.auth.getSession();
+
+    // Surface real errors immediately
+    if (error) throw error;
+
+    if (data?.session) {
+      return data.session;
+    }
+
+    // Not ready yet — wait a tick and retry
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+
+  throw new Error(`timeout after ${POLL_TIMEOUT_MS}ms waiting for session`);
 }
