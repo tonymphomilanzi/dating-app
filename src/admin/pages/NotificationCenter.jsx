@@ -12,10 +12,32 @@ const NotificationCenter = () => {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({})
+  const [composerTemplate, setComposerTemplate] = useState(null)
 
   useEffect(() => {
     loadData()
+    testDatabaseConnection()
   }, [])
+
+  const testDatabaseConnection = async () => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('notifications')
+        .select('count(*)')
+        .limit(1)
+      
+      if (error) {
+        console.error('Database connection test failed:', error)
+        return false
+      }
+      
+      console.log('Database connection successful')
+      return true
+    } catch (error) {
+      console.error('Database connection error:', error)
+      return false
+    }
+  }
 
   const loadData = async () => {
     try {
@@ -26,7 +48,7 @@ const NotificationCenter = () => {
         .from('notifications')
         .select(`
           *,
-          profiles (
+          profiles:user_id (
             display_name,
             avatar_url
           )
@@ -34,15 +56,21 @@ const NotificationCenter = () => {
         .order('created_at', { ascending: false })
         .limit(100)
 
-      if (notifError) throw notifError
+      if (notifError) {
+        console.error('Error loading notifications:', notifError)
+        // Continue loading users even if notifications fail
+      }
 
       // Load users for targeting
       const { data: userData, error: userError } = await supabaseAdmin
         .from('profiles')
-        .select('id, display_name, avatar_url, city, is_premium, is_verified')
+        .select('id, display_name, avatar_url, city, is_premium, is_verified, created_at')
         .order('display_name')
 
-      if (userError) throw userError
+      if (userError) {
+        console.error('Error loading users:', userError)
+        throw userError
+      }
 
       setNotifications(notificationData || [])
       setUsers(userData || [])
@@ -68,6 +96,7 @@ const NotificationCenter = () => {
       setStats(statsData)
     } catch (error) {
       console.error('Error loading data:', error)
+      alert(`Error loading data: ${error.message}`)
     } finally {
       setLoading(false)
     }
@@ -75,42 +104,94 @@ const NotificationCenter = () => {
 
   const handleSendNotification = async (notificationData) => {
     try {
-      const notifications = []
+      console.log('Sending notification with data:', notificationData)
       
-      // Prepare notifications for each target user
-      notificationData.targetUsers.forEach(userId => {
-        notifications.push({
-          user_id: userId,
-          type: notificationData.type,
-          title: notificationData.title,
-          message: notificationData.message,
-          data: notificationData.data || {}
-        })
-      })
+      if (!notificationData.targetUsers || notificationData.targetUsers.length === 0) {
+        throw new Error('No target users specified')
+      }
 
-      // Insert notifications in batches
+      // Validate required fields
+      if (!notificationData.type || !notificationData.title) {
+        throw new Error('Type and title are required')
+      }
+
+      // Validate that all target users exist in the profiles table
+      const { data: validUsers, error: userError } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .in('id', notificationData.targetUsers)
+
+      if (userError) throw userError
+
+      const validUserIds = validUsers.map(u => u.id)
+      const invalidUsers = notificationData.targetUsers.filter(id => !validUserIds.includes(id))
+      
+      if (invalidUsers.length > 0) {
+        console.warn('Invalid user IDs found:', invalidUsers)
+      }
+
+      if (validUserIds.length === 0) {
+        throw new Error('No valid users found to send notifications to')
+      }
+
+      const notifications = validUserIds.map(userId => ({
+        user_id: userId,
+        type: notificationData.type,
+        title: notificationData.title,
+        message: notificationData.message,
+        data: notificationData.data || {}
+      }))
+
+      console.log('Prepared notifications:', notifications)
+
+      // Test with a single notification first
+      const { data: testResult, error: testError } = await supabaseAdmin
+        .from('notifications')
+        .insert([notifications[0]])
+        .select()
+
+      if (testError) {
+        console.error('Test insert failed:', testError)
+        throw new Error(`Database error: ${testError.message}`)
+      }
+
+      console.log('Test notification successful:', testResult)
+
+      // If test passes, insert the rest in batches
       const batchSize = 100
-      for (let i = 0; i < notifications.length; i += batchSize) {
+      let successCount = 1 // We already inserted the first one
+
+      for (let i = 1; i < notifications.length; i += batchSize) {
         const batch = notifications.slice(i, i + batchSize)
         const { error } = await supabaseAdmin
           .from('notifications')
           .insert(batch)
 
-        if (error) throw error
+        if (error) {
+          console.error(`Batch ${Math.floor(i/batchSize) + 1} failed:`, error)
+          throw new Error(`Batch insert failed: ${error.message}`)
+        }
+        
+        successCount += batch.length
       }
 
       await logAction('send_notification', 'notification', null, {
         type: notificationData.type,
         title: notificationData.title,
-        target_count: notificationData.targetUsers.length,
+        target_count: successCount,
         targeting: notificationData.targeting
       })
 
       await loadData()
-      alert(`Notification sent to ${notificationData.targetUsers.length} users successfully!`)
+      alert(`Notification sent to ${successCount} users successfully!`)
+      
     } catch (error) {
-      console.error('Error sending notification:', error)
-      alert('Error sending notification')
+      console.error('Complete error details:', {
+        message: error.message,
+        stack: error.stack,
+        notificationData
+      })
+      alert(`Error sending notification: ${error.message}`)
     }
   }
 
@@ -132,8 +213,13 @@ const NotificationCenter = () => {
       alert(`${notificationIds.length} notification(s) deleted successfully!`)
     } catch (error) {
       console.error('Error deleting notifications:', error)
-      alert('Error deleting notifications')
+      alert(`Error deleting notifications: ${error.message}`)
     }
+  }
+
+  const handleUseTemplate = (template) => {
+    setComposerTemplate(template)
+    setActiveTab('compose')
   }
 
   const tabs = [
@@ -222,16 +308,13 @@ const NotificationCenter = () => {
             users={users}
             onSend={handleSendNotification}
             loading={loading}
+            template={composerTemplate}
+            onTemplateUsed={() => setComposerTemplate(null)}
           />
         )}
         
         {activeTab === 'templates' && (
-          <NotificationTemplates
-            onUseTemplate={(template) => {
-              setActiveTab('compose')
-              // You could pass the template data to the composer here
-            }}
-          />
+          <NotificationTemplates onUseTemplate={handleUseTemplate} />
         )}
         
         {activeTab === 'history' && (
