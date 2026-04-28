@@ -46,7 +46,7 @@ const todayHours = (openingHours) => {
       return `${hour}:${m} ${ampm}`;
     };
 
-    return `Today • ${format(slot.from)} – ${format(slot.to)}`;
+    return `${format(slot.from)} – ${format(slot.to)}`;
   } catch {
     return null;
   }
@@ -134,9 +134,33 @@ const AlertIcon = ({ className = "w-6 h-6" }) => (
   </svg>
 );
 
-const MassageIcon = ({ className = "w-12 h-12" }) => (
-  <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-    <path d="M7 2a2 2 0 11-4 0 2 2 0 014 0zM7 2v5a4 4 0 008 0V2m-9 6a2 2 0 11-4 0 2 2 0 014 0zm8 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+const HeartIcon = ({ className = "w-5 h-5", filled = false }) => (
+  <svg className={className} fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+  </svg>
+);
+
+const ArrowRightIcon = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+  </svg>
+);
+
+const CheckIcon = ({ className = "w-5 h-5" }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 20 20">
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+  </svg>
+);
+
+const UsersIcon = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-2a6 6 0 0112 0v2zm0 0h6v-2a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+  </svg>
+);
+
+const AwardIcon = ({ className = "w-4 h-4" }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
   </svg>
 );
 
@@ -147,7 +171,7 @@ const MassageIcon = ({ className = "w-12 h-12" }) => (
 function useGeolocation() {
   const [userLocation, setUserLocation] = useState(null);
   const [locationLabel, setLocationLabel] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | loading | granted | denied
+  const [status, setStatus] = useState("idle");
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -229,7 +253,6 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
     };
   }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -243,7 +266,6 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
     }
   }, [isOpen]);
 
-  // Search debounce
   useEffect(() => {
     if (!query.trim() || query.length < 3) {
       setResults([]);
@@ -313,10 +335,10 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
     return (
       <button
         onClick={openSearch}
-        className="flex items-center gap-2 bg-white border border-gray-200 hover:border-violet-300 rounded-2xl px-4 py-2.5 text-sm font-medium text-gray-700 transition-all max-w-[160px]"
+        className="flex items-center gap-2.5 bg-white/80 backdrop-blur-md border border-gray-200/50 hover:border-violet-300/50 rounded-full px-5 py-3 text-sm font-medium text-gray-700 transition-all hover:bg-white shadow-sm hover:shadow-md"
       >
-        <MapPinIcon className="w-4 h-4 text-violet-500 shrink-0" />
-        <span className="truncate">{currentLabel || "Choose location"}</span>
+        <MapPinIcon className="w-4 h-4 text-violet-600 shrink-0" />
+        <span className="truncate text-gray-600">{currentLabel || "Choose location"}</span>
         <ChevronDownIcon className="w-3 h-3 text-gray-400 shrink-0" />
       </button>
     );
@@ -324,9 +346,9 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
 
   return (
     <div className="relative flex-1 min-w-0" ref={dropdownRef}>
-      <div className="flex items-center gap-3 bg-white border-2 border-violet-300 rounded-2xl px-4 py-2.5 shadow-sm">
+      <div className="flex items-center gap-3 bg-white border-2 border-violet-300 rounded-full px-5 py-3 shadow-lg">
         {isSearching ? (
-          <SpinnerIcon className="w-4 h-4 text-violet-500 shrink-0" />
+          <SpinnerIcon className="w-4 h-4 text-violet-600 shrink-0" />
         ) : (
           <SearchIcon className="w-4 h-4 text-gray-400 shrink-0" />
         )}
@@ -345,33 +367,31 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
         </button>
       </div>
 
-      {/* Dropdown */}
       {(results.length > 0 || searchError || query.length >= 3) && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl">
-          {/* Use my location */}
+        <div className="absolute left-0 right-0 top-full z-50 mt-3 overflow-hidden rounded-3xl border border-gray-100/50 bg-white shadow-2xl backdrop-blur-xl">
           <button
             onClick={handleUseMyLocation}
-            className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-violet-700 hover:bg-violet-50 transition-colors border-b border-gray-100"
+            className="flex w-full items-center gap-3 px-5 py-4 text-sm font-medium text-violet-700 hover:bg-violet-50/80 transition-colors border-b border-gray-100/50"
           >
-            <div className="w-7 h-7 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
               <TargetIcon className="w-4 h-4 text-violet-600" />
             </div>
             Use my current location
           </button>
 
           {searchError && (
-            <p className="px-4 py-3 text-xs text-red-500">{searchError}</p>
+            <p className="px-5 py-3 text-xs text-red-500">{searchError}</p>
           )}
 
           {results.length === 0 && query.length >= 3 && !isSearching && !searchError && (
-            <p className="px-4 py-3 text-xs text-gray-400 text-center">No results found</p>
+            <p className="px-5 py-3 text-xs text-gray-400 text-center">No results found</p>
           )}
 
           {results.map((result, i) => (
             <button
               key={i}
               onClick={() => handleSelect(result)}
-              className="flex w-full items-start gap-3 px-4 py-3 text-left text-sm hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+              className="flex w-full items-start gap-3 px-5 py-4 text-left text-sm hover:bg-gray-50/80 transition-colors border-b border-gray-50 last:border-0"
             >
               <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 text-gray-400" />
               <span className="text-gray-700 text-xs line-clamp-2">{result.label}</span>
@@ -390,10 +410,10 @@ function LocationSearchBar({ currentLabel, onSelect, onUseMyLocation }) {
 export default function MassageClinic() {
   const navigate = useNavigate();
   
-  const [viewMode, setViewMode] = useState("nearby"); // "nearby" | "all"
+  const [viewMode, setViewMode] = useState("nearby");
   const [searchQuery, setSearchQuery] = useState("");
   const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
-  const [sortBy, setSortBy] = useState("rating"); // rating | distance | name
+  const [sortBy, setSortBy] = useState("rating");
 
   const { userLocation, locationLabel, status: locationStatus, requestLocation, setManualLocation } = useGeolocation();
   const [searchLocation, setSearchLocation] = useState(null);
@@ -402,19 +422,16 @@ export default function MassageClinic() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Bootstrap location on mount
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
 
-  // Sync user location to search location
   useEffect(() => {
     if (userLocation && !searchLocation && viewMode === "nearby") {
       setSearchLocation(userLocation);
     }
   }, [userLocation, searchLocation, viewMode]);
 
-  // Load clinics
   useEffect(() => {
     const loadClinics = async () => {
       setIsLoading(true);
@@ -463,13 +480,11 @@ export default function MassageClinic() {
           processed = processed.filter((c) => c.distance_km === null || c.distance_km <= radiusKm);
         }
 
-        // Apply sorting
         if (sortBy === "name") {
           processed.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         } else if (sortBy === "distance" && viewMode === "nearby") {
           processed.sort((a, b) => (a.distance_km || Infinity) - (b.distance_km || Infinity));
         } else {
-          // Default: rating
           processed.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
         }
 
@@ -521,32 +536,34 @@ export default function MassageClinic() {
     (searchLocation ? "selected location" : locationLabel);
 
   return (
-    <div className="min-h-dvh bg-gray-50 pb-28">
-      <div className="max-w-2xl mx-auto">
+    <div className="min-h-dvh bg-gradient-to-br from-slate-50 via-white to-slate-50/50 pb-32">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="sticky top-0 z-20 bg-white border-b border-gray-100 shadow-sm">
-          <div className="px-4 py-4">
-            <div className="flex items-center justify-between mb-4">
+        <div className="sticky top-0 z-20 bg-white/70 backdrop-blur-2xl border-b border-gray-100/50">
+          <div className="px-4 md:px-6 py-5">
+            <div className="flex items-center justify-between mb-6">
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">Massage Clinics</h1>
-                <p className="text-sm text-gray-500 mt-0.5">
+                <h1 className="text-3xl font-black bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent">
+                  Massage Clinics
+                </h1>
+                <p className="text-sm text-gray-500 mt-1.5 font-medium">
                   {viewMode === "all" 
-                    ? `All clinics • ${filteredClinics.length} found`
+                    ? `All clinics • ${filteredClinics.length} available`
                     : effectiveLocationLabel 
                     ? `Near ${effectiveLocationLabel} • ${filteredClinics.length} found`
-                    : "Find clinics near you"}
+                    : "Find wellness centers near you"}
                 </p>
               </div>
             </div>
 
             {/* View Mode Toggle */}
-            <div className="flex bg-gray-100 rounded-2xl p-1 mb-4">
+            <div className="flex bg-gradient-to-r from-gray-100 to-gray-50 rounded-full p-1.5 mb-5 w-fit">
               <button
                 onClick={() => toggleViewMode("nearby")}
-                className={`flex-1 py-3 px-4 text-sm font-semibold rounded-xl transition-all ${
+                className={`py-2.5 px-6 text-sm font-bold rounded-full transition-all ${
                   viewMode === "nearby"
-                    ? "bg-white shadow text-violet-700"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-white shadow-lg shadow-violet-100 text-violet-700"
+                    : "text-gray-600 hover:text-gray-900"
                 }`}
                 disabled={locationStatus === "loading"}
               >
@@ -561,10 +578,10 @@ export default function MassageClinic() {
               </button>
               <button
                 onClick={() => toggleViewMode("all")}
-                className={`flex-1 py-3 px-4 text-sm font-semibold rounded-xl transition-all ${
+                className={`py-2.5 px-6 text-sm font-bold rounded-full transition-all ${
                   viewMode === "all"
-                    ? "bg-white shadow text-violet-700"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-white shadow-lg shadow-violet-100 text-violet-700"
+                    : "text-gray-600 hover:text-gray-900"
                 }`}
               >
                 View All
@@ -573,7 +590,7 @@ export default function MassageClinic() {
 
             {/* Location & Radius */}
             {viewMode === "nearby" && locationStatus !== "loading" && (
-              <div className="flex gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row gap-3 mb-5">
                 <LocationSearchBar
                   currentLabel={effectiveLocationLabel}
                   onSelect={handleLocationSelect}
@@ -581,12 +598,12 @@ export default function MassageClinic() {
                 />
 
                 {searchLocation && (
-                  <div className="flex items-center bg-white border border-gray-200 rounded-2xl px-4 py-2.5">
-                    <span className="text-xs font-medium text-gray-500 mr-2">Within</span>
+                  <div className="flex items-center bg-white border border-gray-200/50 rounded-full px-5 py-3 shadow-sm hover:shadow-md transition-shadow">
+                    <span className="text-xs font-bold text-gray-500 mr-3">Within</span>
                     <select
                       value={radiusKm}
                       onChange={(e) => setRadiusKm(Number(e.target.value))}
-                      className="bg-transparent text-sm font-semibold focus:outline-none text-violet-700"
+                      className="bg-transparent text-sm font-bold focus:outline-none text-violet-700"
                     >
                       {[5, 10, 25, 50, 100].map((r) => (
                         <option key={r} value={r}>{r}km</option>
@@ -598,11 +615,11 @@ export default function MassageClinic() {
             )}
 
             {/* Sort & Search */}
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-violet-300"
+                className="bg-white border border-gray-200/50 rounded-full px-5 py-3 text-sm font-bold focus:outline-none focus:border-violet-300 shadow-sm hover:shadow-md transition-shadow"
               >
                 <option value="rating">Top Rated</option>
                 {viewMode === "nearby" && <option value="distance">Nearest</option>}
@@ -610,18 +627,18 @@ export default function MassageClinic() {
               </select>
 
               <div className="flex-1 relative">
-                <SearchIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <SearchIcon className="absolute left-5 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search clinics..."
-                  className="w-full pl-11 pr-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm focus:outline-none focus:border-violet-300"
+                  className="w-full pl-12 pr-5 py-3 bg-white border border-gray-200/50 rounded-full text-sm focus:outline-none focus:border-violet-300 shadow-sm hover:shadow-md transition-shadow"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery("")}
-                    className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    className="absolute right-5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
                   >
                     <XIcon className="w-4 h-4" />
                   </button>
@@ -632,7 +649,7 @@ export default function MassageClinic() {
         </div>
 
         {/* Content */}
-        <div className="px-4 pt-6">
+        <div className="px-4 md:px-6 pt-8">
           {locationStatus === "denied" && viewMode === "nearby" ? (
             <LocationDeniedState onRequestLocation={requestLocation} onViewAll={() => toggleViewMode("all")} />
           ) : isLoading && clinics.length === 0 ? (
@@ -655,9 +672,9 @@ export default function MassageClinic() {
       {/* FAB */}
       <button
         onClick={() => navigate("/massage-clinics/new")}
-        className="fixed bottom-28 right-4 z-20 w-14 h-14 bg-gradient-to-br from-violet-500 to-violet-700 text-white rounded-full shadow-lg shadow-violet-200 hover:shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+        className="fixed bottom-24 right-6 z-20 w-16 h-16 bg-gradient-to-br from-violet-600 to-violet-800 text-white rounded-full shadow-2xl shadow-violet-300/50 hover:shadow-violet-400/60 hover:scale-110 active:scale-95 transition-all flex items-center justify-center group"
       >
-        <PlusIcon className="w-6 h-6" />
+        <PlusIcon className="w-7 h-7 group-hover:rotate-90 transition-transform" />
       </button>
     </div>
   );
@@ -669,25 +686,25 @@ export default function MassageClinic() {
 
 function LocationDeniedState({ onRequestLocation, onViewAll }) {
   return (
-    <div className="text-center py-20 bg-white rounded-3xl border border-gray-100">
-      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <MapPinIcon className="w-8 h-8 text-gray-400" />
+    <div className="text-center py-24 bg-gradient-to-br from-white to-gray-50 rounded-3xl border border-gray-100">
+      <div className="w-20 h-20 bg-gradient-to-br from-violet-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+        <MapPinIcon className="w-10 h-10 text-violet-600" />
       </div>
-      <h3 className="text-lg font-bold text-gray-900 mb-2">Location Access Needed</h3>
-      <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
-        Enable location to find massage clinics near you, or browse all clinics.
+      <h3 className="text-2xl font-bold text-gray-900 mb-3">Location Access Needed</h3>
+      <p className="text-sm text-gray-600 mb-8 max-w-sm mx-auto leading-relaxed">
+        Enable location to discover massage clinics near you, or browse all clinics available.
       </p>
       <div className="space-y-3">
         <button
           onClick={onRequestLocation}
-          className="flex items-center justify-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto hover:bg-violet-700 transition-colors"
+          className="flex items-center justify-center gap-2.5 bg-gradient-to-r from-violet-600 to-violet-700 text-white px-8 py-3.5 rounded-full font-bold text-sm mx-auto hover:shadow-lg hover:shadow-violet-300/40 hover:from-violet-700 hover:to-violet-800 transition-all active:scale-95"
         >
           <TargetIcon className="w-4 h-4" />
           Enable Location
         </button>
         <button
           onClick={onViewAll}
-          className="block text-violet-600 text-sm font-medium mx-auto hover:text-violet-700 transition-colors"
+          className="block text-violet-600 text-sm font-bold mx-auto hover:text-violet-700 transition-colors"
         >
           View all clinics instead
         </button>
@@ -698,16 +715,14 @@ function LocationDeniedState({ onRequestLocation, onViewAll }) {
 
 function LoadingState() {
   return (
-    <div className="space-y-4">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="bg-white rounded-3xl p-4 animate-pulse">
-          <div className="flex gap-4">
-            <div className="w-20 h-20 bg-gray-200 rounded-2xl" />
-            <div className="flex-1 space-y-2">
-              <div className="h-4 bg-gray-200 rounded w-3/4" />
-              <div className="h-3 bg-gray-200 rounded w-1/2" />
-              <div className="h-3 bg-gray-200 rounded w-1/3" />
-            </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {[1, 2, 3, 4, 5, 6].map((i) => (
+        <div key={i} className="bg-white rounded-2xl overflow-hidden animate-pulse shadow-sm">
+          <div className="aspect-square bg-gradient-to-br from-gray-200 to-gray-100" />
+          <div className="p-4 space-y-3">
+            <div className="h-4 bg-gray-200 rounded-lg w-3/4" />
+            <div className="h-3 bg-gray-200 rounded w-1/2" />
+            <div className="h-3 bg-gray-200 rounded w-1/3" />
           </div>
         </div>
       ))}
@@ -717,15 +732,15 @@ function LoadingState() {
 
 function ErrorState({ error, onRetry }) {
   return (
-    <div className="text-center py-20 bg-white rounded-3xl border border-gray-100">
-      <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
-        <AlertIcon className="w-8 h-8 text-red-500" />
+    <div className="text-center py-24 bg-gradient-to-br from-white to-gray-50 rounded-3xl border border-gray-100">
+      <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+        <AlertIcon className="w-10 h-10 text-red-600" />
       </div>
-      <h3 className="text-lg font-bold text-gray-900 mb-2">Something went wrong</h3>
-      <p className="text-sm text-red-500 mb-6 max-w-xs mx-auto">{error}</p>
+      <h3 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h3>
+      <p className="text-sm text-red-600 mb-8 max-w-sm mx-auto">{error}</p>
       <button
         onClick={onRetry}
-        className="flex items-center justify-center gap-2 bg-violet-600 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto hover:bg-violet-700 transition-colors"
+        className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-violet-700 text-white px-8 py-3.5 rounded-full font-bold text-sm mx-auto hover:shadow-lg hover:shadow-violet-300/40 transition-all active:scale-95"
       >
         <RefreshIcon className="w-4 h-4" />
         Try Again
@@ -736,21 +751,21 @@ function ErrorState({ error, onRetry }) {
 
 function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
   return (
-    <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200">
-      <div className="w-20 h-20 bg-gradient-to-br from-violet-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
-        <MassageIcon className="w-12 h-12 text-violet-500 opacity-40" />
+    <div className="text-center py-24 bg-gradient-to-br from-white to-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
+      <div className="w-24 h-24 bg-gradient-to-br from-violet-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-8">
+        <span className="text-5xl">💆</span>
       </div>
-      <h3 className="text-lg font-bold text-gray-900 mb-2">No Clinics Found</h3>
-      <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
+      <h3 className="text-2xl font-bold text-gray-900 mb-3">No Clinics Found</h3>
+      <p className="text-sm text-gray-600 mb-8 max-w-sm mx-auto leading-relaxed">
         {searchQuery 
           ? `No clinics match "${searchQuery}"`
           : viewMode === "all"
-          ? "No massage clinics are available yet."
+          ? "No massage clinics are available yet. Be the first to list one!"
           : `No clinics found near ${locationLabel || "your location"}. Try increasing the radius.`}
       </p>
       <button
         onClick={onCreateClinic}
-        className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-500 to-violet-700 text-white px-6 py-3 rounded-2xl font-semibold text-sm mx-auto shadow-lg hover:shadow-xl transition-shadow"
+        className="flex items-center justify-center gap-2.5 bg-gradient-to-r from-violet-600 to-violet-700 text-white px-8 py-3.5 rounded-full font-bold text-sm mx-auto hover:shadow-lg hover:shadow-violet-300/40 transition-all active:scale-95"
       >
         <PlusIcon className="w-4 h-4" />
         List Your Clinic
@@ -761,7 +776,7 @@ function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
 
 function ClinicsList({ clinics, viewMode }) {
   return (
-    <div className="space-y-4 pb-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-8">
       {clinics.map((clinic) => (
         <ClinicCard key={clinic.id} clinic={clinic} viewMode={viewMode} />
       ))}
@@ -770,11 +785,14 @@ function ClinicsList({ clinics, viewMode }) {
 }
 
 /* ================================================================
-   CLINIC CARD
+   CLINIC CARD - INSTAGRAM STYLE
    ================================================================ */
 
 function ClinicCard({ clinic, viewMode }) {
   const navigate = useNavigate();
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [isImageLoaded, setIsImageLoaded] = useState(false);
+  
   const hours = todayHours(clinic.opening_hours);
   const rating = Number(clinic.rating) || 0;
   const reviewCount = Number(clinic.review_count) || 0;
@@ -790,58 +808,99 @@ function ClinicCard({ clinic, viewMode }) {
   return (
     <div
       onClick={handleCardClick}
-      className="bg-white rounded-3xl border border-gray-100 hover:border-violet-200 hover:shadow-xl transition-all cursor-pointer group overflow-hidden"
+      className="bg-white rounded-2xl shadow-md hover:shadow-2xl transition-all duration-300 cursor-pointer group overflow-hidden border border-gray-100 hover:border-violet-200"
     >
-      {/* Cover Image */}
-      <div className="relative h-48 overflow-hidden bg-gradient-to-br from-violet-100 to-fuchsia-100">
+      {/* Image Container */}
+      <div className="relative aspect-square overflow-hidden bg-gradient-to-br from-violet-100 to-fuchsia-100">
+        {/* Image */}
         {clinic.cover_url ? (
           <img
             src={clinic.cover_url}
             alt={clinic.name || "Clinic"}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+            className={`w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 ${
+              isImageLoaded ? "opacity-100" : "opacity-0"
+            }`}
             loading="lazy"
+            onLoad={() => setIsImageLoaded(true)}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <MassageIcon className="w-16 h-16 text-violet-300 opacity-40" />
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-violet-50 to-purple-50">
+            <div className="text-center">
+              <span className="text-6xl block mb-2">💆</span>
+              <span className="text-xs text-gray-400 font-medium">No image</span>
+            </div>
           </div>
         )}
 
-        {/* Distance Badge */}
-        {clinic.distance_km !== null && clinic.distance_km !== undefined && viewMode === "nearby" && (
-          <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-2xl text-xs font-bold text-violet-700 shadow-sm">
-            {formatDistance(clinic.distance_km)}
-          </div>
-        )}
+        {/* Dark Overlay on Hover */}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-300" />
 
-        {/* Status Badge */}
-        {clinic.status === "pending" && (
-          <div className="absolute top-4 left-4 bg-amber-500 text-white px-3 py-1.5 rounded-2xl text-xs font-bold shadow-sm">
-            Pending Approval
-          </div>
-        )}
-      </div>
+        {/* Top Right Badges */}
+        <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
+          {/* Distance Badge */}
+          {clinic.distance_km !== null && clinic.distance_km !== undefined && viewMode === "nearby" && (
+            <div className="bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-full text-xs font-bold text-violet-700 shadow-lg">
+              {formatDistance(clinic.distance_km)}
+            </div>
+          )}
 
-      {/* Content */}
-      <div className="p-5">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-3">
-          <h3 className="font-bold text-lg text-gray-900 line-clamp-1 pr-2">
-            {clinic.name || "Unnamed Clinic"}
-          </h3>
-          {rating > 0 && (
-            <div className="flex items-center gap-1 bg-amber-50 text-amber-600 px-3 py-1 rounded-2xl text-sm font-bold shrink-0">
-              <StarIcon className="w-4 h-4" filled />
-              {rating.toFixed(1)}
+          {/* Status Badge */}
+          {clinic.status === "pending" && (
+            <div className="bg-amber-500 text-white px-3 py-1.5 rounded-full text-xs font-bold shadow-lg">
+              Pending
             </div>
           )}
         </div>
 
+        {/* Like Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsFavorited(!isFavorited);
+          }}
+          className="absolute top-3 left-3 z-10 w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm hover:bg-white shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+        >
+          <HeartIcon
+            className={`w-5 h-5 transition-all ${
+              isFavorited ? "text-red-500" : "text-gray-400 hover:text-red-500"
+            }`}
+            filled={isFavorited}
+          />
+        </button>
+
+        {/* Bottom Gradient */}
+        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+
+        {/* Bottom Info on Image */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 z-10">
+          <h3 className="font-bold text-lg text-white line-clamp-1 mb-1">
+            {clinic.name || "Unnamed Clinic"}
+          </h3>
+          {rating > 0 && (
+            <div className="flex items-center gap-1">
+              <div className="flex gap-0.5">
+                {[...Array(5)].map((_, i) => (
+                  <StarIcon
+                    key={i}
+                    className={`w-3 h-3 ${i < Math.round(rating) ? "text-amber-300" : "text-white/30"}`}
+                    filled={i < Math.round(rating)}
+                  />
+                ))}
+              </div>
+              <span className="text-xs text-white/90 font-bold">{rating.toFixed(1)}</span>
+              {reviewCount > 0 && <span className="text-xs text-white/70">({reviewCount})</span>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="p-4">
         {/* Address */}
         {(clinic.address || clinic.city) && (
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
-            <MapPinIcon className="w-4 h-4 text-violet-400 shrink-0" />
-            <span className="line-clamp-1">
+          <div className="flex items-start gap-2 mb-3">
+            <MapPinIcon className="w-4 h-4 text-violet-500 shrink-0 mt-0.5" />
+            <span className="text-xs text-gray-600 line-clamp-2">
               {[clinic.address, clinic.city].filter(Boolean).join(", ")}
             </span>
           </div>
@@ -849,64 +908,53 @@ function ClinicCard({ clinic, viewMode }) {
 
         {/* Hours */}
         {hours && (
-          <div className="flex items-center gap-2 text-sm text-emerald-600 mb-4">
-            <ClockIcon className="w-4 h-4 shrink-0" />
-            <span>{hours}</span>
+          <div className="flex items-center gap-2 mb-3 text-xs">
+            <div className="flex items-center gap-1">
+              <ClockIcon className="w-4 h-4 text-emerald-600" />
+              <span className="text-emerald-600 font-bold">Open Now</span>
+            </div>
+            <span className="text-gray-500 font-medium">{hours}</span>
           </div>
         )}
 
-        {/* Specialties */}
+        {/* Specialties Tags */}
         {clinic.specialties && clinic.specialties.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-4">
-            {clinic.specialties.slice(0, 3).map((specialty, i) => (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {clinic.specialties.slice(0, 2).map((specialty, i) => (
               <span
                 key={i}
-                className="text-[10px] font-medium bg-violet-50 text-violet-700 px-3 py-1 rounded-full"
+                className="text-[9px] font-bold bg-violet-100 text-violet-700 px-2.5 py-1 rounded-full"
               >
                 {specialty}
               </span>
             ))}
-            {clinic.specialties.length > 3 && (
-              <span className="text-[10px] font-medium text-gray-400 px-2 py-1">
-                +{clinic.specialties.length - 3} more
+            {clinic.specialties.length > 2 && (
+              <span className="text-[9px] font-bold text-gray-400 px-2.5 py-1">
+                +{clinic.specialties.length - 2}
               </span>
             )}
           </div>
         )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-50">
-          {/* Reviews */}
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            {rating > 0 ? (
-              <>
-                <div className="flex gap-0.5">
-                  {[...Array(5)].map((_, i) => (
-                    <StarIcon
-                      key={i}
-                      className={`w-3 h-3 ${i < Math.round(rating) ? "text-amber-400" : "text-gray-200"}`}
-                      filled={i < Math.round(rating)}
-                    />
-                  ))}
-                </div>
-                {reviewCount > 0 && <span>({reviewCount} reviews)</span>}
-              </>
-            ) : (
-              <span>No reviews yet</span>
-            )}
-          </div>
-
-          {/* Call Button */}
+        {/* Action Buttons */}
+        <div className="flex gap-2 pt-3 border-t border-gray-100">
           {clinic.phone && (
             <a
               href={`tel:${clinic.phone}`}
               onClick={handlePhoneClick}
-              className="flex items-center gap-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-violet-50 to-purple-50 hover:from-violet-100 hover:to-purple-100 text-violet-700 py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 border border-violet-200/50"
             >
-              <PhoneIcon className="w-3 h-3" />
+              <PhoneIcon className="w-3.5 h-3.5" />
               Call
             </a>
           )}
+          <button
+            onClick={handleCardClick}
+            className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-violet-700 hover:from-violet-700 hover:to-violet-800 text-white py-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-sm hover:shadow-md"
+          >
+            View
+            <ArrowRightIcon className="w-3 h-3" />
+          </button>
         </div>
       </div>
     </div>
