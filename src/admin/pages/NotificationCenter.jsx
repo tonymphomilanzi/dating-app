@@ -1,12 +1,20 @@
 import { useState, useEffect } from 'react'
 import { supabaseAdmin } from '../utils/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useAlert } from '../components/CustomAlert/AlertProvider'
 import NotificationComposer from '../components/NotificationComposer'
 import NotificationHistory from '../components/NotificationHistory'
 import NotificationTemplates from '../components/NotificationTemplates'
+import { 
+  PencilIcon,
+  ClipboardDocumentListIcon,
+  ClockIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline'
 
 const NotificationCenter = () => {
   const { logAction } = useAuth()
+  const { showAlert } = useAlert()
   const [activeTab, setActiveTab] = useState('compose')
   const [notifications, setNotifications] = useState([])
   const [users, setUsers] = useState([])
@@ -58,7 +66,6 @@ const NotificationCenter = () => {
 
       if (notifError) {
         console.error('Error loading notifications:', notifError)
-        // Continue loading users even if notifications fail
       }
 
       // Load users for targeting
@@ -96,7 +103,7 @@ const NotificationCenter = () => {
       setStats(statsData)
     } catch (error) {
       console.error('Error loading data:', error)
-      alert(`Error loading data: ${error.message}`)
+      showAlert('Error', `Failed to load data: ${error.message}`, 'error')
     } finally {
       setLoading(false)
     }
@@ -175,15 +182,17 @@ const NotificationCenter = () => {
         successCount += batch.length
       }
 
-      await logAction('send_notification', 'notification', null, {
-        type: notificationData.type,
-        title: notificationData.title,
-        target_count: successCount,
-        targeting: notificationData.targeting
-      })
+      if (logAction) {
+        await logAction('send_notification', 'notification', null, {
+          type: notificationData.type,
+          title: notificationData.title,
+          target_count: successCount,
+          targeting: notificationData.targeting
+        })
+      }
 
       await loadData()
-      alert(`Notification sent to ${successCount} users successfully!`)
+      showAlert('Success', `Notification sent to ${successCount} users successfully!`, 'success')
       
     } catch (error) {
       console.error('Complete error details:', {
@@ -191,7 +200,7 @@ const NotificationCenter = () => {
         stack: error.stack,
         notificationData
       })
-      alert(`Error sending notification: ${error.message}`)
+      showAlert('Error', `Failed to send notification: ${error.message}`, 'error')
     }
   }
 
@@ -204,16 +213,17 @@ const NotificationCenter = () => {
 
       if (error) throw error
 
-      await logAction('delete_notifications', 'notification', null, {
-        count: notificationIds.length,
-        notification_ids: notificationIds
-      })
+      if (logAction) {
+        await logAction('delete_notifications', 'notification', null, {
+          count: notificationIds.length,
+          notification_ids: notificationIds
+        })
+      }
 
       await loadData()
-      alert(`${notificationIds.length} notification(s) deleted successfully!`)
     } catch (error) {
       console.error('Error deleting notifications:', error)
-      alert(`Error deleting notifications: ${error.message}`)
+      showAlert('Error', `Failed to delete notifications: ${error.message}`, 'error')
     }
   }
 
@@ -223,9 +233,9 @@ const NotificationCenter = () => {
   }
 
   const tabs = [
-    { id: 'compose', label: 'Compose', icon: '✏️' },
-    { id: 'templates', label: 'Templates', icon: '📋' },
-    { id: 'history', label: 'History', icon: '📜' }
+    { id: 'compose', label: 'Compose', icon: PencilIcon },
+    { id: 'templates', label: 'Templates', icon: ClipboardDocumentListIcon },
+    { id: 'history', label: 'History', icon: ClockIcon }
   ]
 
   return (
@@ -240,9 +250,10 @@ const NotificationCenter = () => {
         <button
           onClick={loadData}
           disabled={loading}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 flex items-center space-x-2"
         >
-          {loading ? 'Loading...' : 'Refresh'}
+          <ArrowPathIcon className="w-4 h-4" />
+          <span>{loading ? 'Loading...' : 'Refresh'}</span>
         </button>
       </div>
 
@@ -284,20 +295,23 @@ const NotificationCenter = () => {
       {/* Tabs */}
       <div className="border-b border-gray-700">
         <nav className="flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              <span>{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
+          {tabs.map((tab) => {
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{tab.label}</span>
+              </button>
+            )
+          })}
         </nav>
       </div>
 

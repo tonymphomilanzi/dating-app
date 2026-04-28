@@ -12,6 +12,7 @@ import SubscriptionManagement from "./pages/SubscriptionManagement";
 import NotificationCenter from "./pages/NotificationCenter";
 
 import Layout from "./components/Layout";
+import { AlertProvider } from "./components/CustomAlert/AlertProvider";
 
 function AdminLoading() {
   return (
@@ -58,6 +59,7 @@ function PublicAdminRoute({ children }) {
 
 function AdminRoutes() {
   return (
+        <AlertProvider>
     <Routes>
       {/* Admin root */}
       <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
@@ -130,6 +132,7 @@ function AdminRoutes() {
       {/* Admin catch-all */}
       <Route path="/admin/*" element={<Navigate to="/admin/login" replace />} />
     </Routes>
+    </AlertProvider>
   );
 }
 

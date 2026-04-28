@@ -1,7 +1,18 @@
 import { useState } from 'react'
-import { getNotificationContent, formatRelativeTime, groupNotificationsByDate } from '../../lib/notificationHelpers'
+import { useAlert } from './CustomAlert/AlertProvider'
+import { getNotificationContent, formatRelativeTime, groupNotificationsByDate, getIconComponent } from '../../lib/notificationHelpers'
+import { 
+  MagnifyingGlassIcon, 
+  ArrowPathIcon,
+  UserIcon,
+  ClipboardDocumentListIcon,
+  ClockIcon,
+  CheckCircleIcon,
+  InboxIcon
+} from '@heroicons/react/24/outline'
 
 const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) => {
+  const { showAlert, showConfirm } = useAlert()
   const [selectedNotifications, setSelectedNotifications] = useState(new Set())
   const [filters, setFilters] = useState({
     type: 'all',
@@ -100,34 +111,24 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
 
   const handleBulkDelete = () => {
     if (selectedNotifications.size === 0) {
-      alert('No notifications selected')
+      showAlert('No Selection', 'No notifications selected for deletion.', 'warning')
       return
     }
     
-    if (confirm(`Delete ${selectedNotifications.size} notification(s)?`)) {
-      onDelete(Array.from(selectedNotifications))
-      setSelectedNotifications(new Set())
-    }
+    showConfirm(
+      'Confirm Deletion',
+      `Are you sure you want to delete ${selectedNotifications.size} notification(s)? This action cannot be undone.`,
+      () => {
+        onDelete(Array.from(selectedNotifications))
+        setSelectedNotifications(new Set())
+        showAlert('Success', `${selectedNotifications.size} notification(s) deleted successfully.`, 'success')
+      }
+    )
   }
 
   const getNotificationIcon = (type) => {
     const content = getNotificationContent(type)
-    const iconMap = {
-      heart: '❤️',
-      sparkles: '✨',
-      'check-circle': '✅',
-      'x-circle': '❌',
-      alert: '⚠️',
-      gift: '🎁',
-      megaphone: '📣',
-      clock: '⏰',
-      ban: '🚫',
-      star: '⭐',
-      message: '💬',
-      'badge-check': '🏆',
-      bell: '🔔'
-    }
-    return iconMap[content.icon] || '🔔'
+    return getIconComponent(content.icon, "w-6 h-6")
   }
 
   const renderNotificationGroup = (title, notifications) => {
@@ -143,6 +144,7 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
             const content = getNotificationContent(notification.type, notification.data || {})
             const displayTitle = notification.title || content.title
             const displayMessage = notification.message || content.message
+            const IconComponent = getNotificationIcon(notification.type)
             
             return (
               <div
@@ -159,8 +161,8 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
                     className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
                   
-                  <div className="text-2xl">
-                    {getNotificationIcon(notification.type)}
+                  <div className="text-gray-300">
+                    <IconComponent />
                   </div>
                   
                   <div className="flex-1 min-w-0">
@@ -174,19 +176,23 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
                         </p>
                         <div className="flex items-center space-x-4 mt-2 text-xs text-gray-400">
                           <span className="flex items-center space-x-1">
-                            <span>👤</span>
+                            <UserIcon className="w-3 h-3" />
                             <span>{notification.profiles?.display_name || 'System'}</span>
                           </span>
                           <span className="flex items-center space-x-1">
-                            <span>📋</span>
+                            <ClipboardDocumentListIcon className="w-3 h-3" />
                             <span className="capitalize">{notification.type.replace(/_/g, ' ')}</span>
                           </span>
                           <span className="flex items-center space-x-1">
-                            <span>⏰</span>
+                            <ClockIcon className="w-3 h-3" />
                             <span>{formatRelativeTime(notification.created_at)}</span>
                           </span>
                           <span className="flex items-center space-x-1">
-                            <span>{notification.read ? '✅' : '📬'}</span>
+                            {notification.read ? (
+                              <CheckCircleIcon className="w-3 h-3" />
+                            ) : (
+                              <InboxIcon className="w-3 h-3" />
+                            )}
                             <span>{notification.read ? 'Read' : 'Unread'}</span>
                           </span>
                         </div>
@@ -252,13 +258,16 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
 
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Search</label>
-            <input
-              type="text"
-              placeholder="Search notifications..."
-              value={filters.search}
-              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="relative">
+              <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search notifications..."
+                value={filters.search}
+                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                className="w-full pl-10 pr-3 py-2 border border-gray-600 rounded-md bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
         </div>
 
@@ -327,9 +336,10 @@ const NotificationHistory = ({ notifications, onDelete, onRefresh, loading }) =>
         <button
           onClick={onRefresh}
           disabled={loading}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors disabled:opacity-50 flex items-center space-x-2"
         >
-          {loading ? 'Loading...' : 'Refresh'}
+          <ArrowPathIcon className="w-4 h-4" />
+          <span>{loading ? 'Loading...' : 'Refresh'}</span>
         </button>
       </div>
 

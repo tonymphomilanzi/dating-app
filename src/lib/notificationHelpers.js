@@ -1,4 +1,29 @@
 // src/lib/notificationHelpers.js
+import {
+  HeartIcon,
+  SparklesIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  ExclamationTriangleIcon,
+  GiftIcon,
+  MegaphoneIcon,
+  ClockIcon,
+  NoSymbolIcon,
+  StarIcon,
+  ChatBubbleLeftIcon,
+  CheckBadgeIcon,
+  BellIcon,
+  EyeIcon,
+  LockClosedIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  InformationCircleIcon,
+  FunnelIcon,
+  CreditCardIcon,
+  WrenchScrewdriverIcon,
+  FlagIcon,
+  TrashIcon
+} from '@heroicons/react/24/outline'
 
 export const NOTIFICATION_TYPES = {
   // ══════════════════════════════════════════════════════════════
@@ -80,6 +105,38 @@ export const NOTIFICATION_TYPES = {
   ACCOUNT_SUSPENDED: 'account_suspended',
 };
 
+// Icon component mapping
+export const getIconComponent = (iconName, className = "w-5 h-5") => {
+  const icons = {
+    heart: HeartIcon,
+    sparkles: SparklesIcon,
+    'check-circle': CheckCircleIcon,
+    'x-circle': XCircleIcon,
+    alert: ExclamationTriangleIcon,
+    gift: GiftIcon,
+    megaphone: MegaphoneIcon,
+    clock: ClockIcon,
+    ban: NoSymbolIcon,
+    star: StarIcon,
+    message: ChatBubbleLeftIcon,
+    'badge-check': CheckBadgeIcon,
+    bell: BellIcon,
+    eye: EyeIcon,
+    lock: LockClosedIcon,
+    'arrow-up': ArrowUpIcon,
+    'arrow-down': ArrowDownIcon,
+    info: InformationCircleIcon,
+    filter: FunnelIcon,
+    'credit-card': CreditCardIcon,
+    tools: WrenchScrewdriverIcon,
+    flag: FlagIcon,
+    trash: TrashIcon,
+  };
+  
+  const IconComponent = icons[iconName] || BellIcon;
+  return IconComponent;
+};
+
 /**
  * Generate personalized notification messages
  * @param {string} type - Notification type
@@ -92,7 +149,7 @@ export function getNotificationContent(type, data = {}) {
     // MATCHES & DATING
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.NEW_MATCH]: {
-      title: 'New Match! 🎉',
+      title: 'New Match!',
       message: `You and ${data.userName || 'someone'} matched!`,
       icon: 'heart',
       color: 'pink',
@@ -117,7 +174,7 @@ export function getNotificationContent(type, data = {}) {
     // LIKES & ENGAGEMENT
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.PROFILE_LIKE]: {
-      title: 'Someone likes you! 💜',
+      title: 'Someone likes you!',
       message: `${data.userName || 'Someone'} liked your profile`,
       icon: 'heart',
       color: 'purple',
@@ -142,14 +199,14 @@ export function getNotificationContent(type, data = {}) {
     // PREMIUM SUBSCRIPTIONS - Activation & Purchases
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.SUBSCRIPTION_ACTIVATED]: {
-      title: '✨ Welcome to Premium!',
+      title: 'Welcome to Premium!',
       message: `Your ${data.planName || 'Premium'} subscription is now active. Enjoy unlimited chats and exclusive features!`,
       icon: 'sparkles',
       color: 'violet',
       action: '/account/subscription',
     },
     [NOTIFICATION_TYPES.SUBSCRIPTION_UPGRADED]: {
-      title: '🚀 Subscription Upgraded!',
+      title: 'Subscription Upgraded!',
       message: `You've upgraded to ${data.planName || 'Premium'}! New features unlocked.`,
       icon: 'arrow-up',
       color: 'green',
@@ -167,14 +224,14 @@ export function getNotificationContent(type, data = {}) {
     // PREMIUM SUBSCRIPTIONS - Renewals
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.SUBSCRIPTION_RENEWED]: {
-      title: '✅ Subscription Renewed',
+      title: 'Subscription Renewed',
       message: `Your ${data.planName || 'Premium'} subscription has been renewed for another ${data.period || 'month'}`,
       icon: 'check-circle',
       color: 'green',
       action: '/account/subscription',
     },
     [NOTIFICATION_TYPES.SUBSCRIPTION_RENEWAL_FAILED]: {
-      title: '⚠️ Renewal Failed',
+      title: 'Renewal Failed',
       message: `We couldn't renew your subscription. Please update your payment method.`,
       icon: 'alert',
       color: 'red',
@@ -185,7 +242,7 @@ export function getNotificationContent(type, data = {}) {
     // PREMIUM SUBSCRIPTIONS - Expirations & Warnings
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.SUBSCRIPTION_EXPIRING_SOON]: {
-      title: '⏰ Subscription Expiring',
+      title: 'Subscription Expiring',
       message: `Your ${data.planName || 'Premium'} subscription expires in ${data.daysLeft || '3'} days`,
       icon: 'clock',
       color: 'orange',
@@ -210,7 +267,7 @@ export function getNotificationContent(type, data = {}) {
     // PREMIUM SUBSCRIPTIONS - Trials
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.TRIAL_STARTED]: {
-      title: '🎁 Free Trial Started!',
+      title: 'Free Trial Started!',
       message: `Enjoy ${data.trialDays || '7'} days of Premium features for free!`,
       icon: 'gift',
       color: 'violet',
@@ -235,35 +292,35 @@ export function getNotificationContent(type, data = {}) {
     // FEATURE UNLOCKS
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.FEATURE_UNLOCKED_CHAT]: {
-      title: '💬 Chat Unlocked!',
+      title: 'Chat Unlocked!',
       message: 'You can now send unlimited messages to your matches!',
       icon: 'message',
       color: 'blue',
       action: '/messages',
     },
     [NOTIFICATION_TYPES.FEATURE_UNLOCKED_ADVANCED_FILTERS]: {
-      title: '🔍 Advanced Filters Unlocked!',
+      title: 'Advanced Filters Unlocked!',
       message: 'Find your perfect match with advanced search filters',
       icon: 'filter',
       color: 'purple',
       action: '/discover',
     },
     [NOTIFICATION_TYPES.FEATURE_UNLOCKED_UNLIMITED_LIKES]: {
-      title: '❤️ Unlimited Likes!',
+      title: 'Unlimited Likes!',
       message: 'Like as many profiles as you want - no limits!',
       icon: 'heart',
       color: 'pink',
       action: '/discover',
     },
     [NOTIFICATION_TYPES.FEATURE_UNLOCKED_SEE_WHO_LIKED]: {
-      title: '👀 See Who Liked You!',
+      title: 'See Who Liked You!',
       message: 'Check out everyone who liked your profile',
       icon: 'eye',
       color: 'violet',
       action: '/likes',
     },
     [NOTIFICATION_TYPES.FEATURE_LOCKED]: {
-      title: '🔒 Feature Locked',
+      title: 'Feature Locked',
       message: `${data.featureName || 'This feature'} is now locked. Upgrade to Premium to unlock it again.`,
       icon: 'lock',
       color: 'gray',
@@ -274,7 +331,7 @@ export function getNotificationContent(type, data = {}) {
     // PAYMENT ISSUES
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.PAYMENT_FAILED]: {
-      title: '❌ Payment Failed',
+      title: 'Payment Failed',
       message: 'Your payment couldn\'t be processed. Please update your payment method.',
       icon: 'alert',
       color: 'red',
@@ -288,7 +345,7 @@ export function getNotificationContent(type, data = {}) {
       action: '/account/billing',
     },
     [NOTIFICATION_TYPES.PAYMENT_SUCCESSFUL]: {
-      title: '✅ Payment Successful',
+      title: 'Payment Successful',
       message: `Your payment of $${data.amount || '0.00'} was processed successfully`,
       icon: 'check-circle',
       color: 'green',
@@ -299,7 +356,7 @@ export function getNotificationContent(type, data = {}) {
     // ADMIN SUBSCRIPTION ACTIONS
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.SUBSCRIPTION_GRANTED]: {
-      title: '🎁 Free Premium Access!',
+      title: 'Free Premium Access!',
       message: `You've been granted ${data.duration || 'premium access'} by our team! ${data.reason || 'Enjoy!'}`,
       icon: 'gift',
       color: 'green',
@@ -313,7 +370,7 @@ export function getNotificationContent(type, data = {}) {
       action: '/support',
     },
     [NOTIFICATION_TYPES.SUBSCRIPTION_EXTENDED]: {
-      title: '🎉 Subscription Extended!',
+      title: 'Subscription Extended!',
       message: `Your subscription has been extended by ${data.duration || 'our team'}. ${data.reason || 'Enjoy!'}`,
       icon: 'gift',
       color: 'violet',
@@ -324,7 +381,7 @@ export function getNotificationContent(type, data = {}) {
     // ADMIN UPDATES & ANNOUNCEMENTS
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.ADMIN_ANNOUNCEMENT]: {
-      title: data.title || '📣 Important Update',
+      title: data.title || 'Important Update',
       message: data.message || 'Check out the latest updates from our team',
       icon: 'megaphone',
       color: 'indigo',
@@ -338,14 +395,14 @@ export function getNotificationContent(type, data = {}) {
       action: data.action || null,
     },
     [NOTIFICATION_TYPES.MAINTENANCE_SCHEDULED]: {
-      title: '🔧 Maintenance Scheduled',
+      title: 'Maintenance Scheduled',
       message: data.message || `Scheduled maintenance on ${data.date || 'upcoming date'}. App may be unavailable.`,
       icon: 'tools',
       color: 'orange',
       action: null,
     },
     [NOTIFICATION_TYPES.NEW_FEATURE_AVAILABLE]: {
-      title: '✨ New Feature!',
+      title: 'New Feature!',
       message: data.message || 'Check out the latest feature we just added!',
       icon: 'sparkles',
       color: 'violet',
@@ -356,7 +413,7 @@ export function getNotificationContent(type, data = {}) {
     // APPROVALS & MODERATION
     // ══════════════════════════════════════════════════════════════
     [NOTIFICATION_TYPES.CLINIC_APPROVED]: {
-      title: 'Clinic Approved! ✅',
+      title: 'Clinic Approved!',
       message: `Your clinic "${data.clinicName || 'listing'}" has been approved and is now live`,
       icon: 'check-circle',
       color: 'green',
@@ -384,7 +441,7 @@ export function getNotificationContent(type, data = {}) {
       action: '/support',
     },
     [NOTIFICATION_TYPES.PROFILE_VERIFIED]: {
-      title: 'Profile Verified! 🎉',
+      title: 'Profile Verified!',
       message: 'Your profile has been verified. You now have a verified badge!',
       icon: 'badge-check',
       color: 'blue',
@@ -398,7 +455,7 @@ export function getNotificationContent(type, data = {}) {
       action: '/profile/verify',
     },
     [NOTIFICATION_TYPES.CONTENT_FLAGGED]: {
-      title: '⚠️ Content Flagged',
+      title: 'Content Flagged',
       message: data.message || 'Some of your content has been flagged and is under review.',
       icon: 'flag',
       color: 'orange',
@@ -412,14 +469,14 @@ export function getNotificationContent(type, data = {}) {
       action: '/community-guidelines',
     },
     [NOTIFICATION_TYPES.ACCOUNT_WARNING]: {
-      title: '⚠️ Account Warning',
+      title: 'Account Warning',
       message: data.message || 'Your account has received a warning. Please review our community guidelines.',
       icon: 'alert',
       color: 'orange',
       action: '/community-guidelines',
     },
     [NOTIFICATION_TYPES.ACCOUNT_SUSPENDED]: {
-      title: '🚫 Account Suspended',
+      title: 'Account Suspended',
       message: data.message || 'Your account has been suspended. Contact support for more information.',
       icon: 'ban',
       color: 'red',

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { NOTIFICATION_TYPES, getNotificationContent } from '../../lib/notificationHelpers'
+import { NOTIFICATION_TYPES, getNotificationContent, getIconComponent } from '../../lib/notificationHelpers'
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 
 const NotificationTemplates = ({ onUseTemplate }) => {
   const [selectedCategory, setSelectedCategory] = useState('admin')
@@ -142,13 +143,14 @@ const NotificationTemplates = ({ onUseTemplate }) => {
 
       {/* Search and Category Filter */}
       <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
+        <div className="flex-1 relative">
+          <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
           <input
             type="text"
             placeholder="Search templates..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-600 rounded-md bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-10 pr-3 py-2 border border-gray-600 rounded-md bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <div className="sm:w-64">
@@ -183,61 +185,53 @@ const NotificationTemplates = ({ onUseTemplate }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTemplates.map((template) => (
-            <div
-              key={template.type}
-              className={`rounded-lg border p-4 hover:shadow-lg transition-all duration-200 cursor-pointer ${getTypeColor(template.type)}`}
-              onClick={() => handleUseTemplate(template)}
-            >
-              {/* Template Header */}
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <h4 className="text-white font-medium text-sm mb-1">
-                    {template.title}
-                  </h4>
-                  <p className="text-xs text-gray-400 uppercase tracking-wider">
-                    {template.type.replace(/_/g, ' ')}
-                  </p>
-                </div>
-                <div className="text-2xl ml-2">
-                  {template.icon === 'heart' && '❤️'}
-                  {template.icon === 'sparkles' && '✨'}
-                  {template.icon === 'check-circle' && '✅'}
-                  {template.icon === 'x-circle' && '❌'}
-                  {template.icon === 'alert' && '⚠️'}
-                  {template.icon === 'gift' && '🎁'}
-                  {template.icon === 'megaphone' && '📣'}
-                  {template.icon === 'clock' && '⏰'}
-                  {template.icon === 'ban' && '🚫'}
-                  {template.icon === 'star' && '⭐'}
-                  {template.icon === 'message' && '💬'}
-                  {template.icon === 'badge-check' && '🏆'}
-                  {!['heart', 'sparkles', 'check-circle', 'x-circle', 'alert', 'gift', 'megaphone', 'clock', 'ban', 'star', 'message', 'badge-check'].includes(template.icon) && '🔔'}
-                </div>
-              </div>
-
-              {/* Template Preview */}
-              <div className="bg-black/20 rounded p-3 mb-3">
-                <div className="text-white font-medium text-sm mb-1">
-                  {template.title}
-                </div>
-                <div className="text-gray-300 text-xs line-clamp-2">
-                  {template.message}
-                </div>
-              </div>
-
-              {/* Use Template Button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleUseTemplate(template)
-                }}
-                className="w-full px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-sm rounded transition-colors"
+          {filteredTemplates.map((template) => {
+            const IconComponent = getIconComponent(template.icon)
+            
+            return (
+              <div
+                key={template.type}
+                className={`rounded-lg border p-4 hover:shadow-lg transition-all duration-200 cursor-pointer ${getTypeColor(template.type)}`}
+                onClick={() => handleUseTemplate(template)}
               >
-                Use Template
-              </button>
-            </div>
-          ))}
+                {/* Template Header */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <h4 className="text-white font-medium text-sm mb-1">
+                      {template.title}
+                    </h4>
+                    <p className="text-xs text-gray-400 uppercase tracking-wider">
+                      {template.type.replace(/_/g, ' ')}
+                    </p>
+                  </div>
+                  <div className="ml-2">
+                    <IconComponent className="w-6 h-6 text-gray-300" />
+                  </div>
+                </div>
+
+                {/* Template Preview */}
+                <div className="bg-black/20 rounded p-3 mb-3">
+                  <div className="text-white font-medium text-sm mb-1">
+                    {template.title}
+                  </div>
+                  <div className="text-gray-300 text-xs line-clamp-2">
+                    {template.message}
+                  </div>
+                </div>
+
+                {/* Use Template Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleUseTemplate(template)
+                  }}
+                  className="w-full px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-sm rounded transition-colors"
+                >
+                  Use Template
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -247,27 +241,43 @@ const NotificationTemplates = ({ onUseTemplate }) => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <button
             onClick={() => handleUseTemplate(getTemplate(NOTIFICATION_TYPES.ADMIN_ANNOUNCEMENT))}
-            className="p-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm text-center transition-colors"
+            className="p-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm text-center transition-colors flex flex-col items-center space-y-2"
           >
-            📣 Announcement
+            {(() => {
+              const IconComponent = getIconComponent('megaphone')
+              return <IconComponent className="w-5 h-5" />
+            })()}
+            <span>Announcement</span>
           </button>
           <button
             onClick={() => handleUseTemplate(getTemplate(NOTIFICATION_TYPES.SYSTEM_UPDATE))}
-            className="p-3 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm text-center transition-colors"
+            className="p-3 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm text-center transition-colors flex flex-col items-center space-y-2"
           >
-            ✨ System Update
+            {(() => {
+              const IconComponent = getIconComponent('sparkles')
+              return <IconComponent className="w-5 h-5" />
+            })()}
+            <span>System Update</span>
           </button>
           <button
             onClick={() => handleUseTemplate(getTemplate(NOTIFICATION_TYPES.MAINTENANCE_SCHEDULED))}
-            className="p-3 bg-orange-600 hover:bg-orange-700 rounded-lg text-white text-sm text-center transition-colors"
+            className="p-3 bg-orange-600 hover:bg-orange-700 rounded-lg text-white text-sm text-center transition-colors flex flex-col items-center space-y-2"
           >
-            🔧 Maintenance
+            {(() => {
+              const IconComponent = getIconComponent('tools')
+              return <IconComponent className="w-5 h-5" />
+            })()}
+            <span>Maintenance</span>
           </button>
           <button
             onClick={() => handleUseTemplate(getTemplate(NOTIFICATION_TYPES.NEW_FEATURE_AVAILABLE))}
-            className="p-3 bg-green-600 hover:bg-green-700 rounded-lg text-white text-sm text-center transition-colors"
+            className="p-3 bg-green-600 hover:bg-green-700 rounded-lg text-white text-sm text-center transition-colors flex flex-col items-center space-y-2"
           >
-            🎉 New Feature
+            {(() => {
+              const IconComponent = getIconComponent('sparkles')
+              return <IconComponent className="w-5 h-5" />
+            })()}
+            <span>New Feature</span>
           </button>
         </div>
       </div>
