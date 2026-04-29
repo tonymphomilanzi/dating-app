@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import {
   BoltIcon,
   StarIcon,
-  GemIcon,
   CheckIcon,
   MinusIcon,
   ChevronLeftIcon,
@@ -16,8 +15,13 @@ import {
   TrophyIcon,
   LockClosedIcon,
   CreditCardIcon,
+  FireIcon,
 } from "@heroicons/react/24/outline";
-import { StarIcon as StarSolid } from "@heroicons/react/24/solid";
+import {
+  StarIcon as StarSolid,
+  SparklesIcon as SparklesSolid,
+  TrophyIcon as TrophySolid,
+} from "@heroicons/react/24/solid";
 
 /* ================================================================
    PLAN DATA
@@ -34,23 +38,22 @@ const PLANS = [
     priceMonthly: 9.99,
     priceAnnual: 5.99,
     color: {
-      bg:         "bg-white",
-      border:     "border-gray-200",
-      ring:       "ring-gray-300",
-      accent:     "text-gray-700",
-      accentBg:   "bg-gray-700",
-      badgeCls:   "",
-      btn:        "bg-gray-900 hover:bg-gray-800 text-white shadow-gray-200",
-      radioFill:  "bg-gray-700",
+      bg:        "bg-white",
+      border:    "border-gray-200",
+      ring:      "ring-gray-300",
+      accent:    "text-gray-700",
+      badgeCls:  "",
+      btn:       "bg-gray-900 hover:bg-gray-800 text-white shadow-gray-200",
+      radioFill: "bg-gray-700",
     },
     features: [
-      { text: "5 Super Likes per day",      included: true  },
-      { text: "See who liked you",          included: false },
-      { text: "Unlimited likes",            included: false },
-      { text: "Boost profile once a week",  included: true  },
-      { text: "Advanced filters",           included: false },
-      { text: "Incognito mode",             included: false },
-      { text: "Priority support",           included: false },
+      { text: "5 Super Likes per day",     included: true  },
+      { text: "See who liked you",         included: false },
+      { text: "Unlimited likes",           included: false },
+      { text: "Boost profile once a week", included: true  },
+      { text: "Advanced filters",          included: false },
+      { text: "Incognito mode",            included: false },
+      { text: "Priority support",          included: false },
     ],
   },
   {
@@ -63,23 +66,22 @@ const PLANS = [
     priceMonthly: 19.99,
     priceAnnual: 11.99,
     color: {
-      bg:         "bg-gradient-to-b from-amber-50 to-orange-50",
-      border:     "border-amber-300",
-      ring:       "ring-amber-400",
-      accent:     "text-amber-600",
-      accentBg:   "bg-amber-600",
-      badgeCls:   "bg-amber-500 text-white",
-      btn:        "bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white shadow-amber-200",
-      radioFill:  "bg-amber-500",
+      bg:        "bg-gradient-to-b from-amber-50 to-orange-50",
+      border:    "border-amber-300",
+      ring:      "ring-amber-400",
+      accent:    "text-amber-600",
+      badgeCls:  "bg-amber-500 text-white",
+      btn:       "bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white shadow-amber-200",
+      radioFill: "bg-amber-500",
     },
     features: [
-      { text: "Unlimited Super Likes",      included: true  },
-      { text: "See who liked you",          included: true  },
-      { text: "Unlimited likes",            included: true  },
-      { text: "Boost profile once a day",   included: true  },
-      { text: "Advanced filters",           included: true  },
-      { text: "Incognito mode",             included: false },
-      { text: "Priority support",           included: false },
+      { text: "Unlimited Super Likes",    included: true  },
+      { text: "See who liked you",        included: true  },
+      { text: "Unlimited likes",          included: true  },
+      { text: "Boost profile once a day", included: true  },
+      { text: "Advanced filters",         included: true  },
+      { text: "Incognito mode",           included: false },
+      { text: "Priority support",         included: false },
     ],
   },
   {
@@ -92,31 +94,30 @@ const PLANS = [
     priceMonthly: 29.99,
     priceAnnual: 17.99,
     color: {
-      bg:         "bg-gradient-to-b from-violet-50 to-fuchsia-50",
-      border:     "border-violet-400",
-      ring:       "ring-violet-500",
-      accent:     "text-violet-600",
-      accentBg:   "bg-violet-600",
-      badgeCls:   "bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white",
-      btn:        "bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-violet-200",
-      radioFill:  "bg-violet-600",
+      bg:        "bg-gradient-to-b from-violet-50 to-fuchsia-50",
+      border:    "border-violet-400",
+      ring:      "ring-violet-500",
+      accent:    "text-violet-600",
+      badgeCls:  "bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white",
+      btn:       "bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-violet-200",
+      radioFill: "bg-violet-600",
     },
     features: [
-      { text: "Unlimited Super Likes",      included: true },
-      { text: "See who liked you",          included: true },
-      { text: "Unlimited likes",            included: true },
-      { text: "Daily profile boosts",       included: true },
-      { text: "Advanced filters",           included: true },
-      { text: "Incognito mode",             included: true },
-      { text: "Priority support",           included: true },
+      { text: "Unlimited Super Likes",  included: true },
+      { text: "See who liked you",      included: true },
+      { text: "Unlimited likes",        included: true },
+      { text: "Daily profile boosts",   included: true },
+      { text: "Advanced filters",       included: true },
+      { text: "Incognito mode",         included: true },
+      { text: "Priority support",       included: true },
     ],
   },
 ];
 
 const TRUST_BADGES = [
-  { Icon: ShieldCheckIcon, label: "Secure Payment",  color: "text-green-600",  bg: "bg-green-50"  },
-  { Icon: ArrowPathIcon,   label: "Cancel Anytime",  color: "text-blue-600",   bg: "bg-blue-50"   },
-  { Icon: GlobeAltIcon,    label: "Global Access",   color: "text-violet-600", bg: "bg-violet-50" },
+  { Icon: ShieldCheckIcon, label: "Secure Payment", color: "text-green-600",  bg: "bg-green-50"  },
+  { Icon: ArrowPathIcon,   label: "Cancel Anytime", color: "text-blue-600",   bg: "bg-blue-50"   },
+  { Icon: GlobeAltIcon,    label: "Global Access",  color: "text-violet-600", bg: "bg-violet-50" },
 ];
 
 const FAQ_ITEMS = [
@@ -191,10 +192,7 @@ export default function SubscriptionPlans() {
       {/* ── Scrollable Content ── */}
       <div className="mx-auto max-w-lg px-4 pt-6 space-y-6">
 
-        {/* Hero Banner */}
         <HeroBanner />
-
-        {/* Billing Toggle */}
         <BillingToggle billing={billing} onChange={setBilling} />
 
         {/* Plan Cards */}
@@ -228,16 +226,11 @@ export default function SubscriptionPlans() {
           ))}
         </div>
 
-        {/* Stats row */}
         <StatsRow />
-
-        {/* FAQ */}
         <FaqSection />
-
         <div className="h-2" />
       </div>
 
-      {/* ── Sticky Bottom CTA ── */}
       <StickyCtaBar
         chosen={chosen}
         billing={billing}
@@ -255,21 +248,23 @@ export default function SubscriptionPlans() {
 function HeroBanner() {
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-violet-600 via-fuchsia-600 to-pink-500 p-6 text-white shadow-xl shadow-violet-200">
-      {/* Decorative blobs */}
       <div className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-white/10" />
       <div className="pointer-events-none absolute -bottom-8 -left-8 h-32 w-32 rounded-full bg-white/10" />
 
-      {/* Floating icon row */}
+      {/* Icon row */}
       <div className="relative flex items-center gap-2 mb-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-          <SparklesIcon className="h-5 w-5 text-white" />
-        </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-          <TrophyIcon className="h-5 w-5 text-amber-300" />
-        </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-          <StarSolid className="h-5 w-5 text-yellow-300" />
-        </div>
+        {[
+          { Icon: SparklesIcon,  bg: "bg-white/20",       color: "text-white"        },
+          { Icon: TrophyIcon,    bg: "bg-amber-400/40",   color: "text-amber-200"    },
+          { Icon: FireIcon,      bg: "bg-pink-400/30",    color: "text-pink-200"     },
+        ].map(({ Icon, bg, color }, i) => (
+          <div
+            key={i}
+            className={`flex h-10 w-10 items-center justify-center rounded-2xl ${bg} backdrop-blur-sm`}
+          >
+            <Icon className={`h-5 w-5 ${color}`} />
+          </div>
+        ))}
       </div>
 
       <div className="relative">
@@ -277,7 +272,8 @@ function HeroBanner() {
           Find your perfect<br />match, faster.
         </p>
         <p className="mt-2 text-sm text-white/80 max-w-xs leading-relaxed">
-          Premium members get <span className="font-bold text-white">3× more matches</span> and{" "}
+          Premium members get{" "}
+          <span className="font-bold text-white">3× more matches</span> and{" "}
           <span className="font-bold text-white">5× more profile views</span>.
         </p>
       </div>
@@ -294,8 +290,8 @@ function BillingToggle({ billing, onChange }) {
     <div className="flex flex-col items-center gap-2">
       <div className="inline-flex items-center rounded-2xl bg-gray-100 p-1 gap-1">
         {[
-          { id: "monthly", label: "Monthly"  },
-          { id: "annual",  label: "Annual"   },
+          { id: "monthly", label: "Monthly" },
+          { id: "annual",  label: "Annual"  },
         ].map(({ id, label }) => (
           <button
             key={id}
@@ -386,7 +382,7 @@ function PlanCard({ plan, billing, isSelected, onSelect, saving }) {
           )}
         </div>
 
-        {/* Price — pushed right */}
+        {/* Price */}
         <div className="ml-auto text-right shrink-0">
           <p className={`text-2xl font-extrabold leading-none ${plan.color.accent}`}>
             ${price.toFixed(2)}
@@ -394,16 +390,11 @@ function PlanCard({ plan, billing, isSelected, onSelect, saving }) {
           <p className="text-[11px] text-gray-400 mt-0.5">
             /mo{billing === "annual" ? " · annual" : ""}
           </p>
-          {billing === "monthly" && (
-            <p className="text-[10px] text-gray-400 mt-0.5 line-through">
-              ${plan.priceMonthly.toFixed(2)}
-            </p>
-          )}
         </div>
       </div>
 
       {/* Divider */}
-      <div className={`h-px mb-4 ${isSelected ? "bg-current opacity-10" : "bg-gray-100"}`} />
+      <div className="h-px mb-4 bg-gray-100" />
 
       {/* Features */}
       <div className="space-y-2.5">
@@ -418,11 +409,7 @@ function PlanCard({ plan, billing, isSelected, onSelect, saving }) {
                 <MinusIcon className="h-3 w-3 text-gray-400" strokeWidth={2.5} />
               </div>
             )}
-            <span
-              className={`text-sm leading-none ${
-                feat.included ? "text-gray-800 font-medium" : "text-gray-400"
-              }`}
-            >
+            <span className={`text-sm leading-none ${feat.included ? "text-gray-800 font-medium" : "text-gray-400"}`}>
               {feat.text}
             </span>
           </div>
@@ -438,9 +425,9 @@ function PlanCard({ plan, billing, isSelected, onSelect, saving }) {
 
 function StatsRow() {
   const stats = [
-    { value: "3×",    label: "More Matches",      Icon: StarSolid,      color: "text-amber-500" },
-    { value: "5×",    label: "Profile Views",      Icon: SparklesIcon,   color: "text-violet-600" },
-    { value: "94%",   label: "Satisfaction Rate",  Icon: TrophyIcon,     color: "text-green-600" },
+    { value: "3×",   label: "More Matches",     Icon: StarSolid,      color: "text-amber-500",  bg: "bg-amber-50"  },
+    { value: "5×",   label: "Profile Views",     Icon: SparklesSolid,  color: "text-violet-600", bg: "bg-violet-50" },
+    { value: "94%",  label: "Satisfaction Rate", Icon: TrophySolid,    color: "text-green-600",  bg: "bg-green-50"  },
   ];
 
   return (
@@ -449,9 +436,11 @@ function StatsRow() {
         Why go Premium?
       </p>
       <div className="grid grid-cols-3 divide-x divide-gray-100">
-        {stats.map(({ value, label, Icon, color }) => (
-          <div key={label} className="flex flex-col items-center gap-1.5 px-2 text-center">
-            <Icon className={`h-5 w-5 ${color}`} />
+        {stats.map(({ value, label, Icon, color, bg }) => (
+          <div key={label} className="flex flex-col items-center gap-2 px-2 text-center">
+            <div className={`flex h-9 w-9 items-center justify-center rounded-full ${bg}`}>
+              <Icon className={`h-4 w-4 ${color}`} />
+            </div>
             <p className={`text-xl font-extrabold ${color}`}>{value}</p>
             <p className="text-[10px] font-semibold text-gray-500 leading-tight">{label}</p>
           </div>
@@ -517,7 +506,6 @@ function StickyCtaBar({ chosen, billing, chosenPrice, onContinue }) {
 
   return (
     <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
-      {/* Fade mask */}
       <div className="h-8 bg-gradient-to-t from-gray-50 to-transparent" />
 
       <div
@@ -563,9 +551,7 @@ function StickyCtaBar({ chosen, billing, chosenPrice, onContinue }) {
             chosen.color.btn,
           ].join(" ")}
         >
-          {/* Shimmer sweep */}
           <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-
           <span className="relative flex items-center justify-center gap-2.5">
             <CreditCardIcon className="h-5 w-5" />
             Continue with {chosen.name}
@@ -573,7 +559,6 @@ function StickyCtaBar({ chosen, billing, chosenPrice, onContinue }) {
           </span>
         </button>
 
-        {/* Legal */}
         <p className="mt-2.5 text-center text-[11px] text-gray-400 leading-relaxed">
           By continuing you agree to our{" "}
           <button className="underline underline-offset-2 hover:text-gray-600 transition-colors font-medium">
@@ -590,7 +575,7 @@ function StickyCtaBar({ chosen, billing, chosenPrice, onContinue }) {
 }
 
 /* ================================================================
-   LOCAL ICON  (ChevronRight — not in the named imports above)
+   LOCAL ICON  — ChevronRight (not in @heroicons/24/outline named set)
    ================================================================ */
 
 function ChevronRightIcon({ className = "h-5 w-5" }) {
