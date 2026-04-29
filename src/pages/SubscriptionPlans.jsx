@@ -22,7 +22,7 @@ import {
   SparklesIcon as SparklesSolid,
   TrophyIcon as TrophySolid,
 } from "@heroicons/react/24/solid";
-
+import ProfileYou from "./ProfileYou";
 /* ================================================================
    PLAN DATA
    ================================================================ */
@@ -173,7 +173,7 @@ export default function SubscriptionPlans() {
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
         <div className="mx-auto max-w-lg px-4 py-4 flex items-center gap-3">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate("/profile")}
             aria-label="Go back"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 active:scale-95 transition-all"
           >
