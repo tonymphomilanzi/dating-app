@@ -242,7 +242,7 @@ export default function Discover() {
               onClick={() => navigate("/notifications")} 
             />
             <IconButton 
-              icon="lni-heart" 
+              icon="heart" 
               aria-label="Filter"
               onClick={() => navigate("/matches")} 
             />
@@ -347,6 +347,7 @@ const IconButton = memo(function IconButton({
                15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
       )}
+
       {icon === "bell" && (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24"
           stroke="currentColor" strokeWidth={2}>
@@ -357,6 +358,7 @@ const IconButton = memo(function IconButton({
                0a3 3 0 11-6 0m6 0H9" />
         </svg>
       )}
+
       {icon === "filter" && (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24"
           stroke="currentColor" strokeWidth={2}>
@@ -366,6 +368,23 @@ const IconButton = memo(function IconButton({
                100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
         </svg>
       )}
+
+      {/* 🔥 NEW HEART ICON */}
+      {icon === "heart" && (
+        <svg
+          className="h-5 w-5"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+        >
+          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5
+                   2 6 4 4 6.5 4c1.74 0 3.41 1.01
+                   4.22 2.44C11.09 5.01 12.76 4
+                   14.5 4 17 4 19 6 19 8.5c0
+                   3.78-3.4 6.86-8.55
+                   11.54L12 21.35z" />
+        </svg>
+      )}
+
       {count != null && count > 0 && (
         <span
           aria-label={`${count} unread`}
