@@ -56,6 +56,7 @@ import Feeds from "./pages/Feeds.jsx";
 import AdminApp from "./admin/AdminApp.jsx";
 
 import FeedPost from "./pages/FeedPost.jsx";
+import FeedDetail from "./pages/FeedDetail.jsx";
 
 /* ================================================================
    MAIN APP
@@ -126,7 +127,7 @@ const MainApp = () => {
                 <Route path="/massage-clinics/:id"    element={<MassageClinicDetail />} />
                 <Route path="/feeds"           element={<Feeds />} />
                 <Route path="/feeds/:id" element={<FeedPost />} />
-
+                <Route path="/feeds/:id/detail" element={<FeedDetail />} />
                 {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
                 <Route path="/subscription"           element={<SubscriptionPlans />} />
                 <Route path="/subscription/payment"    element={<SubscriptionPayment />} />

@@ -618,10 +618,13 @@ const handleShareLog = useCallback((feed) => {
 /* ================================================================
    FEED CARD
    ================================================================ */
+// src/pages/Feeds.jsx
+// ── Only FeedCard changes — replace the existing FeedCard function ──
+
 function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
-  const [expanded, setExpanded] = useState(false);
+  const navigate  = useNavigate();
   const [imgError, setImgError] = useState(false);
-  const viewedRef = useRef(false);
+  const viewedRef  = useRef(false);
 
   /* record view once card enters viewport */
   useEffect(() => {
@@ -631,9 +634,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && !viewedRef.current) {
-          viewedRef.current = true;
-          onView();
-          obs.disconnect();
+          viewedRef.current = true; onView(); obs.disconnect();
         }
       },
       { threshold: 0.5 }
@@ -644,24 +645,33 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
 
   const admin      = feed.admin;
   const adminName  = admin?.display_name || admin?.username || "Admin";
-  const isLong     = feed.content.length > 280;
-  const displayed  = isLong && !expanded
-    ? feed.content.slice(0, 280) + "…"
+
+  /* Truncate at 160 chars for the card preview */
+  const PREVIEW_LEN = 160;
+  const isLong      = feed.content.length > PREVIEW_LEN;
+  const preview     = isLong
+    ? feed.content.slice(0, PREVIEW_LEN).trimEnd() + "…"
     : feed.content;
+
+  const goToDetail = () => navigate(`/feeds/${feed.id}`);
 
   return (
     <article
       id={`feed-${feed.id}`}
       className="group rounded-3xl bg-white border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden"
     >
-      {/* cover image */}
+      {/* Cover image — clicking goes to detail */}
       {feed.image_url && !imgError && (
-        <div className="relative w-full bg-gray-100 overflow-hidden" style={{ maxHeight: 480 }}>
+        <div
+          className="relative w-full bg-gray-100 overflow-hidden cursor-pointer"
+          style={{ maxHeight: 300 }}
+          onClick={goToDetail}
+        >
           <img
             src={feed.image_url}
             alt={feed.title}
-            className="w-full object-cover"
-            style={{ maxHeight: 480 }}
+            className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+            style={{ maxHeight: 300 }}
             loading="lazy"
             onError={() => setImgError(true)}
           />
@@ -675,16 +685,13 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
       )}
 
       <div className="p-5">
-        {/* author row */}
-        <div className="flex items-center gap-3 mb-4">
+        {/* Author row */}
+        <div className="flex items-center gap-3 mb-3">
           {admin?.avatar_url ? (
-            <img
-              src={admin.avatar_url}
-              alt={adminName}
-              className="h-10 w-10 rounded-full object-cover ring-2 ring-violet-100"
-            />
+            <img src={admin.avatar_url} alt={adminName}
+              className="h-9 w-9 rounded-full object-cover ring-2 ring-violet-100" />
           ) : (
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-sm font-extrabold text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-sm font-extrabold text-white">
               {adminName.slice(0, 1).toUpperCase()}
             </div>
           )}
@@ -703,48 +710,65 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
           </div>
         </div>
 
-        {/* title */}
-        <h2 className="text-lg font-extrabold text-gray-900 leading-snug mb-2">
+        {/* Title — clicking goes to detail */}
+        <h2
+          onClick={goToDetail}
+          className="text-base font-extrabold text-gray-900 leading-snug mb-2 cursor-pointer hover:text-violet-700 transition-colors"
+        >
           {feed.title}
         </h2>
 
-        {/* content */}
-        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-          {displayed}
+        {/* Preview content — 3 lines max */}
+        <p
+          onClick={goToDetail}
+          className="text-sm text-gray-600 leading-relaxed cursor-pointer line-clamp-3"
+        >
+          {preview}
         </p>
+
+        {/* "Read more" link — only shown when content is long */}
         {isLong && (
           <button
-            onClick={() => setExpanded(!expanded)}
-            className="mt-1.5 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
+            onClick={goToDetail}
+            className="mt-1.5 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors flex items-center gap-1"
           >
-            {expanded ? "Show less" : "Read more"}
+            Read more
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
           </button>
         )}
 
-        {/* tags */}
+        {/* Tags */}
         {feed.tags?.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-3">
-            {feed.tags.map((tag) => (
-              <span key={tag} className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-600">
+            {feed.tags.slice(0, 4).map((tag) => (
+              <span key={tag}
+                className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-semibold text-gray-500">
                 #{tag}
               </span>
             ))}
+            {feed.tags.length > 4 && (
+              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-semibold text-gray-400">
+                +{feed.tags.length - 4}
+              </span>
+            )}
           </div>
         )}
 
-        <div className="my-4 h-px bg-gray-100" />
+        <div className="my-3 h-px bg-gray-100" />
 
-        {/* counts */}
+        {/* Stats */}
         <div className="flex items-center gap-4 text-xs text-gray-400 mb-3">
           <span>{fmtCount(feed.likes_count)} likes</span>
           <span>{fmtCount(feed.comments_count)} comments</span>
           <span>{fmtCount(feed.shares_count)} shares</span>
         </div>
 
-        {/* actions */}
+        {/* Actions */}
         <div className="grid grid-cols-3 gap-2">
           <button
-            onClick={() => userId ? onLike() : null}
+            onClick={() => userId ? onLike() : navigate("/auth")}
             className={[
               "flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold transition-all active:scale-95",
               liked
@@ -756,8 +780,9 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
             <span className="hidden sm:inline">{liked ? "Liked" : "Like"}</span>
           </button>
 
+          {/* Comment → goes to detail page and focuses comment box */}
           <button
-            onClick={onComment}
+            onClick={goToDetail}
             className="flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold bg-gray-50 text-gray-600 border border-gray-200 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200 transition-all active:scale-95"
           >
             <CommentIcon className="h-4 w-4" />
