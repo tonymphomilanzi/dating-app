@@ -227,27 +227,28 @@ function useComments(feedId, open) {
   const rtRef      = useRef(null);
   const { user }   = useAuth();
 
+  // The disambiguated select string — used in every query
+  const COMMENT_SELECT = `
+    id, feed_id, parent_id, body, likes_count, created_at,
+    user:feed_comments_user_id_fkey(id, display_name, avatar_url)
+  `;
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  /* reset when feed changes */
   useEffect(() => {
     if (!feedId) { setComments([]); setSubmitError(""); }
   }, [feedId]);
 
-  /* ── fetch comments ── */
   const fetchComments = useCallback(async () => {
     if (!feedId) return;
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from("feed_comments")
-        .select(`
-          id, feed_id, parent_id, body, likes_count, created_at,
-          user:profiles(id, display_name, avatar_url)
-        `)
+        .select(COMMENT_SELECT)
         .eq("feed_id", feedId)
         .order("created_at", { ascending: true })
         .limit(COMMENT_PAGE);
@@ -273,7 +274,6 @@ function useComments(feedId, open) {
     }
   }, [feedId, user?.id]);
 
-  /* ── open / close ── */
   useEffect(() => {
     if (!open || !feedId) return;
     fetchComments();
@@ -288,15 +288,13 @@ function useComments(feedId, open) {
         },
         async (payload) => {
           if (!mountedRef.current) return;
-          /* fetch full row with profile join */
-          const { data } = await supabase
+          // Fetch full row with disambiguated FK
+          const { data, error } = await supabase
             .from("feed_comments")
-            .select(`
-              id, feed_id, parent_id, body, likes_count, created_at,
-              user:profiles(id, display_name, avatar_url)
-            `)
+            .select(COMMENT_SELECT)
             .eq("id", payload.new.id)
             .single();
+          if (error) { console.error("rt insert fetch:", error.message); return; }
           if (data && mountedRef.current)
             setComments((prev) =>
               prev.some((c) => c.id === data.id) ? prev : [...prev, data]
@@ -336,13 +334,12 @@ function useComments(feedId, open) {
     return () => { supabase.removeChannel(rtRef.current); };
   }, [open, feedId, fetchComments]);
 
-  /* ── submit comment ── */
   const submitComment = useCallback(async (body, parentId = null) => {
     if (!user?.id || !feedId || !body.trim()) return false;
     setSubmitting(true);
     setSubmitError("");
 
-    /* optimistic temp comment */
+    // Optimistic temp comment
     const tempId = `temp-${Date.now()}`;
     const tempComment = {
       id:          tempId,
@@ -367,26 +364,23 @@ function useComments(feedId, open) {
         .insert({
           feed_id:   feedId,
           user_id:   user.id,
-          parent_id: parentId,
+          parent_id: parentId ?? null,
           body:      body.trim(),
         })
-        .select(`
-          id, feed_id, parent_id, body, likes_count, created_at,
-          user:profiles(id, display_name, avatar_url)
-        `)
+        .select(COMMENT_SELECT)
         .single();
 
       if (error) throw error;
 
       if (mountedRef.current && data) {
-        /* replace temp with real row */
+        // Replace temp with real row
         setComments((prev) =>
           prev.map((c) => (c.id === tempId ? data : c))
         );
       }
       return true;
     } catch (e) {
-      console.error("submitComment:", e);
+      console.error("submitComment:", e.message);
       if (mountedRef.current) {
         setComments((prev) => prev.filter((c) => c.id !== tempId));
         setSubmitError(e.message || "Failed to post comment");
@@ -397,7 +391,6 @@ function useComments(feedId, open) {
     }
   }, [user, feedId]);
 
-  /* ── toggle comment like ── */
   const toggleCommentLike = useCallback(async (commentId) => {
     if (!user?.id) return;
     const isLiked = myLikes.has(commentId);
@@ -431,7 +424,7 @@ function useComments(feedId, open) {
       }
     } catch (e) {
       console.error("toggleCommentLike:", e.message);
-      /* revert */
+      // Revert
       setMyLikes((prev) => {
         const next = new Set(prev);
         isLiked ? next.add(commentId) : next.delete(commentId);
@@ -447,9 +440,9 @@ function useComments(feedId, open) {
     }
   }, [user?.id, myLikes]);
 
-  /* ── delete comment ── */
   const deleteComment = useCallback(async (commentId) => {
     if (!user?.id) return;
+    // Optimistic remove
     setComments((prev) => prev.filter((c) => c.id !== commentId));
     const { error } = await supabase
       .from("feed_comments")
@@ -458,11 +451,10 @@ function useComments(feedId, open) {
       .eq("user_id", user.id);
     if (error) {
       console.error("deleteComment:", error.message);
-      fetchComments(); /* restore if delete failed */
+      fetchComments(); // restore on failure
     }
   }, [user?.id, fetchComments]);
 
-  /* ── thread grouping ── */
   const threaded = useMemo(() => {
     const top     = comments.filter((c) => !c.parent_id);
     const replies = comments.filter((c) =>  c.parent_id);
