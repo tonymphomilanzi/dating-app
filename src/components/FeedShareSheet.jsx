@@ -102,10 +102,9 @@ export default function FeedShareSheet({ feed, userId, onClose, onShare }) {
      - Humans               → instant JS redirect to the SPA route
   ── */
   const ogUrl = useMemo(() => {
-    const base = window.location.origin;
-    return `${base}/api/me?share=feed&id=${encodeURIComponent(feed.id)}`;
-  }, [feed.id]);
-
+  // This URL → bots get OG HTML, humans get redirected to SPA
+  return `${window.location.origin}/api/me?share=feed&id=${encodeURIComponent(feed.id)}`;
+}, [feed.id]);
   /* Direct SPA URL (used as fallback display) */
   const spaUrl = `${window.location.origin}/feeds/${feed.id}`;
 
