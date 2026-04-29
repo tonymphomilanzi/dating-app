@@ -48,7 +48,7 @@ import MassageClinic from "./pages/MassageClinic.jsx";
 import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
-
+import SubscriptionPlans from "./pages/SubscriptionPlans.jsx";
 // Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
 
@@ -115,6 +115,7 @@ const MainApp = () => {
                 <Route path="/calendar"             element={<Calendar />} />
                 <Route path="/massage-clinics/new"  element={<CreateMassageClinic />} />
                 <Route path="/massage-clinics/:id"  element={<MassageClinicDetail />} />
+                <Route path="/subscription-plans"    element={<SubscriptionPlans />} />
               </Route>
             </Route>
 
