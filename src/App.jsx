@@ -49,6 +49,7 @@ import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
 import SubscriptionPlans from "./pages/SubscriptionPlans.jsx";
+import SubscriptionPayment from "./pages/SubscriptionPayment.jsx";
 
 // Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
@@ -122,19 +123,7 @@ const MainApp = () => {
 
                 {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
                 <Route path="/subscription"           element={<SubscriptionPlans />} />
-
-                {/* Payment page (next step — swap placeholder when ready) */}
-                <Route
-                  path="/subscription/payment"
-                  element={
-                    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-8 text-center">
-                      <div className="space-y-2">
-                        <p className="text-2xl font-bold text-gray-900">Payment coming soon</p>
-                        <p className="text-sm text-gray-500">We'll wire this up next.</p>
-                      </div>
-                    </div>
-                  }
-                />
+                <Route path="/subscription/payment"    element={<SubscriptionPayment />} />
 
               </Route>
             </Route>
