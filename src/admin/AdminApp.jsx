@@ -13,6 +13,7 @@ import NotificationCenter from "./pages/NotificationCenter";
 
 import Layout from "./components/Layout";
 import { AlertProvider } from "./components/CustomAlert/AlertProvider";
+import FeedsManagement from './pages/FeedsManagement'
 
 function AdminLoading() {
   return (
@@ -116,6 +117,15 @@ function AdminRoutes() {
         element={
           <ProtectedRoute>
             <SubscriptionManagement />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/admin/feeds"
+        element={ 
+          <ProtectedRoute>
+            <FeedsManagement />
           </ProtectedRoute>
         }
       />
