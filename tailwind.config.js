@@ -57,8 +57,12 @@ export default {
       },
        keyframes: {
         shimmer: {
-          "100%": { transform: "translateX(100%)" },
+          "0%":   { transform: "skewX(-12deg) translateX(-200%)" },
+          "100%": { transform: "skewX(-12deg) translateX(400%)"  },
         },
+      },
+       animation: {
+        shimmer: "shimmer 2.5s infinite",
       },
     },
   },

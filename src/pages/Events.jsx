@@ -36,8 +36,8 @@ const VIEW_TYPES = {
 };
 
 const TABS_CONFIG = [
-  { id: TABS.EXPLORE, label: "Explore",  icon: CompassIcon  },
-  { id: TABS.NEAR,    label: "Near You", icon: MapPinIcon   },
+  { id: TABS.EXPLORE, label: "Explore",  icon: CompassIcon },
+  { id: TABS.NEAR,    label: "Near You", icon: MapPinIcon  },
 ];
 
 const SEARCH_PLACEHOLDERS = {
@@ -52,8 +52,12 @@ const SEARCH_PLACEHOLDERS = {
 const toRadians = (deg) => (deg * Math.PI) / 180;
 
 function calculateKmBetween(a, b) {
-  if (!a || !b || a.lat == null || a.lng == null || b.lat == null || b.lng == null)
-    return Infinity;
+  if (
+    !a || !b ||
+    a.lat == null || a.lng == null ||
+    b.lat == null || b.lng == null
+  ) return Infinity;
+
   const dLat = toRadians(b.lat - a.lat);
   const dLng = toRadians(b.lng - a.lng);
   const h =
@@ -71,7 +75,10 @@ function formatDistanceLabel(km) {
 
 function formatDateLabel(iso) {
   if (!iso) return "";
-  return new Date(iso).toLocaleDateString([], { day: "2-digit", month: "short" });
+  return new Date(iso).toLocaleDateString([], {
+    day: "2-digit",
+    month: "short",
+  });
 }
 
 function extractDayMonth(iso) {
@@ -83,28 +90,29 @@ function extractDayMonth(iso) {
   };
 }
 
-const isFiniteNum     = (n) => Number.isFinite(Number(n));
-const isValidLatLng   = (lat, lng) =>
+const isFiniteNum   = (n) => Number.isFinite(Number(n));
+const isValidLatLng = (lat, lng) =>
   isFiniteNum(lat) && isFiniteNum(lng) &&
-  lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+  lat >= -90 && lat <= 90 &&
+  lng >= -180 && lng <= 180 &&
   !(Number(lat) === 0 && Number(lng) === 0);
 
 function mapRow(ev) {
   return {
     id:          ev.id,
-    title:       ev.title        || "Untitled Event",
-    description: ev.description  || "",
-    img:         ev.cover_url    || "",
+    title:       ev.title       || "Untitled Event",
+    description: ev.description || "",
+    img:         ev.cover_url   || "",
     dateISO:     ev.starts_at,
     dateLabel:   formatDateLabel(ev.starts_at),
     ...extractDayMonth(ev.starts_at),
-    category:    ev.category     || "Other",
-    place:       ev.city         || "Location TBD",
+    category:    ev.category    || "Other",
+    place:       ev.city        || "Location TBD",
     lat:         ev.lat  != null ? Number(ev.lat)  : null,
     lng:         ev.lng  != null ? Number(ev.lng)  : null,
     price:       ev.price != null ? Number(ev.price) : 0,
     created_at:  ev.created_at,
-    attendees:   ev.attendees    || 0,
+    attendees:   ev.attendees   || 0,
   };
 }
 
@@ -134,7 +142,7 @@ const pinIcon = L.divIcon({
 });
 
 /* ================================================================
-   useRevalidate
+   useRevalidate  ← fixed cooldown race & re-entry guard
    ================================================================ */
 
 function useRevalidate({
@@ -145,45 +153,79 @@ function useRevalidate({
   onOnline     = true,
   cooldownMs   = 2_000,
 } = {}) {
-  const refetchRef    = useRef(refetch);
-  refetchRef.current  = refetch;
+  // Always-current reference to the latest refetch fn — avoids stale closure
+  const refetchRef   = useRef(refetch);
+  const cooldownRef  = useRef(cooldownMs);
+  useEffect(() => { refetchRef.current  = refetch;    }, [refetch]);
+  useEffect(() => { cooldownRef.current = cooldownMs; }, [cooldownMs]);
 
   const lastFiredAt = useRef(0);
   const timerRef    = useRef(null);
   const inFlight    = useRef(false);
-  const pending     = useRef(false);
-
-  const fire = useCallback(() => {
-    const attempt = () => {
-      const elapsed = Date.now() - lastFiredAt.current;
-      if (elapsed < cooldownMs) {
-        clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(attempt, cooldownMs - elapsed);
-        return;
-      }
-      if (inFlight.current) { pending.current = true; return; }
-      inFlight.current    = true;
-      lastFiredAt.current = Date.now();
-      Promise.resolve(refetchRef.current?.())
-        .catch(() => {})
-        .finally(() => {
-          inFlight.current = false;
-          if (pending.current) { pending.current = false; attempt(); }
-        });
-    };
-    attempt();
-  }, [cooldownMs]);
+  const pendingRef  = useRef(false);
+  const mountedRef  = useRef(true);
 
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === "visible") fire(); };
-    if (onFocus)      window.addEventListener("focus",            fire,  { passive: true });
-    if (onVisibility) document.addEventListener("visibilitychange", onVis, { passive: true });
-    if (onOnline)     window.addEventListener("online",           fire,  { passive: true });
-    const id = intervalMs > 0 ? setInterval(fire, intervalMs) : null;
+    mountedRef.current = true;
     return () => {
-      if (onFocus)      window.removeEventListener("focus",            fire);
+      mountedRef.current = false;
+      clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  // Stable fire function — never recreated, reads refs for current values
+  const fire = useCallback(() => {
+    const attempt = () => {
+      if (!mountedRef.current) return;
+
+      const elapsed = Date.now() - lastFiredAt.current;
+      const cd      = cooldownRef.current;
+
+      if (elapsed < cd) {
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(attempt, cd - elapsed);
+        return;
+      }
+
+      if (inFlight.current) {
+        pendingRef.current = true;
+        return;
+      }
+
+      inFlight.current    = true;
+      lastFiredAt.current = Date.now();
+
+      Promise.resolve()
+        .then(() => refetchRef.current?.())
+        .catch(() => {})
+        .finally(() => {
+          if (!mountedRef.current) return;
+          inFlight.current = false;
+          if (pendingRef.current) {
+            pendingRef.current = false;
+            attempt();
+          }
+        });
+    };
+
+    attempt();
+  }, []); // ← intentionally empty: everything via refs
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") fire();
+    };
+
+    if (onFocus)      window.addEventListener("focus",             fire,  { passive: true });
+    if (onVisibility) document.addEventListener("visibilitychange", onVis, { passive: true });
+    if (onOnline)     window.addEventListener("online",            fire,  { passive: true });
+
+    const id = intervalMs > 0 ? setInterval(fire, intervalMs) : null;
+
+    return () => {
+      if (onFocus)      window.removeEventListener("focus",             fire);
       if (onVisibility) document.removeEventListener("visibilitychange", onVis);
-      if (onOnline)     window.removeEventListener("online",           fire);
+      if (onOnline)     window.removeEventListener("online",            fire);
       if (id)           clearInterval(id);
       clearTimeout(timerRef.current);
     };
@@ -212,10 +254,10 @@ function useGeolocation() {
 
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
     geocodeAbortRef.current?.abort();
-    const ac = new AbortController();
+    const ac      = new AbortController();
     geocodeAbortRef.current = ac;
-    let timedOut = false;
-    const timerId = setTimeout(() => { timedOut = true; ac.abort(); }, GEOCODE_TIMEOUT_MS);
+    const timerId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
@@ -223,6 +265,7 @@ function useGeolocation() {
       );
       clearTimeout(timerId);
       if (!mountedRef.current || ac.signal.aborted) return;
+
       const data = await res.json().catch(() => ({}));
       const city =
         data?.address?.city    ||
@@ -230,9 +273,10 @@ function useGeolocation() {
         data?.address?.village ||
         data?.address?.county  ||
         data?.address?.state   || "";
+
       if (mountedRef.current) setLocationLabel(city || "Your area");
     } catch {
-      if (!timedOut) clearTimeout(timerId);
+      clearTimeout(timerId);
     }
   }, []);
 
@@ -241,19 +285,33 @@ function useGeolocation() {
       setLocationStatus("unsupported");
       return;
     }
+
     setLocationStatus("loading");
+
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        const pos = { lat: Number(coords.latitude), lng: Number(coords.longitude) };
-        if (!isValidLatLng(pos.lat, pos.lng)) { setLocationStatus("denied"); return; }
+        const pos = {
+          lat: Number(coords.latitude),
+          lng: Number(coords.longitude),
+        };
+        if (!isValidLatLng(pos.lat, pos.lng)) {
+          setLocationStatus("denied");
+          return;
+        }
         if (mountedRef.current) {
           setUserLocation(pos);
           setLocationStatus("granted");
           reverseGeocode(pos);
         }
       },
-      () => { if (mountedRef.current) setLocationStatus("denied"); },
-      { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS }
+      () => {
+        if (mountedRef.current) setLocationStatus("denied");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout:    GEO_TIMEOUT_MS,
+        maximumAge: GEO_MAX_AGE_MS,
+      }
     );
   }, [reverseGeocode]);
 
@@ -261,7 +319,7 @@ function useGeolocation() {
 }
 
 /* ================================================================
-   useEvents
+   useEvents  ← cleaner abort + generation guard
    ================================================================ */
 
 function useEvents() {
@@ -271,7 +329,7 @@ function useEvents() {
 
   const mountedRef    = useRef(true);
   const abortRef      = useRef(null);
-  const requestGenRef = useRef(0);
+  const generationRef = useRef(0);
   const hasDataRef    = useRef(false);
 
   useEffect(() => {
@@ -283,34 +341,49 @@ function useEvents() {
   }, []);
 
   const refresh = useCallback(async ({ foreground = false } = {}) => {
+    // Cancel previous in-flight request
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    requestGenRef.current += 1;
-    const myGen = requestGenRef.current;
+
+    // Generation counter prevents older responses overwriting newer ones
+    generationRef.current += 1;
+    const myGen = generationRef.current;
+
     if (foreground && !hasDataRef.current) setIsLoading(true);
+
     try {
       const rows = await eventsService.list({ signal: ac.signal });
-      if (!mountedRef.current || requestGenRef.current !== myGen) return;
+
+      // Guard: component unmounted or a newer request is in flight
+      if (!mountedRef.current || generationRef.current !== myGen) return;
+
       hasDataRef.current = true;
       setEvents((rows ?? []).map(mapRow));
       setError("");
     } catch (err) {
-      if (!mountedRef.current || requestGenRef.current !== myGen) return;
-      if (err?.name === "AbortError") return;
+      if (!mountedRef.current || generationRef.current !== myGen) return;
+      if (err?.name === "AbortError" || ac.signal.aborted) return;
+
       const status = err?.status || err?.response?.status;
       if (status === 401 || /session expired/i.test(err?.message ?? "")) {
         setError("Session expired. Please sign in again.");
         return;
       }
+
       setError(
-        err?.message || err?.error ||
-        err?.response?.data?.message || "Failed to load events"
+        err?.message ||
+        err?.error   ||
+        err?.response?.data?.message ||
+        "Failed to load events"
       );
     } finally {
-      if (mountedRef.current && requestGenRef.current === myGen) setIsLoading(false);
+      // Only clear loading for the most-recent generation
+      if (mountedRef.current && generationRef.current === myGen) {
+        setIsLoading(false);
+      }
     }
-  }, []);
+  }, []); // stable — reads everything via refs
 
   return { events, setEvents, isLoading, error, refresh };
 }
@@ -324,37 +397,47 @@ export default function Events() {
   const location = useLocation();
 
   const [activeTab,        setActiveTab]        = useState(TABS.EXPLORE);
-  const [searchQuery,      setSearchQuery]      = useState("");
-  const [radius,           setRadius]           = useState(DEFAULT_RADIUS_KM);
-  const [viewType,         setViewType]         = useState(VIEW_TYPES.LIST);
-  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [searchQuery,      setSearchQuery]       = useState("");
+  const [radius,           setRadius]            = useState(DEFAULT_RADIUS_KM);
+  const [viewType,         setViewType]          = useState(VIEW_TYPES.LIST);
+  const [selectedCategory, setSelectedCategory]  = useState("All");
 
-  const { userLocation, locationStatus, locationLabel, requestLocation } = useGeolocation();
+  const {
+    userLocation,
+    locationStatus,
+    locationLabel,
+    requestLocation,
+  } = useGeolocation();
+
   const { events, setEvents, isLoading, error, refresh } = useEvents();
 
-  // Bootstrap
+  // ── Bootstrap on mount ─────────────────────────────────────────
+  useEffect(() => {
+    refresh({ foreground: true });
+    requestLocation();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { refresh({ foreground: true }); }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { requestLocation(); }, []);
+  }, []); // intentionally run once on mount
 
-  // Inject newly created event from nav state
+  // ── Inject newly-created event from nav state ──────────────────
   useEffect(() => {
     const created = location.state?.created;
     if (!created) return;
     setEvents((prev) =>
-      prev.some((e) => e.id === created.id) ? prev : [mapRow(created), ...prev]
+      prev.some((e) => e.id === created.id)
+        ? prev
+        : [mapRow(created), ...prev]
     );
     navigate("/events", { replace: true, state: null });
   }, [location.state, navigate, setEvents]);
 
+  // ── Auto-refresh + visibility/focus/online revalidation ────────
   useRevalidate({
-    refetch:     () => refresh({ foreground: false }),
-    intervalMs:  AUTO_REFRESH_INTERVAL_MS,
-    cooldownMs:  2_000,
+    refetch:    () => refresh({ foreground: false }),
+    intervalMs: AUTO_REFRESH_INTERVAL_MS,
+    cooldownMs: 2_000,
   });
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived data ───────────────────────────────────────────────
 
   const categories = useMemo(() => {
     const set = new Set(events.map((e) => e.category).filter(Boolean));
@@ -363,8 +446,10 @@ export default function Events() {
 
   const filteredEvents = useMemo(() => {
     let result = events.slice();
+
     if (selectedCategory !== "All")
       result = result.filter((e) => e.category === selectedCategory);
+
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
@@ -373,33 +458,51 @@ export default function Events() {
           e.place.toLowerCase().includes(q)
       );
     }
+
     return result.sort((a, b) => {
       const dateDiff = new Date(a.dateISO) - new Date(b.dateISO);
       if (dateDiff !== 0) return dateDiff;
       if (userLocation) {
         const dA = calculateKmBetween(userLocation, a);
         const dB = calculateKmBetween(userLocation, b);
-        if (Number.isFinite(dA) && Number.isFinite(dB) && dA !== dB) return dA - dB;
+        if (Number.isFinite(dA) && Number.isFinite(dB) && dA !== dB)
+          return dA - dB;
       }
       return new Date(b.created_at) - new Date(a.created_at);
     });
   }, [events, selectedCategory, searchQuery, userLocation]);
 
-  const popularEvents  = useMemo(() => filteredEvents.slice(0, POPULAR_EVENTS_LIMIT),  [filteredEvents]);
-  const upcomingEvents = useMemo(() => filteredEvents.slice(0, UPCOMING_EVENTS_LIMIT), [filteredEvents]);
+  const popularEvents  = useMemo(
+    () => filteredEvents.slice(0, POPULAR_EVENTS_LIMIT),
+    [filteredEvents]
+  );
+  const upcomingEvents = useMemo(
+    () => filteredEvents.slice(0, UPCOMING_EVENTS_LIMIT),
+    [filteredEvents]
+  );
 
   const nearbyEvents = useMemo(() => {
     if (!userLocation) return [];
+
     let result = events
       .filter((e) => isValidLatLng(e.lat, e.lng))
-      .map((e) => ({ ...e, distanceKm: calculateKmBetween(userLocation, e) }))
-      .filter((e) => Number.isFinite(e.distanceKm) && e.distanceKm <= radius);
+      .map((e) => ({
+        ...e,
+        distanceKm: calculateKmBetween(userLocation, e),
+      }))
+      .filter(
+        (e) => Number.isFinite(e.distanceKm) && e.distanceKm <= radius
+      );
+
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
-        (e) => e.title.toLowerCase().includes(q) || e.place.toLowerCase().includes(q)
+        (e) =>
+          e.title.toLowerCase().includes(q) ||
+          e.place.toLowerCase().includes(q)
       );
     }
+
     return result.sort((a, b) => a.distanceKm - b.distanceKm);
   }, [events, userLocation, radius, searchQuery]);
 
@@ -408,14 +511,21 @@ export default function Events() {
     [navigate]
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const handleTabChange = useCallback((tab) => {
+    setActiveTab(tab);
+    setSearchQuery("");
+    // Reset scroll to top when switching tabs
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  // ── Render ─────────────────────────────────────────────────────
 
   return (
     <div className="min-h-dvh bg-gray-50 text-gray-900 pb-28">
       <div className="mx-auto w-full max-w-md">
         <PageHeader
           activeTab={activeTab}
-          onTabChange={(tab) => { setActiveTab(tab); setSearchQuery(""); }}
+          onTabChange={handleTabChange}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           locationStatus={locationStatus}
@@ -471,9 +581,9 @@ export default function Events() {
       {/* FAB */}
       <Link
         to="/events/new"
-        className="fixed bottom-28 right-4 z-20 flex h-14 w-14 items-center justify-center
-          rounded-full bg-gradient-to-br from-violet-500 to-violet-700 text-white
-          shadow-lg shadow-violet-200 hover:shadow-xl hover:scale-105
+        className="fixed bottom-28 right-4 z-20 flex h-14 w-14 items-center
+          justify-center rounded-full bg-gradient-to-br from-violet-500 to-violet-700
+          text-white shadow-lg shadow-violet-200 hover:shadow-xl hover:scale-105
           active:scale-95 transition-all duration-200"
         aria-label="Create new event"
       >
@@ -499,13 +609,15 @@ function PageHeader({
   radius,
 }) {
   const statusLine = (() => {
-    if (activeTab === TABS.EXPLORE) return null;
-    if (activeTab === TABS.NEAR) {
-      if (locationStatus === "loading") return { text: "Finding your position…", icon: "pulse" };
-      if (locationStatus === "denied")  return { text: "Location access denied", icon: "warn" };
-      return { text: `${nearbyCount} event${nearbyCount !== 1 ? "s" : ""} within ${radius} km`, icon: "ok" };
-    }
-    return null;
+    if (activeTab !== TABS.NEAR) return null;
+    if (locationStatus === "loading")
+      return { text: "Finding your position…", icon: "pulse" };
+    if (locationStatus === "denied")
+      return { text: "Location access denied", icon: "warn" };
+    return {
+      text: `${nearbyCount} event${nearbyCount !== 1 ? "s" : ""} within ${radius} km`,
+      icon: "ok",
+    };
   })();
 
   return (
@@ -515,7 +627,9 @@ function PageHeader({
         <div>
           <h1 className="text-xl font-bold text-gray-900">Events</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            {activeTab === TABS.EXPLORE ? "Discover what's happening" : "Find events near you"}
+            {activeTab === TABS.EXPLORE
+              ? "Discover what's happening"
+              : "Find events near you"}
           </p>
         </div>
         <LocationBadge
@@ -528,7 +642,7 @@ function PageHeader({
       {/* Tabs */}
       <div className="flex gap-1 px-4 pb-3">
         {TABS_CONFIG.map((tab) => {
-          const Icon = tab.icon;
+          const Icon     = tab.icon;
           const isActive = activeTab === tab.id;
           return (
             <button
@@ -542,7 +656,9 @@ function PageHeader({
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200",
               ].join(" ")}
             >
-              <Icon className={`h-4 w-4 ${isActive ? "text-white" : "text-gray-500"}`} />
+              <Icon
+                className={`h-4 w-4 ${isActive ? "text-white" : "text-gray-500"}`}
+              />
               {tab.label}
             </button>
           );
@@ -551,9 +667,11 @@ function PageHeader({
 
       {/* Search */}
       <div className="px-4 pb-3">
-        <div className="flex items-center gap-3 rounded-2xl bg-gray-100 px-4 py-3
-          focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-300
-          focus-within:shadow-sm transition-all duration-200">
+        <div
+          className="flex items-center gap-3 rounded-2xl bg-gray-100 px-4 py-3
+            focus-within:bg-white focus-within:ring-2 focus-within:ring-violet-300
+            focus-within:shadow-sm transition-all duration-200"
+        >
           <SearchIcon className="h-4 w-4 text-gray-400 shrink-0" />
           <input
             value={searchQuery}
@@ -566,8 +684,8 @@ function PageHeader({
           {searchQuery ? (
             <button
               onClick={() => onSearchChange("")}
-              className="text-gray-400 hover:text-gray-600 shrink-0 p-0.5 rounded-full
-                hover:bg-gray-200 transition-colors"
+              className="text-gray-400 hover:text-gray-600 shrink-0 p-0.5
+                rounded-full hover:bg-gray-200 transition-colors"
               aria-label="Clear search"
             >
               <XSmallIcon className="h-4 w-4" />
@@ -575,8 +693,9 @@ function PageHeader({
           ) : (
             <Link
               to="/events/new"
-              className="shrink-0 flex h-7 w-7 items-center justify-center rounded-lg
-                bg-violet-100 text-violet-600 hover:bg-violet-200 transition-colors"
+              className="shrink-0 flex h-7 w-7 items-center justify-center
+                rounded-lg bg-violet-100 text-violet-600 hover:bg-violet-200
+                transition-colors"
               aria-label="Create event"
             >
               <PlusIcon className="h-4 w-4" />
@@ -589,7 +708,8 @@ function PageHeader({
           <div className="mt-2 flex items-center gap-1.5 px-1">
             {statusLine.icon === "pulse" && (
               <span className="relative flex h-2 w-2 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-75" />
+                <span className="absolute inline-flex h-full w-full animate-ping
+                  rounded-full bg-violet-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-500" />
               </span>
             )}
@@ -600,9 +720,13 @@ function PageHeader({
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
             )}
             <span className="text-xs text-gray-500">{statusLine.text}</span>
-            {locationLabel && activeTab === TABS.NEAR && locationStatus === "granted" && (
-              <span className="text-xs font-medium text-gray-700">· {locationLabel}</span>
-            )}
+            {locationLabel &&
+              activeTab === TABS.NEAR &&
+              locationStatus === "granted" && (
+                <span className="text-xs font-medium text-gray-700">
+                  · {locationLabel}
+                </span>
+              )}
           </div>
         )}
       </div>
@@ -613,7 +737,9 @@ function PageHeader({
 function LocationBadge({ status, label, onRefresh }) {
   const display =
     label ||
-    { loading: "Locating…", denied: "Location off", unsupported: "N/A" }[status] ||
+    { loading: "Locating…", denied: "Location off", unsupported: "N/A" }[
+      status
+    ] ||
     "Set location";
 
   return (
@@ -644,7 +770,11 @@ function ExploreSection({
   openEventDetail,
 }) {
   const allUniqueEvents = useMemo(
-    () => [...new Map([...popularEvents, ...upcomingEvents].map((e) => [e.id, e])).values()],
+    () => [
+      ...new Map(
+        [...popularEvents, ...upcomingEvents].map((e) => [e.id, e])
+      ).values(),
+    ],
     [popularEvents, upcomingEvents]
   );
 
@@ -737,17 +867,22 @@ function NearYouSection({
   openEventDetail,
   onRequestLocation,
 }) {
-  // Prompt user if location not granted
   if (locationStatus === "idle" || locationStatus === "denied") {
     return (
-      <div className="mt-6 rounded-3xl border border-dashed border-violet-200
-        bg-violet-50 p-8 text-center">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center
-          rounded-full bg-violet-100">
+      <div
+        className="mt-6 rounded-3xl border border-dashed border-violet-200
+          bg-violet-50 p-8 text-center"
+      >
+        <div
+          className="mx-auto mb-4 flex h-16 w-16 items-center justify-center
+            rounded-full bg-violet-100"
+        >
           <MapPinIcon className="h-8 w-8 text-violet-500" />
         </div>
         <h3 className="text-base font-bold text-gray-900">
-          {locationStatus === "denied" ? "Location access denied" : "Enable location"}
+          {locationStatus === "denied"
+            ? "Location access denied"
+            : "Enable location"}
         </h3>
         <p className="mt-1.5 text-sm text-gray-500">
           {locationStatus === "denied"
@@ -773,9 +908,14 @@ function NearYouSection({
     return (
       <div className="mt-10 flex flex-col items-center gap-3 text-center">
         <div className="relative h-12 w-12">
-          <span className="absolute inset-0 animate-ping rounded-full bg-violet-300 opacity-60" />
-          <span className="relative flex h-12 w-12 items-center justify-center
-            rounded-full bg-violet-100">
+          <span
+            className="absolute inset-0 animate-ping rounded-full
+              bg-violet-300 opacity-60"
+          />
+          <span
+            className="relative flex h-12 w-12 items-center justify-center
+              rounded-full bg-violet-100"
+          >
             <MapPinIcon className="h-6 w-6 text-violet-600" />
           </span>
         </div>
@@ -787,8 +927,10 @@ function NearYouSection({
   return (
     <div className="space-y-4 pb-4">
       {/* Controls row */}
-      <div className="flex items-center justify-between gap-3 rounded-2xl
-        bg-white border border-gray-100 px-4 py-3 shadow-sm">
+      <div
+        className="flex items-center justify-between gap-3 rounded-2xl
+          bg-white border border-gray-100 px-4 py-3 shadow-sm"
+      >
         <RadiusSlider value={radius} onChange={setRadius} />
 
         <div className="inline-flex items-center rounded-xl border border-gray-200 bg-gray-50 p-1">
@@ -800,7 +942,8 @@ function NearYouSection({
               key={id}
               onClick={() => setViewType(id)}
               className={[
-                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all",
+                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5",
+                "text-xs font-semibold transition-all",
                 viewType === id
                   ? "bg-white text-violet-700 shadow-sm"
                   : "text-gray-500 hover:text-gray-700",
@@ -872,33 +1015,35 @@ function FeaturedEventBanner({ event, onClick }) {
           loading="lazy"
         />
       ) : (
-        <div className="h-52 w-full bg-gradient-to-br from-violet-400 to-purple-600
-          grid place-items-center">
+        <div
+          className="h-52 w-full bg-gradient-to-br from-violet-400 to-purple-600
+            grid place-items-center"
+        >
           <CalendarIcon className="h-16 w-16 text-white/50" />
         </div>
       )}
 
-      {/* Gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
 
-      {/* Featured badge */}
       <div className="absolute top-3 left-3">
-        <span className="inline-flex items-center gap-1 rounded-full
-          bg-white/20 backdrop-blur-md border border-white/30
-          px-3 py-1 text-xs font-bold text-white">
+        <span
+          className="inline-flex items-center gap-1 rounded-full
+            bg-white/20 backdrop-blur-md border border-white/30
+            px-3 py-1 text-xs font-bold text-white"
+        >
           ✨ Featured
         </span>
       </div>
 
-      {/* Category badge */}
       <div className="absolute top-3 right-3">
-        <span className="rounded-full bg-violet-600/90 backdrop-blur-sm
-          px-2.5 py-1 text-xs font-semibold text-white">
+        <span
+          className="rounded-full bg-violet-600/90 backdrop-blur-sm
+            px-2.5 py-1 text-xs font-semibold text-white"
+        >
           {event.category}
         </span>
       </div>
 
-      {/* Content */}
       <div className="absolute bottom-0 inset-x-0 p-4">
         <p className="text-lg font-bold text-white leading-tight drop-shadow">
           {event.title}
@@ -910,8 +1055,10 @@ function FeaturedEventBanner({ event, onClick }) {
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-sm text-white/70">{event.dateLabel}</span>
-            <span className="rounded-full bg-white/20 backdrop-blur-sm
-              px-2.5 py-0.5 text-sm font-bold text-white">
+            <span
+              className="rounded-full bg-white/20 backdrop-blur-sm
+                px-2.5 py-0.5 text-sm font-bold text-white"
+            >
               {event.price === 0 ? "Free" : `$${event.price}`}
             </span>
           </div>
@@ -930,40 +1077,44 @@ function EventCard({ event, onClick }) {
         hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]
         transition-all duration-200"
     >
-      {/* Image */}
       <div className="relative h-36 bg-gray-100 overflow-hidden">
         {event.img ? (
           <img
             src={event.img}
             alt={event.title}
-            className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
+            className="h-full w-full object-cover group-hover:scale-105
+              transition-transform duration-300"
             loading="lazy"
             draggable={false}
           />
         ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-100 to-purple-100">
+          <div
+            className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-100 to-purple-100"
+          >
             <CalendarIcon className="h-10 w-10 text-violet-300" />
           </div>
         )}
 
-        {/* Date chip */}
-        <div className="absolute left-2 top-2 rounded-lg bg-black/60 backdrop-blur-sm
-          px-2 py-1 text-xs text-white font-medium">
+        <div
+          className="absolute left-2 top-2 rounded-lg bg-black/60 backdrop-blur-sm
+            px-2 py-1 text-xs text-white font-medium"
+        >
           {event.dateLabel}
         </div>
 
-        {/* Price chip */}
-        <div className="absolute right-2 top-2 rounded-full bg-white/95
-          px-2 py-0.5 text-xs font-bold text-violet-700 shadow-sm">
+        <div
+          className="absolute right-2 top-2 rounded-full bg-white/95
+            px-2 py-0.5 text-xs font-bold text-violet-700 shadow-sm"
+        >
           {event.price === 0 ? "Free" : `$${event.price}`}
         </div>
 
-        {/* Bottom gradient */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16
-          bg-gradient-to-t from-black/50 to-transparent" />
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-16
+            bg-gradient-to-t from-black/50 to-transparent"
+        />
 
-        {/* Title overlay */}
         <div className="absolute inset-x-2.5 bottom-2">
           <p className="truncate text-sm font-bold text-white drop-shadow">
             {event.title}
@@ -971,7 +1122,6 @@ function EventCard({ event, onClick }) {
         </div>
       </div>
 
-      {/* Footer */}
       <div className="px-3 py-2.5">
         <div className="flex items-center gap-1 text-xs text-gray-500">
           <MapPinIcon className="h-3 w-3 text-violet-500 shrink-0" />
@@ -995,7 +1145,6 @@ function NearbyEventCard({ event, onClick }) {
         hover:shadow-md hover:border-violet-100 active:scale-[0.99]
         transition-all duration-200"
     >
-      {/* Thumbnail */}
       <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-gray-100">
         {event.img ? (
           <img
@@ -1006,21 +1155,26 @@ function NearbyEventCard({ event, onClick }) {
             draggable={false}
           />
         ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-50 to-purple-100">
+          <div
+            className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-50 to-purple-100"
+          >
             <CalendarIcon className="h-7 w-7 text-violet-300" />
           </div>
         )}
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
         <div>
           <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
+            <p className="truncate text-sm font-bold text-gray-900">
+              {event.title}
+            </p>
             {Number.isFinite(event.distanceKm) && (
-              <span className="shrink-0 rounded-full bg-violet-50 border border-violet-100
-                px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+              <span
+                className="shrink-0 rounded-full bg-violet-50 border border-violet-100
+                  px-2 py-0.5 text-[11px] font-semibold text-violet-700"
+              >
                 {formatDistanceLabel(event.distanceKm)}
               </span>
             )}
@@ -1059,10 +1213,11 @@ function UpcomingEventRow({ event, onOpen }) {
         hover:shadow-md hover:border-violet-100 active:scale-[0.99]
         transition-all duration-200"
     >
-      {/* Date block */}
-      <div className="flex w-14 shrink-0 flex-col items-center justify-center
-        rounded-xl bg-gradient-to-b from-violet-50 to-violet-100/60
-        border border-violet-100 py-2">
+      <div
+        className="flex w-14 shrink-0 flex-col items-center justify-center
+          rounded-xl bg-gradient-to-b from-violet-50 to-violet-100/60
+          border border-violet-100 py-2"
+      >
         <div className="text-xl font-extrabold text-violet-700 leading-none">
           {event.day}
         </div>
@@ -1071,7 +1226,6 @@ function UpcomingEventRow({ event, onOpen }) {
         </div>
       </div>
 
-      {/* Thumbnail */}
       <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-gray-100">
         {event.img ? (
           <img
@@ -1082,17 +1236,20 @@ function UpcomingEventRow({ event, onOpen }) {
             draggable={false}
           />
         ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-50 to-purple-100">
+          <div
+            className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-50 to-purple-100"
+          >
             <CalendarIcon className="h-6 w-6 text-violet-300" />
           </div>
         )}
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
         <div>
-          <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
+          <p className="truncate text-sm font-bold text-gray-900">
+            {event.title}
+          </p>
           <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
             <MapPinIcon className="h-3 w-3 text-violet-400 shrink-0" />
             <span className="truncate">{event.place}</span>
@@ -1107,8 +1264,10 @@ function UpcomingEventRow({ event, onOpen }) {
               <span className="text-[11px] text-gray-400">/person</span>
             )}
           </div>
-          <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5
-            text-[11px] text-gray-500">
+          <span
+            className="inline-block rounded-full bg-gray-100 px-2 py-0.5
+              text-[11px] text-gray-500"
+          >
             {event.category}
           </span>
         </div>
@@ -1143,10 +1302,14 @@ function CategoryChip({ label, count, isActive, onClick }) {
       ].join(" ")}
     >
       {label}
-      <span className={[
-        "rounded-full px-1.5 py-px text-[10px] font-bold",
-        isActive ? "bg-white/25 text-white" : "bg-gray-100 text-gray-500",
-      ].join(" ")}>
+      <span
+        className={[
+          "rounded-full px-1.5 py-px text-[10px] font-bold",
+          isActive
+            ? "bg-white/25 text-white"
+            : "bg-gray-100 text-gray-500",
+        ].join(" ")}
+      >
         {count}
       </span>
     </button>
@@ -1156,7 +1319,9 @@ function CategoryChip({ label, count, isActive, onClick }) {
 function RadiusSlider({ value, onChange }) {
   return (
     <div className="flex flex-1 items-center gap-2.5 min-w-0">
-      <span className="text-xs font-semibold text-gray-500 shrink-0">Radius</span>
+      <span className="text-xs font-semibold text-gray-500 shrink-0">
+        Radius
+      </span>
       <input
         type="range"
         min={1}
@@ -1164,10 +1329,9 @@ function RadiusSlider({ value, onChange }) {
         step={1}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-1 h-1.5 appearance-none rounded-full bg-gray-200 accent-violet-600
-          cursor-pointer min-w-0"
+        className="flex-1 h-1.5 appearance-none rounded-full bg-gray-200
+          accent-violet-600 cursor-pointer min-w-0"
         aria-label={`Search radius: ${value} km`}
-        style={{ "--range-progress": `${value}%` }}
       />
       <span className="text-sm font-bold text-violet-700 shrink-0 w-10 text-right">
         {value}km
@@ -1178,10 +1342,14 @@ function RadiusSlider({ value, onChange }) {
 
 function EmptyCreate({ onCreate }) {
   return (
-    <div className="mt-8 rounded-3xl border-2 border-dashed border-gray-200
-      bg-white p-10 text-center">
-      <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center
-        rounded-full bg-gradient-to-br from-violet-50 to-purple-100">
+    <div
+      className="mt-8 rounded-3xl border-2 border-dashed border-gray-200
+        bg-white p-10 text-center"
+    >
+      <div
+        className="mx-auto mb-5 flex h-20 w-20 items-center justify-center
+          rounded-full bg-gradient-to-br from-violet-50 to-purple-100"
+      >
         <CalendarIcon className="h-10 w-10 text-violet-400" />
       </div>
       <h3 className="text-lg font-bold text-gray-900">No events yet</h3>
@@ -1204,8 +1372,10 @@ function EmptyCreate({ onCreate }) {
 
 function EmptyState({ message, className = "" }) {
   return (
-    <div className={`rounded-2xl border border-dashed border-gray-200
-      bg-white p-6 text-center text-sm text-gray-500 ${className}`}>
+    <div
+      className={`rounded-2xl border border-dashed border-gray-200
+        bg-white p-6 text-center text-sm text-gray-500 ${className}`}
+    >
       {message}
     </div>
   );
@@ -1214,10 +1384,7 @@ function EmptyState({ message, className = "" }) {
 function LoadingState() {
   return (
     <div className="space-y-4 pt-2">
-      {/* Featured skeleton */}
       <div className="h-52 w-full animate-pulse rounded-3xl bg-gray-200" />
-
-      {/* Cards row skeleton */}
       <div className="flex gap-4 overflow-hidden">
         {[1, 2].map((i) => (
           <div key={i} className="w-[220px] shrink-0 rounded-2xl animate-pulse">
@@ -1229,10 +1396,11 @@ function LoadingState() {
           </div>
         ))}
       </div>
-
-      {/* List skeletons */}
       {[1, 2, 3].map((i) => (
-        <div key={i} className="flex gap-3 rounded-2xl bg-white p-3 animate-pulse">
+        <div
+          key={i}
+          className="flex gap-3 rounded-2xl bg-white p-3 animate-pulse"
+        >
           <div className="h-16 w-20 shrink-0 rounded-xl bg-gray-200" />
           <div className="flex-1 space-y-2 py-1">
             <div className="h-3.5 w-3/4 rounded-full bg-gray-200" />
@@ -1247,21 +1415,31 @@ function LoadingState() {
 
 function ErrorState({ error, onRetry, onSignIn }) {
   const text =
-    error?.message || error?.error ||
+    error?.message ||
+    error?.error ||
     (typeof error === "string" ? error : "An unexpected error occurred");
   const isAuth = /session expired|unauthorized|401/i.test(text);
 
   return (
-    <div className="mt-10 rounded-3xl bg-white border border-gray-100
-      shadow-sm p-8 text-center">
-      <div className={`mx-auto mb-4 flex h-16 w-16 items-center justify-center
-        rounded-full ${isAuth ? "bg-amber-50" : "bg-red-50"}`}>
-        {isAuth
-          ? <LockIcon className="h-8 w-8 text-amber-500" />
-          : <WarningIcon className="h-8 w-8 text-red-400" />
-        }
+    <div
+      className="mt-10 rounded-3xl bg-white border border-gray-100
+        shadow-sm p-8 text-center"
+    >
+      <div
+        className={`mx-auto mb-4 flex h-16 w-16 items-center justify-center
+          rounded-full ${isAuth ? "bg-amber-50" : "bg-red-50"}`}
+      >
+        {isAuth ? (
+          <LockIcon className="h-8 w-8 text-amber-500" />
+        ) : (
+          <WarningIcon className="h-8 w-8 text-red-400" />
+        )}
       </div>
-      <h3 className={`text-base font-bold ${isAuth ? "text-amber-700" : "text-red-600"}`}>
+      <h3
+        className={`text-base font-bold ${
+          isAuth ? "text-amber-700" : "text-red-600"
+        }`}
+      >
         {isAuth ? "Sign in required" : "Failed to load events"}
       </h3>
       <p className="mt-2 text-sm text-gray-500 max-w-xs mx-auto">{text}</p>
@@ -1278,9 +1456,9 @@ function ErrorState({ error, onRetry, onSignIn }) {
         ) : (
           <button
             onClick={onRetry}
-            className="inline-flex items-center gap-2 rounded-full border border-gray-200
-              bg-white px-5 py-2.5 text-sm font-medium text-gray-700
-              hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center gap-2 rounded-full border
+              border-gray-200 bg-white px-5 py-2.5 text-sm font-medium
+              text-gray-700 hover:bg-gray-50 transition-colors"
           >
             Try Again
           </button>
@@ -1341,21 +1519,37 @@ function NearbyEventsMap({ center, events, onOpenEvent }) {
   );
 }
 
+// Only recenters when position actually changes — prevents map jitter
 function RecenterMap({ position }) {
-  const map = useMap();
+  const map     = useMap();
+  const prevRef = useRef(null);
+
   useEffect(() => {
-    map.setView(position, 12, { animate: true });
+    const [lat, lng] = position;
+    const prev       = prevRef.current;
+
+    if (prev && prev[0] === lat && prev[1] === lng) return;
+
+    prevRef.current = position;
+    map.setView(position, map.getZoom(), { animate: true });
   }, [position, map]);
+
   return null;
 }
 
 /* ================================================================
-   SVG ICON COMPONENTS  (no external icon library needed)
+   SVG ICONS
    ================================================================ */
 
 function CompassIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
       <circle cx="12" cy="12" r="10" />
       <polygon points="16.24,7.76 14.12,14.12 7.76,16.24 9.88,9.88" fill="currentColor" />
     </svg>
@@ -1364,9 +1558,18 @@ function CompassIcon({ className = "h-5 w-5" }) {
 
 function MapPinIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round"
-        d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"
+      />
       <circle cx="12" cy="9" r="2.5" />
     </svg>
   );
@@ -1374,7 +1577,13 @@ function MapPinIcon({ className = "h-5 w-5" }) {
 
 function SearchIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
       <circle cx="11" cy="11" r="8" />
       <path strokeLinecap="round" d="M21 21l-4.35-4.35" />
     </svg>
@@ -1383,7 +1592,13 @@ function SearchIcon({ className = "h-5 w-5" }) {
 
 function PlusIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2.5}
+    >
       <path strokeLinecap="round" d="M12 5v14M5 12h14" />
     </svg>
   );
@@ -1391,7 +1606,13 @@ function PlusIcon({ className = "h-5 w-5" }) {
 
 function XSmallIcon({ className = "h-4 w-4" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2.5}
+    >
       <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
     </svg>
   );
@@ -1399,21 +1620,33 @@ function XSmallIcon({ className = "h-4 w-4" }) {
 
 function CalendarIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
       <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
       <line x1="16" y1="2" x2="16" y2="6" strokeLinecap="round" />
-      <line x1="8" y1="2" x2="8" y2="6" strokeLinecap="round" />
-      <line x1="3" y1="10" x2="21" y2="10" />
+      <line x1="8"  y1="2" x2="8"  y2="6" strokeLinecap="round" />
+      <line x1="3"  y1="10" x2="21" y2="10" />
     </svg>
   );
 }
 
 function ListIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <line x1="8" y1="6"  x2="21" y2="6"  strokeLinecap="round" />
-      <line x1="8" y1="12" x2="21" y2="12" strokeLinecap="round" />
-      <line x1="8" y1="18" x2="21" y2="18" strokeLinecap="round" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <line x1="8"  y1="6"  x2="21" y2="6"  strokeLinecap="round" />
+      <line x1="8"  y1="12" x2="21" y2="12" strokeLinecap="round" />
+      <line x1="8"  y1="18" x2="21" y2="18" strokeLinecap="round" />
       <circle cx="3" cy="6"  r="1" fill="currentColor" />
       <circle cx="3" cy="12" r="1" fill="currentColor" />
       <circle cx="3" cy="18" r="1" fill="currentColor" />
@@ -1423,9 +1656,18 @@ function ListIcon({ className = "h-5 w-5" }) {
 
 function MapViewIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <polygon points="1,6 1,22 8,18 16,22 23,18 23,2 16,6 8,2" strokeLinejoin="round" />
-      <line x1="8" y1="2"  x2="8"  y2="18" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
+      <polygon
+        points="1,6 1,22 8,18 16,22 23,18 23,2 16,6 8,2"
+        strokeLinejoin="round"
+      />
+      <line x1="8"  y1="2"  x2="8"  y2="18" />
       <line x1="16" y1="6" x2="16" y2="22" />
     </svg>
   );
@@ -1433,7 +1675,13 @@ function MapViewIcon({ className = "h-5 w-5" }) {
 
 function LockIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
       <rect x="5" y="11" width="14" height="11" rx="2" ry="2" />
       <path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
     </svg>
@@ -1442,9 +1690,18 @@ function LockIcon({ className = "h-5 w-5" }) {
 
 function WarningIcon({ className = "h-5 w-5" }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-      <path strokeLinecap="round" strokeLinejoin="round"
-        d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.8}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+      />
     </svg>
   );
 }
