@@ -50,6 +50,7 @@ import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
 import SubscriptionPlans from "./pages/SubscriptionPlans.jsx";
 import SubscriptionPayment from "./pages/SubscriptionPayment.jsx";
+import Feeds from "./pages/Feeds.jsx";
 
 // Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
@@ -99,6 +100,7 @@ const MainApp = () => {
                 <Route element={<TabsLayout />}>
                   <Route path="/discover"        element={<Discover />} />
                   <Route path="/matches"         element={<Matches />} />
+                  <Route path="/feeds"           element={<Feeds />} />
                   <Route path="/messages"        element={<Messages />} />
                   <Route path="/events"          element={<Events />} />
                   <Route path="/massage-clinics" element={<MassageClinic />} />

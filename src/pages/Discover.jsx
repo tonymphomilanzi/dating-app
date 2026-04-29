@@ -242,9 +242,9 @@ export default function Discover() {
               onClick={() => navigate("/notifications")} 
             />
             <IconButton 
-              icon="filter" 
+              icon="lni-heart" 
               aria-label="Filter"
-              onClick={() => navigate("/filters")} 
+              onClick={() => navigate("/matches")} 
             />
           </div>
 

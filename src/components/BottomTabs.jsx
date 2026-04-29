@@ -20,7 +20,7 @@ export default function BottomTabs() {
     <nav className="fixed bottom-3 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl bg-white/90 px-2 py-2 shadow-card backdrop-blur pb-safe">
       <div className="grid grid-cols-5">
         <Tab to="/discover" icon="lni-home" label="Discover" />
-        <Tab to="/matches" icon="lni-heart" label="Matches" />
+        <Tab to="/feeds" icon="lni-layout-9" label="Feeds" />
         <Tab to= "/massage-clinics" icon="lni-hand"  label="Massage" />
         <Tab to="/events" icon="lni-calendar" label="Events" />
         <Tab to="/streams" icon="lni-video" label="Streams" />
