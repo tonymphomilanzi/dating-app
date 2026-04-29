@@ -1,63 +1,122 @@
 // src/pages/SubscriptionPayment.jsx
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { supabase } from "../lib/supabase.client.js";
 
 /* ================================================================
-   PAYMENT METHOD CONFIG  — all details hardcoded by the company
+   PLAN DEFINITIONS  (plain data only — no React components here)
+   ================================================================ */
+
+const PLANS_DATA = [
+  {
+    id:           "basic",
+    name:         "Basic",
+    iconId:       "bolt",
+    iconBg:       "bg-gray-100",
+    iconColor:    "text-gray-600",
+    priceMonthly: 9.99,
+    priceAnnual:  5.99,
+    color: {
+      bg:        "bg-white",
+      border:    "border-gray-200",
+      ring:      "ring-gray-300",
+      accent:    "text-gray-700",
+      badgeCls:  "",
+      btn:       "bg-gray-900 hover:bg-gray-800 text-white shadow-gray-200",
+      radioFill: "bg-gray-700",
+    },
+  },
+  {
+    id:           "gold",
+    name:         "Gold",
+    iconId:       "trophy",
+    iconBg:       "bg-amber-100",
+    iconColor:    "text-amber-600",
+    priceMonthly: 19.99,
+    priceAnnual:  11.99,
+    color: {
+      bg:        "bg-gradient-to-b from-amber-50 to-orange-50",
+      border:    "border-amber-300",
+      ring:      "ring-amber-400",
+      accent:    "text-amber-600",
+      badgeCls:  "bg-amber-500 text-white",
+      btn:       "bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white shadow-amber-200",
+      radioFill: "bg-amber-500",
+    },
+  },
+  {
+    id:           "platinum",
+    name:         "Platinum",
+    iconId:       "sparkles",
+    iconBg:       "bg-violet-100",
+    iconColor:    "text-violet-600",
+    priceMonthly: 29.99,
+    priceAnnual:  17.99,
+    color: {
+      bg:        "bg-gradient-to-b from-violet-50 to-fuchsia-50",
+      border:    "border-violet-400",
+      ring:      "ring-violet-500",
+      accent:    "text-violet-600",
+      badgeCls:  "bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white",
+      btn:       "bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white shadow-violet-200",
+      radioFill: "bg-violet-600",
+    },
+  },
+];
+
+/* ================================================================
+   PAYMENT METHOD CONFIG
    ================================================================ */
 
 const CRYPTO_OPTIONS = [
   {
-    id: "btc",
-    symbol: "BTC",
-    name: "Bitcoin",
-    network: "Bitcoin Network",
-    address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+    id:            "btc",
+    symbol:        "BTC",
+    name:          "Bitcoin",
+    network:       "Bitcoin Network",
+    address:       "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
     confirmations: "1 confirmation (~10 min)",
-    Icon: BitcoinIcon,
-    color: "text-orange-500",
-    bg: "bg-orange-50",
-    border: "border-orange-200",
-    ring: "ring-orange-400",
-    qrPlaceholder: true,
+    iconId:        "bitcoin",
+    color:         "text-orange-500",
+    bg:            "bg-orange-50",
+    border:        "border-orange-200",
+    ring:          "ring-orange-400",
   },
   {
-    id: "usdt_trc20",
-    symbol: "USDT",
-    name: "Tether (TRC-20)",
-    network: "TRON Network",
-    address: "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
+    id:            "usdt_trc20",
+    symbol:        "USDT",
+    name:          "Tether (TRC-20)",
+    network:       "TRON Network",
+    address:       "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE",
     confirmations: "20 confirmations (~1 min)",
-    Icon: TetherIcon,
-    color: "text-emerald-600",
-    bg: "bg-emerald-50",
-    border: "border-emerald-200",
-    ring: "ring-emerald-400",
-    qrPlaceholder: true,
+    iconId:        "tether",
+    color:         "text-emerald-600",
+    bg:            "bg-emerald-50",
+    border:        "border-emerald-200",
+    ring:          "ring-emerald-400",
   },
 ];
 
 const PAYMENT_METHODS = [
   {
-    id: "crypto",
-    label: "Crypto",
-    sublabel: "BTC · USDT",
-    Icon: CryptoIcon,
-    color: "text-orange-500",
-    bg: "bg-orange-50",
-    border: "border-orange-200",
+    id:        "crypto",
+    label:     "Crypto",
+    sublabel:  "BTC · USDT",
+    iconId:    "crypto",
+    color:     "text-orange-500",
+    bg:        "bg-orange-50",
+    border:    "border-orange-200",
     accentBtn: "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-200",
   },
   {
-    id: "momo",
-    label: "Mobile Money",
-    sublabel: "Instant transfer",
-    Icon: PhoneIcon,
-    color: "text-violet-600",
-    bg: "bg-violet-50",
-    border: "border-violet-200",
+    id:        "momo",
+    label:     "Mobile Money",
+    sublabel:  "Instant transfer",
+    iconId:    "phone",
+    color:     "text-violet-600",
+    bg:        "bg-violet-50",
+    border:    "border-violet-200",
     accentBtn: "bg-violet-600 hover:bg-violet-700 text-white shadow-violet-200",
     fields: [
       { label: "Provider",     value: "MTN Mobile Money / Orange Money" },
@@ -74,46 +133,46 @@ const PAYMENT_METHODS = [
     ],
   },
   {
-    id: "western_union",
-    label: "Western Union",
-    sublabel: "Global transfer",
-    Icon: WesternUnionIcon,
-    color: "text-yellow-600",
-    bg: "bg-yellow-50",
-    border: "border-yellow-200",
+    id:        "western_union",
+    label:     "Western Union",
+    sublabel:  "Global transfer",
+    iconId:    "western_union",
+    color:     "text-yellow-600",
+    bg:        "bg-yellow-50",
+    border:    "border-yellow-200",
     accentBtn: "bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-200",
     fields: [
-      { label: "Recipient Name",    value: "John Smith",       copyable: true },
-      { label: "Country",           value: "United States"                    },
-      { label: "State / City",      value: "New York, NY"                     },
-      { label: "Test Question",     value: "What is the code?"               },
-      { label: "Test Answer",       value: "MATCHAPP2024",     copyable: true },
+      { label: "Recipient Name", value: "John Smith",       copyable: true },
+      { label: "Country",        value: "United States"                    },
+      { label: "State / City",   value: "New York, NY"                     },
+      { label: "Test Question",  value: "What is the code?"               },
+      { label: "Test Answer",    value: "MATCHAPP2024",     copyable: true },
     ],
     instructions: [
-      "Visit any Western Union agent or use westernunion.com.",
+      "Visit any Western Union agent or westernunion.com.",
       "Send to the recipient details above.",
       "Enter the exact amount.",
-      "Note the MTCN (Money Transfer Control Number).",
+      "Note your MTCN (Money Transfer Control Number).",
       "Submit the MTCN as your payment reference.",
     ],
   },
   {
-    id: "bank",
-    label: "Bank Transfer",
-    sublabel: "SWIFT · SEPA",
-    Icon: BankIcon,
-    color: "text-blue-600",
-    bg: "bg-blue-50",
-    border: "border-blue-200",
+    id:        "bank",
+    label:     "Bank Transfer",
+    sublabel:  "SWIFT · SEPA",
+    iconId:    "bank",
+    color:     "text-blue-600",
+    bg:        "bg-blue-50",
+    border:    "border-blue-200",
     accentBtn: "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200",
     fields: [
-      { label: "Bank Name",      value: "Chase Bank"                    },
-      { label: "Account Name",   value: "MatchApp Inc."                 },
-      { label: "Account Number", value: "000123456789",   copyable: true },
-      { label: "Routing / ABA",  value: "021000021",      copyable: true },
-      { label: "SWIFT / BIC",    value: "CHASUS33",       copyable: true },
+      { label: "Bank Name",      value: "Chase Bank"                              },
+      { label: "Account Name",   value: "MatchApp Inc."                           },
+      { label: "Account Number", value: "000123456789",              copyable: true },
+      { label: "Routing / ABA",  value: "021000021",                 copyable: true },
+      { label: "SWIFT / BIC",    value: "CHASUS33",                  copyable: true },
       { label: "IBAN",           value: "US29 CHAS 0210 0002 1000 1234", copyable: true },
-      { label: "Reference",      value: "Use your Order ID"              },
+      { label: "Reference",      value: "Use your Order ID"                        },
     ],
     instructions: [
       "Log in to your online banking portal.",
@@ -126,8 +185,34 @@ const PAYMENT_METHODS = [
 ];
 
 /* ================================================================
+   ICON RESOLVER  — maps string ID → JSX (keeps components out of state)
+   ================================================================ */
+
+function PlanIcon({ iconId, className }) {
+  if (iconId === "bolt")     return <BoltIcon      className={className} />;
+  if (iconId === "trophy")   return <TrophyIcon    className={className} />;
+  if (iconId === "sparkles") return <SparklesIcon  className={className} />;
+  return <BoltIcon className={className} />;
+}
+
+function MethodIcon({ iconId, className }) {
+  if (iconId === "crypto")        return <CryptoIcon        className={className} />;
+  if (iconId === "phone")         return <PhoneIcon         className={className} />;
+  if (iconId === "western_union") return <WesternUnionIcon  className={className} />;
+  if (iconId === "bank")          return <BankIcon          className={className} />;
+  return <CryptoIcon className={className} />;
+}
+
+function CryptoOptionIcon({ iconId, className }) {
+  if (iconId === "bitcoin") return <BitcoinIcon className={className} />;
+  if (iconId === "tether")  return <TetherIcon  className={className} />;
+  return <CryptoIcon className={className} />;
+}
+
+/* ================================================================
    STEPS
    ================================================================ */
+
 const STEP = { METHOD: 0, DETAILS: 1, CONFIRM: 2, DONE: 3 };
 
 /* ================================================================
@@ -135,56 +220,59 @@ const STEP = { METHOD: 0, DETAILS: 1, CONFIRM: 2, DONE: 3 };
    ================================================================ */
 
 export default function SubscriptionPayment() {
-  const navigate   = useNavigate();
-  const location   = useLocation();
-  const { user }   = useAuth();
+  const navigate        = useNavigate();
+  const location        = useLocation();
+  const { user }        = useAuth();
 
-  const { plan, billing } = location.state || {};
+  // ✅ Only plain data from state — no components
+  const { planId, billing } = location.state || {};
+
+  // Re-hydrate plan from planId
+  const plan = useMemo(
+    () => PLANS_DATA.find((p) => p.id === planId) ?? null,
+    [planId]
+  );
+
+  const price = billing === "annual" ? plan?.priceAnnual : plan?.priceMonthly;
+  const total = billing === "annual"
+    ? (plan?.priceAnnual  * 12).toFixed(2)
+    : plan?.priceMonthly?.toFixed(2);
 
   const [step,         setStep]         = useState(STEP.METHOD);
-  const [method,       setMethod]       = useState(null);   // PAYMENT_METHODS entry
-  const [cryptoOption, setCryptoOption] = useState(null);   // CRYPTO_OPTIONS entry
+  const [method,       setMethod]       = useState(null);
+  const [cryptoOption, setCryptoOption] = useState(null);
 
-  // Confirm-step form
   const [txRef,      setTxRef]      = useState("");
   const [proofUrl,   setProofUrl]   = useState("");
   const [note,       setNote]       = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [orderId,    setOrderId]    = useState(null);
-
-  // Toast state
-  const [toast, setToast] = useState(null);
-
-  const price = billing === "annual" ? plan?.priceAnnual : plan?.priceMonthly;
-  const total = billing === "annual"
-    ? (plan?.priceAnnual * 12).toFixed(2)
-    : plan?.priceMonthly?.toFixed(2);
+  const [toast,      setToast]      = useState(null);
 
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+    const id = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(id);
   }, []);
 
   const copyToClipboard = useCallback(async (text, label) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(String(text));
       showToast(`${label} copied!`);
     } catch {
       showToast("Copy failed — please copy manually", "error");
     }
   }, [showToast]);
 
-  // Generate a short order ID
   const generateOrderId = () =>
-    "ORD-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).slice(2, 6).toUpperCase();
+    "ORD-" +
+    Date.now().toString(36).toUpperCase() + "-" +
+    Math.random().toString(36).slice(2, 6).toUpperCase();
 
   const handleMethodSelect = (m) => {
     setMethod(m);
-    if (m.id === "crypto") {
-      setCryptoOption(CRYPTO_OPTIONS[0]);
-    }
-    const oid = generateOrderId();
-    setOrderId(oid);
+    if (m.id === "crypto") setCryptoOption(CRYPTO_OPTIONS[0]);
+    setOrderId(generateOrderId());
     setStep(STEP.DETAILS);
   };
 
@@ -212,13 +300,12 @@ export default function SubscriptionPayment() {
         crypto_option: cryptoOption?.id ?? null,
         tx_reference:  txRef.trim(),
         proof_url:     proofUrl.trim() || null,
-        note:          note.trim() || null,
+        note:          note.trim()     || null,
         status:        "pending",
         created_at:    new Date().toISOString(),
       });
 
       if (error) throw error;
-
       setStep(STEP.DONE);
     } catch (err) {
       console.error(err);
@@ -228,7 +315,7 @@ export default function SubscriptionPayment() {
     }
   };
 
-  // Guard: no plan passed
+  // Guard
   if (!plan) {
     return (
       <div className="min-h-dvh flex flex-col items-center justify-center gap-4 bg-gray-50 px-4 text-center">
@@ -249,19 +336,21 @@ export default function SubscriptionPayment() {
 
   return (
     <div className="min-h-dvh bg-gray-50 pb-12 antialiased">
-      {/* Toast */}
       <Toast toast={toast} />
 
-      {/* Header */}
+      {/* ── Header ── */}
       <header className="sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
         <div className="mx-auto max-w-lg px-4 py-4 flex items-center gap-3">
           <button
-            onClick={() => step === STEP.METHOD ? navigate("/subscription") : setStep((s) => s - 1)}
+            onClick={() =>
+              step === STEP.METHOD ? navigate("/subscription") : setStep((s) => s - 1)
+            }
             className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 active:scale-95 transition-all"
             aria-label="Back"
           >
             <ChevronLeftIcon className="h-4 w-4" />
           </button>
+
           <div className="flex-1 min-w-0">
             <h1 className="text-base font-extrabold text-gray-900 leading-tight">
               {step === STEP.METHOD  && "Payment Method"}
@@ -274,7 +363,7 @@ export default function SubscriptionPayment() {
             </p>
           </div>
 
-          {/* Step dots */}
+          {/* Step indicator */}
           <div className="flex items-center gap-1.5">
             {[STEP.METHOD, STEP.DETAILS, STEP.CONFIRM].map((s) => (
               <div
@@ -290,29 +379,30 @@ export default function SubscriptionPayment() {
 
       <div className="mx-auto max-w-lg px-4 pt-6 space-y-5">
 
-        {/* ── Order summary card ── */}
-        <OrderSummaryCard plan={plan} billing={billing} price={price} total={total} orderId={orderId} />
+        {/* Order summary always visible */}
+        <OrderSummaryCard
+          plan={plan}
+          billing={billing}
+          price={price}
+          total={total}
+          orderId={orderId}
+        />
 
-        {/* ══════════════════════════════════════════
-            STEP 0 — Choose Method
-            ══════════════════════════════════════════ */}
+        {/* ══ STEP 0 — Choose Method ══ */}
         {step === STEP.METHOD && (
           <div className="space-y-3">
             <p className="text-xs font-bold uppercase tracking-widest text-gray-400 px-1">
               Select payment method
             </p>
+
             {PAYMENT_METHODS.map((m) => (
               <button
                 key={m.id}
                 onClick={() => handleMethodSelect(m)}
-                className={[
-                  "w-full flex items-center gap-4 rounded-3xl border-2 bg-white p-5",
-                  "text-left hover:shadow-lg active:scale-[0.99] transition-all duration-200",
-                  `hover:${m.border}`,
-                ].join(" ")}
+                className="w-full flex items-center gap-4 rounded-3xl border-2 border-gray-200 bg-white p-5 text-left hover:shadow-lg hover:border-gray-300 active:scale-[0.99] transition-all duration-200"
               >
                 <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${m.bg}`}>
-                  <m.Icon className={`h-6 w-6 ${m.color}`} />
+                  <MethodIcon iconId={m.iconId} className={`h-6 w-6 ${m.color}`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-extrabold text-gray-900">{m.label}</p>
@@ -322,29 +412,25 @@ export default function SubscriptionPayment() {
               </button>
             ))}
 
-            {/* Security note */}
-            <div className="flex items-start gap-3 rounded-2xl bg-blue-50 border border-blue-100 p-4 mt-2">
+            <div className="flex items-start gap-3 rounded-2xl bg-blue-50 border border-blue-100 p-4">
               <ShieldIcon className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-bold text-blue-900">Admin-verified payments</p>
                 <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
-                  Our team reviews every payment manually and activates your plan within 24 hours of confirmation.
+                  Our team reviews every payment manually and activates your plan within 24 hours.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* ══════════════════════════════════════════
-            STEP 1 — Payment Details
-            ══════════════════════════════════════════ */}
+        {/* ══ STEP 1 — Payment Details ══ */}
         {step === STEP.DETAILS && method && (
           <div className="space-y-4">
-
-            {/* Method header */}
+            {/* Method header chip */}
             <div className={`flex items-center gap-4 rounded-3xl border-2 ${method.border} ${method.bg} p-5`}>
-              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm`}>
-                <method.Icon className={`h-6 w-6 ${method.color}`} />
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm">
+                <MethodIcon iconId={method.iconId} className={`h-6 w-6 ${method.color}`} />
               </div>
               <div>
                 <p className="font-extrabold text-gray-900">{method.label}</p>
@@ -355,7 +441,7 @@ export default function SubscriptionPayment() {
             {/* ── CRYPTO ── */}
             {method.id === "crypto" && (
               <div className="space-y-4">
-                {/* Coin selector */}
+                {/* Coin picker */}
                 <div className="grid grid-cols-2 gap-3">
                   {CRYPTO_OPTIONS.map((opt) => (
                     <button
@@ -369,7 +455,7 @@ export default function SubscriptionPayment() {
                       ].join(" ")}
                     >
                       <div className={`h-10 w-10 rounded-full ${opt.bg} flex items-center justify-center`}>
-                        <opt.Icon className={`h-5 w-5 ${opt.color}`} />
+                        <CryptoOptionIcon iconId={opt.iconId} className={`h-5 w-5 ${opt.color}`} />
                       </div>
                       <p className="font-extrabold text-sm text-gray-900">{opt.symbol}</p>
                       <p className="text-[11px] text-gray-400 text-center leading-tight">{opt.network}</p>
@@ -379,7 +465,6 @@ export default function SubscriptionPayment() {
 
                 {cryptoOption && (
                   <div className="space-y-3">
-                    {/* QR + address */}
                     <div className="rounded-3xl border border-gray-200 bg-white p-5 space-y-4">
                       <div className="flex items-center justify-between">
                         <p className="font-bold text-gray-900 text-sm">Send {cryptoOption.symbol}</p>
@@ -388,7 +473,7 @@ export default function SubscriptionPayment() {
                         </span>
                       </div>
 
-                      {/* QR code placeholder */}
+                      {/* QR placeholder */}
                       <div className="flex justify-center">
                         <div className="h-40 w-40 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center bg-gray-50 gap-2">
                           <QrIcon className="h-10 w-10 text-gray-300" />
@@ -396,7 +481,7 @@ export default function SubscriptionPayment() {
                         </div>
                       </div>
 
-                      {/* Address field */}
+                      {/* Address */}
                       <div className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
                         <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">
                           {cryptoOption.symbol} Address
@@ -413,14 +498,12 @@ export default function SubscriptionPayment() {
                         </button>
                       </div>
 
-                      {/* Confirmations note */}
                       <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-100 px-3.5 py-3">
                         <ClockIcon className="h-4 w-4 text-amber-500 shrink-0" />
                         <p className="text-xs text-amber-700 font-medium">{cryptoOption.confirmations}</p>
                       </div>
                     </div>
 
-                    {/* Important */}
                     <ImportantBox orderId={orderId} total={total} currency={cryptoOption.symbol} />
                   </div>
                 )}
@@ -430,7 +513,7 @@ export default function SubscriptionPayment() {
             {/* ── NON-CRYPTO ── */}
             {method.id !== "crypto" && (
               <div className="space-y-4">
-                {/* Instructions */}
+                {/* How to pay */}
                 <div className="rounded-3xl bg-white border border-gray-100 shadow-sm overflow-hidden">
                   <div className="px-5 pt-5 pb-3 border-b border-gray-50 flex items-center gap-2">
                     <InfoIcon className="h-4 w-4 text-violet-500 shrink-0" />
@@ -476,12 +559,10 @@ export default function SubscriptionPayment() {
                   </div>
                 </div>
 
-                {/* Important */}
                 <ImportantBox orderId={orderId} total={total} currency="USD" />
               </div>
             )}
 
-            {/* CTA */}
             <button
               onClick={() => setStep(STEP.CONFIRM)}
               className={`w-full rounded-2xl py-4 text-base font-extrabold text-white shadow-lg active:scale-[0.98] transition-all ${method.accentBtn}`}
@@ -491,17 +572,14 @@ export default function SubscriptionPayment() {
           </div>
         )}
 
-        {/* ══════════════════════════════════════════
-            STEP 2 — Confirm / Submit Proof
-            ══════════════════════════════════════════ */}
+        {/* ══ STEP 2 — Confirm ══ */}
         {step === STEP.CONFIRM && method && (
           <div className="space-y-4">
-
-            {/* Recap */}
+            {/* Recap chip */}
             <div className={`rounded-3xl border-2 ${method.border} ${method.bg} p-5`}>
               <div className="flex items-center gap-3 mb-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white shadow-sm">
-                  <method.Icon className={`h-5 w-5 ${method.color}`} />
+                  <MethodIcon iconId={method.iconId} className={`h-5 w-5 ${method.color}`} />
                 </div>
                 <div>
                   <p className="font-extrabold text-gray-900">{method.label}</p>
@@ -511,9 +589,7 @@ export default function SubscriptionPayment() {
                 </div>
                 <div className="ml-auto text-right">
                   <p className="text-xs text-gray-400">Total sent</p>
-                  <p className="font-extrabold text-gray-900">
-                    ${total}
-                  </p>
+                  <p className="font-extrabold text-gray-900">${total}</p>
                 </div>
               </div>
               {orderId && (
@@ -540,9 +616,8 @@ export default function SubscriptionPayment() {
                   Our team will verify and activate your plan within 24 hours.
                 </p>
               </div>
-
               <div className="p-5 space-y-4">
-                {/* Transaction ref */}
+                {/* TX ref */}
                 <div>
                   <label className="block text-sm font-bold text-gray-800 mb-1.5">
                     Transaction / Reference ID
@@ -555,10 +630,10 @@ export default function SubscriptionPayment() {
                       value={txRef}
                       onChange={(e) => setTxRef(e.target.value)}
                       placeholder={
-                        method.id === "crypto"    ? "BTC / USDT transaction hash" :
-                        method.id === "momo"      ? "MoMo reference number" :
-                        method.id === "western_union" ? "MTCN number" :
-                        "Bank transfer reference"
+                        method.id === "crypto"        ? "BTC / USDT transaction hash" :
+                        method.id === "momo"          ? "MoMo reference number"       :
+                        method.id === "western_union" ? "MTCN number"                 :
+                                                        "Bank transfer reference"
                       }
                       className="w-full pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all"
                     />
@@ -603,7 +678,6 @@ export default function SubscriptionPayment() {
               </div>
             </div>
 
-            {/* Submit */}
             <button
               onClick={handleSubmit}
               disabled={submitting || !txRef.trim()}
@@ -611,30 +685,25 @@ export default function SubscriptionPayment() {
             >
               {submitting ? (
                 <span className="flex items-center justify-center gap-2">
-                  <SpinnerIcon className="h-5 w-5" />
-                  Submitting…
+                  <SpinnerIcon className="h-5 w-5" /> Submitting…
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
-                  <CheckIcon className="h-5 w-5" />
-                  Submit for Verification
+                  <CheckIcon className="h-5 w-5" /> Submit for Verification
                 </span>
               )}
             </button>
 
             <p className="text-center text-[11px] text-gray-400 leading-relaxed px-4">
-              Once submitted, our team verifies your payment and activates your plan.
-              This usually takes less than 24 hours.
+              Once submitted, our team verifies your payment and activates your plan within 24 hours.
             </p>
           </div>
         )}
 
-        {/* ══════════════════════════════════════════
-            STEP 3 — Done
-            ══════════════════════════════════════════ */}
+        {/* ══ STEP 3 — Done ══ */}
         {step === STEP.DONE && (
           <div className="flex flex-col items-center text-center py-8 space-y-6">
-            {/* Success animation ring */}
+            {/* Success ring */}
             <div className="relative flex items-center justify-center">
               <div className="absolute h-28 w-28 rounded-full bg-green-100 animate-ping opacity-30" />
               <div className="relative flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-500 shadow-xl shadow-green-200">
@@ -646,13 +715,13 @@ export default function SubscriptionPayment() {
               <h2 className="text-2xl font-extrabold text-gray-900">Payment Submitted!</h2>
               <p className="text-sm text-gray-500 mt-2 max-w-xs mx-auto leading-relaxed">
                 Our team will verify your{" "}
-                <span className="font-bold text-gray-700">{method?.label}</span> payment and
-                activate your <span className="font-bold text-gray-700">{plan?.name}</span> plan
-                within <span className="font-bold text-gray-700">24 hours</span>.
+                <span className="font-bold text-gray-700">{method?.label}</span> payment and activate your{" "}
+                <span className="font-bold text-gray-700">{plan?.name}</span> plan within{" "}
+                <span className="font-bold text-gray-700">24 hours</span>.
               </p>
             </div>
 
-            {/* Order details */}
+            {/* Summary */}
             <div className="w-full rounded-3xl bg-white border border-gray-100 shadow-sm p-5 space-y-3 text-left">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Submission summary</p>
               {[
@@ -665,7 +734,7 @@ export default function SubscriptionPayment() {
               ].map(({ label, value, highlight }) => (
                 <div key={label} className="flex items-center justify-between gap-3 py-1 border-b border-gray-50 last:border-0">
                   <p className="text-xs text-gray-400 font-medium">{label}</p>
-                  <p className={`text-xs font-bold text-right ${highlight ? "text-amber-600" : "text-gray-900"}`}>
+                  <p className={`text-xs font-bold text-right truncate max-w-[55%] ${highlight ? "text-amber-600" : "text-gray-900"}`}>
                     {value}
                   </p>
                 </div>
@@ -678,7 +747,8 @@ export default function SubscriptionPayment() {
               <div>
                 <p className="text-sm font-bold text-blue-900">Check your email</p>
                 <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
-                  We'll send a confirmation to <span className="font-bold">{user?.email}</span> once your plan is activated.
+                  We'll send confirmation to{" "}
+                  <span className="font-bold">{user?.email}</span> once your plan is activated.
                 </p>
               </div>
             </div>
@@ -716,9 +786,7 @@ function OrderSummaryCard({ plan, billing, price, total, orderId }) {
           <p className="text-3xl font-extrabold">${price?.toFixed(2)}</p>
           <p className="text-xs text-white/60">/month</p>
           {billing === "annual" && (
-            <p className="text-xs font-bold text-white/80 mt-1">
-              ${total} billed today
-            </p>
+            <p className="text-xs font-bold text-white/80 mt-1">${total} billed today</p>
           )}
         </div>
       </div>
@@ -746,7 +814,7 @@ function ImportantBox({ orderId, total, currency }) {
       <ul className="space-y-1.5 pl-1">
         {[
           `Send the exact amount: $${total} ${currency}`,
-          `Include Order ID in payment note: ${orderId}`,
+          `Include Order ID in your payment note: ${orderId}`,
           "Double-check the address before sending.",
           "Keep your receipt — you'll need it to confirm.",
         ].map((line, i) => (
@@ -785,7 +853,7 @@ function Toast({ toast }) {
 }
 
 /* ================================================================
-   SVG ICONS  — all inline, no external deps
+   SVG ICONS
    ================================================================ */
 
 function ChevronLeftIcon({ className = "h-5 w-5" }) {
@@ -795,7 +863,6 @@ function ChevronLeftIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function ChevronRightIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
@@ -803,7 +870,6 @@ function ChevronRightIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function CheckIcon({ className = "h-5 w-5", strokeWidth = 2.5 }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
@@ -811,7 +877,6 @@ function CheckIcon({ className = "h-5 w-5", strokeWidth = 2.5 }) {
     </svg>
   );
 }
-
 function CopyIcon({ className = "h-4 w-4" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -820,7 +885,6 @@ function CopyIcon({ className = "h-4 w-4" }) {
     </svg>
   );
 }
-
 function AlertIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -829,7 +893,6 @@ function AlertIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function ShieldIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -838,7 +901,6 @@ function ShieldIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function InfoIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -847,7 +909,6 @@ function InfoIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function QrIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -857,7 +918,6 @@ function QrIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function ClockIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -865,7 +925,6 @@ function ClockIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function HashIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -874,7 +933,6 @@ function HashIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function LinkIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -883,7 +941,6 @@ function LinkIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function MailIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -892,7 +949,6 @@ function MailIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function SpinnerIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
@@ -901,7 +957,6 @@ function SpinnerIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function PhoneIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -910,7 +965,6 @@ function PhoneIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function BankIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -919,7 +973,6 @@ function BankIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function CryptoIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -928,7 +981,6 @@ function CryptoIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function BitcoinIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -938,7 +990,6 @@ function BitcoinIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function TetherIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -947,11 +998,36 @@ function TetherIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function WesternUnionIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 7l5 10 4-7 4 7 5-10" />
+    </svg>
+  );
+}
+function BoltIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  );
+}
+function TrophyIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9H4a2 2 0 01-2-2V5h4" />
+      <path d="M18 9h2a2 2 0 002-2V5h-4" />
+      <path d="M12 17v4M8 21h8" />
+      <path d="M6 5h12v7a6 6 0 01-12 0V5z" />
+    </svg>
+  );
+}
+function SparklesIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+      <path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75L5 17z" />
+      <path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75L19 3z" />
     </svg>
   );
 }

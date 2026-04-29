@@ -156,11 +156,15 @@ export default function SubscriptionPlans() {
   const annualSaving = (plan) =>
     Math.round((plan.priceMonthly - plan.priceAnnual) * 12);
 
-  const handleContinue = () => {
-    navigate("/subscription/payment", {
-      state: { plan: chosen, billing },
-    });
-  };
+ const handleContinue = () => {
+  // Only pass plain serializable data — NO Icon components or functions
+  navigate("/subscription/payment", {
+    state: {
+      planId:   chosen?.id,
+      billing,
+    },
+  });
+};
 
   return (
     <div className="min-h-dvh bg-gray-50 pb-48 antialiased">
