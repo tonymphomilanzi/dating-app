@@ -55,6 +55,8 @@ import Feeds from "./pages/Feeds.jsx";
 // Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
 
+import FeedPost from "./pages/FeedPost.jsx";
+
 /* ================================================================
    MAIN APP
    ================================================================ */
@@ -123,6 +125,7 @@ const MainApp = () => {
                 <Route path="/massage-clinics/new"    element={<CreateMassageClinic />} />
                 <Route path="/massage-clinics/:id"    element={<MassageClinicDetail />} />
                 <Route path="/feeds"           element={<Feeds />} />
+                <Route path="/feeds/:id" element={<FeedPost />} />
 
                 {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
                 <Route path="/subscription"           element={<SubscriptionPlans />} />
