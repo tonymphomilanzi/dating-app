@@ -9,6 +9,7 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import FeedShareSheet from "../components/FeedShareSheet";
 
 /* ================================================================
    CONSTANTS
@@ -483,6 +484,7 @@ export default function Feeds() {
   } = useFeeds(user?.id);
 
   const [activeCommentFeed, setActiveCommentFeed] = useState(null);
+  const [activeShareFeed,   setActiveShareFeed]   = useState(null); // ← ADD
   const [toast,             setToast]             = useState(null);
 
   const showToast = useCallback((message, type = "success") => {
@@ -491,29 +493,20 @@ export default function Feeds() {
   }, []);
 
   /* ── share ── */
-  const handleShare = useCallback(async (feed) => {
-    const url  = `${window.location.origin}/feeds/${feed.id}`;
-    const text = `${feed.title}\n\n${url}`;
+  const handleShare = useCallback((feed) => {
+  setActiveShareFeed(feed);
+}, []);
 
-    if (user?.id) {
-      supabase
-        .from("feed_shares")
-        .insert({ feed_id: feed.id, user_id: user.id })
-        .then(({ error }) => { if (error) console.warn("share insert:", error.message); });
-    }
 
-    if (navigator.share) {
-      try { await navigator.share({ title: feed.title, text: feed.content, url }); }
-      catch { /* cancelled */ }
-    } else {
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast("Link copied to clipboard!");
-      } catch {
-        showToast("Could not copy link", "error");
-      }
-    }
-  }, [user?.id, showToast]);
+const handleShareLog = useCallback((feed) => {
+  if (!user?.id || !feed) return;
+  supabase
+    .from("feed_shares")
+    .insert({ feed_id: feed.id, user_id: user.id })
+    .then(({ error }) => { if (error) console.warn("share log:", error.message); });
+}, [user?.id]);
+
+
 
   /* ── infinite scroll ── */
   const loaderRef = useRef(null);
@@ -608,6 +601,16 @@ export default function Feeds() {
         onClose={() => setActiveCommentFeed(null)}
         onRequireAuth={() => navigate("/auth")}
       />
+
+      {/* ── Share Sheet ── */}
+{activeShareFeed && (
+  <FeedShareSheet
+    feed={activeShareFeed}
+    userId={user?.id}
+    onClose={() => setActiveShareFeed(null)}
+    onShare={() => handleShareLog(activeShareFeed)}
+  />
+)}
     </div>
   );
 }
