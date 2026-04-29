@@ -44,16 +44,20 @@ function fmtCount(n) {
    ================================================================ */
 
 /** Fetch paginated feeds + my likes */
+/* ================================================================
+   HOOKS — replace the existing useFeeds and useComments
+   ================================================================ */
+
 function useFeeds(userId) {
-  const [feeds,     setFeeds]     = useState([]);
-  const [myLikes,   setMyLikes]   = useState(new Set());
-  const [loading,   setLoading]   = useState(true);
+  const [feeds,       setFeeds]       = useState([]);
+  const [myLikes,     setMyLikes]     = useState(new Set());
+  const [loading,     setLoading]     = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore,   setHasMore]   = useState(true);
-  const [error,     setError]     = useState("");
-  const offsetRef   = useRef(0);
-  const mountedRef  = useRef(true);
-  const channelRef  = useRef(null);
+  const [hasMore,     setHasMore]     = useState(true);
+  const [error,       setError]       = useState("");
+  const offsetRef  = useRef(0);
+  const mountedRef = useRef(true);
+  const channelRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -90,7 +94,6 @@ function useFeeds(userId) {
       setHasMore(rows.length === PAGE_SIZE);
       offsetRef.current = from + rows.length;
 
-      // load my likes for visible feeds
       if (userId && rows.length > 0) {
         const ids = rows.map((r) => r.id);
         const { data: liked } = await supabase
@@ -113,10 +116,9 @@ function useFeeds(userId) {
     }
   }, [userId]);
 
-  // Initial load
   useEffect(() => { load(true); }, [load]);
 
-  // Realtime — new feed posted or counts updated
+  // Realtime — feeds table updates (counts come back via trigger → UPDATE event)
   useEffect(() => {
     channelRef.current = supabase
       .channel("feeds-realtime")
@@ -125,13 +127,17 @@ function useFeeds(userId) {
         (payload) => {
           if (!mountedRef.current) return;
           if (payload.eventType === "INSERT") {
-            // Prepend if published
             if (payload.new.published) {
               setFeeds((prev) => [payload.new, ...prev]);
             }
           } else if (payload.eventType === "UPDATE") {
+            // This fires when triggers update likes_count / comments_count
             setFeeds((prev) =>
-              prev.map((f) => f.id === payload.new.id ? { ...f, ...payload.new } : f)
+              prev.map((f) =>
+                f.id === payload.new.id
+                  ? { ...f, ...payload.new }
+                  : f
+              )
             );
           } else if (payload.eventType === "DELETE") {
             setFeeds((prev) => prev.filter((f) => f.id !== payload.old.id));
@@ -147,7 +153,7 @@ function useFeeds(userId) {
     if (!userId) return;
     const liked = myLikes.has(feedId);
 
-    // Optimistic
+    // Optimistic update
     setMyLikes((prev) => {
       const next = new Set(prev);
       liked ? next.delete(feedId) : next.add(feedId);
@@ -156,20 +162,29 @@ function useFeeds(userId) {
     setFeeds((prev) =>
       prev.map((f) =>
         f.id === feedId
-          ? { ...f, likes_count: f.likes_count + (liked ? -1 : 1) }
+          ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (liked ? -1 : 1)) }
           : f
       )
     );
 
     try {
       if (liked) {
-        await supabase.from("feed_likes").delete()
-          .eq("feed_id", feedId).eq("user_id", userId);
+        const { error } = await supabase
+          .from("feed_likes")
+          .delete()
+          .eq("feed_id", feedId)
+          .eq("user_id", userId);
+        if (error) throw error;
       } else {
-        await supabase.from("feed_likes").insert({ feed_id: feedId, user_id: userId });
+        const { error } = await supabase
+          .from("feed_likes")
+          .insert({ feed_id: feedId, user_id: userId });
+        // Handle duplicate (already liked)
+        if (error && error.code !== "23505") throw error;
       }
-    } catch {
-      // Revert on error
+    } catch (err) {
+      console.error("Like error:", err.message);
+      // Revert optimistic update
       setMyLikes((prev) => {
         const next = new Set(prev);
         liked ? next.add(feedId) : next.delete(feedId);
@@ -178,14 +193,283 @@ function useFeeds(userId) {
       setFeeds((prev) =>
         prev.map((f) =>
           f.id === feedId
-            ? { ...f, likes_count: f.likes_count + (liked ? 1 : -1) }
+            ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (liked ? 1 : -1)) }
             : f
         )
       );
     }
   }, [userId, myLikes]);
 
-  return { feeds, myLikes, loading, loadingMore, hasMore, error, load, toggleLike };
+  return {
+    feeds, myLikes, loading, loadingMore,
+    hasMore, error, load, toggleLike,
+  };
+}
+
+/** Fetch + realtime comments for one feed */
+function useComments(feedId, open) {
+  const [comments,   setComments]   = useState([]);
+  const [loading,    setLoading]    = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");  // ← NEW
+  const [myLikes,    setMyLikes]    = useState(new Set());
+  const mountedRef = useRef(true);
+  const channelRef = useRef(null);
+  const { user }   = useAuth();
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Reset when feed changes
+  useEffect(() => {
+    if (!feedId) {
+      setComments([]);
+      setSubmitError("");
+    }
+  }, [feedId]);
+
+  const fetchComments = useCallback(async () => {
+    if (!feedId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("feed_comments")
+        .select(`
+          id, feed_id, parent_id, body, likes_count, created_at,
+          user:profiles(id, display_name, avatar_url)
+        `)
+        .eq("feed_id", feedId)
+        .order("created_at", { ascending: true })
+        .limit(COMMENT_PAGE);
+
+      if (error) throw error;
+      if (!mountedRef.current) return;
+      setComments(data ?? []);
+
+      if (user?.id && data?.length) {
+        const ids = data.map((c) => c.id);
+        const { data: liked } = await supabase
+          .from("feed_comment_likes")
+          .select("comment_id")
+          .eq("user_id", user.id)
+          .in("comment_id", ids);
+        if (mountedRef.current && liked) {
+          setMyLikes(new Set(liked.map((l) => l.comment_id)));
+        }
+      }
+    } catch (err) {
+      console.error("Fetch comments error:", err.message);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [feedId, user?.id]);
+
+  useEffect(() => {
+    if (!open || !feedId) return;
+    fetchComments();
+
+    channelRef.current = supabase
+      .channel(`comments-${feedId}-${Date.now()}`) // unique channel name
+      .on("postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
+        },
+        async (payload) => {
+          if (!mountedRef.current) return;
+          // Fetch full row with joined profile
+          const { data } = await supabase
+            .from("feed_comments")
+            .select(`
+              id, feed_id, parent_id, body, likes_count, created_at,
+              user:profiles(id, display_name, avatar_url)
+            `)
+            .eq("id", payload.new.id)
+            .single();
+          if (data && mountedRef.current) {
+            setComments((prev) =>
+              prev.some((c) => c.id === data.id) ? prev : [...prev, data]
+            );
+          }
+        }
+      )
+      .on("postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
+        },
+        (payload) => {
+          if (!mountedRef.current) return;
+          setComments((prev) =>
+            prev.map((c) =>
+              c.id === payload.new.id ? { ...c, ...payload.new } : c
+            )
+          );
+        }
+      )
+      .on("postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
+        },
+        (payload) => {
+          if (!mountedRef.current) return;
+          setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
+        }
+      )
+      .subscribe((status) => {
+        console.log("Comments channel status:", status);
+      });
+
+    return () => { supabase.removeChannel(channelRef.current); };
+  }, [open, feedId, fetchComments]);
+
+  const submitComment = useCallback(async (body, parentId = null) => {
+    if (!user?.id || !feedId || !body.trim()) return false;
+    setSubmitting(true);
+    setSubmitError("");
+
+    // Optimistic: add a temp comment immediately
+    const tempId = `temp-${Date.now()}`;
+    const tempComment = {
+      id:         tempId,
+      feed_id:    feedId,
+      parent_id:  parentId,
+      body:       body.trim(),
+      likes_count: 0,
+      created_at: new Date().toISOString(),
+      user: {
+        id:           user.id,
+        display_name: user.user_metadata?.display_name || user.email?.split("@")[0] || "You",
+        avatar_url:   user.user_metadata?.avatar_url || null,
+      },
+    };
+    setComments((prev) => [...prev, tempComment]);
+
+    try {
+      const { data, error } = await supabase
+        .from("feed_comments")
+        .insert({
+          feed_id:   feedId,
+          user_id:   user.id,
+          parent_id: parentId,
+          body:      body.trim(),
+        })
+        .select(`
+          id, feed_id, parent_id, body, likes_count, created_at,
+          user:profiles(id, display_name, avatar_url)
+        `)
+        .single();
+
+      if (error) throw error;
+
+      if (mountedRef.current && data) {
+        // Replace temp comment with real one
+        setComments((prev) =>
+          prev.map((c) => c.id === tempId ? data : c)
+        );
+      }
+      return true;
+    } catch (err) {
+      console.error("Comment submit error:", err);
+      // Remove temp comment on failure
+      if (mountedRef.current) {
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+        setSubmitError(err.message || "Failed to post comment");
+      }
+      return false;
+    } finally {
+      if (mountedRef.current) setSubmitting(false);
+    }
+  }, [user, feedId]);
+
+  const toggleCommentLike = useCallback(async (commentId) => {
+    if (!user?.id) return;
+    const liked = myLikes.has(commentId);
+
+    // Optimistic
+    setMyLikes((prev) => {
+      const next = new Set(prev);
+      liked ? next.delete(commentId) : next.add(commentId);
+      return next;
+    });
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === commentId
+          ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (liked ? -1 : 1)) }
+          : c
+      )
+    );
+
+    try {
+      if (liked) {
+        const { error } = await supabase
+          .from("feed_comment_likes")
+          .delete()
+          .eq("comment_id", commentId)
+          .eq("user_id", user.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("feed_comment_likes")
+          .insert({ comment_id: commentId, user_id: user.id });
+        if (error && error.code !== "23505") throw error;
+      }
+    } catch (err) {
+      console.error("Comment like error:", err.message);
+      // Revert
+      setMyLikes((prev) => {
+        const next = new Set(prev);
+        liked ? next.add(commentId) : next.delete(commentId);
+        return next;
+      });
+      setComments((prev) =>
+        prev.map((c) =>
+          c.id === commentId
+            ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (liked ? 1 : -1)) }
+            : c
+        )
+      );
+    }
+  }, [user?.id, myLikes]);
+
+  const deleteComment = useCallback(async (commentId) => {
+    if (!user?.id) return;
+    // Optimistic remove
+    setComments((prev) => prev.filter((c) => c.id !== commentId));
+    const { error } = await supabase
+      .from("feed_comments")
+      .delete()
+      .eq("id", commentId)
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Delete comment error:", error.message);
+      // Re-fetch to restore
+      fetchComments();
+    }
+  }, [user?.id, fetchComments]);
+
+  const threaded = useMemo(() => {
+    const top     = comments.filter((c) => !c.parent_id);
+    const replies = comments.filter((c) =>  c.parent_id);
+    return top.map((c) => ({
+      ...c,
+      replies: replies.filter((r) => r.parent_id === c.id),
+    }));
+  }, [comments]);
+
+  return {
+    threaded, loading, submitting, submitError,
+    myLikes, submitComment, toggleCommentLike, deleteComment,
+  };
 }
 
 /** Fetch + realtime comments for one feed */
@@ -649,16 +933,15 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare }) {
 
 function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
   const {
-    threaded, loading, submitting,
+    threaded, loading, submitting, submitError,  // ← add submitError
     myLikes, submitComment, toggleCommentLike, deleteComment,
   } = useComments(feed?.id, !!feed);
 
-  const [body,        setBody]        = useState("");
-  const [replyTo,     setReplyTo]     = useState(null); // { id, name }
-  const inputRef      = useRef(null);
-  const listRef       = useRef(null);
+  const [body,    setBody]    = useState("");
+  const [replyTo, setReplyTo] = useState(null);
+  const inputRef  = useRef(null);
+  const listRef   = useRef(null);
 
-  // Focus input when opening
   useEffect(() => {
     if (feed) {
       setBody(""); setReplyTo(null);
@@ -670,32 +953,30 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
     e.preventDefault();
     if (!userId) { onRequireAuth(); return; }
     if (!body.trim()) return;
-    await submitComment(body, replyTo?.id ?? null);
-    setBody("");
-    setReplyTo(null);
-    // Scroll to bottom
-    setTimeout(() => {
-      listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-    }, 200);
+
+    const ok = await submitComment(body, replyTo?.id ?? null);
+    if (ok) {
+      setBody("");
+      setReplyTo(null);
+      setTimeout(() => {
+        listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+      }, 200);
+    }
   };
 
   if (!feed) return null;
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
         onClick={onClose}
       />
-
-      {/* Sheet */}
       <div className="fixed inset-x-0 bottom-0 z-50 md:inset-y-0 md:right-0 md:left-auto md:w-[420px] flex flex-col bg-white rounded-t-3xl md:rounded-none md:rounded-l-3xl shadow-2xl animate-in slide-in-from-bottom duration-300 md:slide-in-from-right">
 
-        {/* Handle / header */}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-3">
-            {/* Mobile drag handle */}
             <div className="md:hidden w-10 h-1 rounded-full bg-gray-300 mx-auto absolute left-1/2 -translate-x-1/2 top-2.5" />
             <CommentIcon className="h-5 w-5 text-violet-600" />
             <div>
@@ -753,9 +1034,18 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
         </div>
 
         {/* Input area */}
-        <div className="shrink-0 border-t border-gray-100 px-4 pt-3 pb-safe"
+        <div
+          className="shrink-0 border-t border-gray-100 px-4 pt-3 pb-safe"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
         >
+          {/* Submit error */}
+          {submitError && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-100 px-3 py-2 mb-2">
+              <AlertIcon className="h-4 w-4 text-red-500 shrink-0" />
+              <p className="text-xs text-red-600 font-medium">{submitError}</p>
+            </div>
+          )}
+
           {replyTo && (
             <div className="flex items-center justify-between rounded-xl bg-violet-50 border border-violet-100 px-3 py-2 mb-2">
               <p className="text-xs text-violet-700 font-medium">
@@ -769,6 +1059,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               </button>
             </div>
           )}
+
           <form onSubmit={handleSubmit} className="flex items-end gap-2">
             <div className="flex-1 relative">
               <textarea
@@ -776,7 +1067,10 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
                 value={body}
                 onChange={(e) => setBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
                 }}
                 placeholder={userId ? "Write a comment…" : "Sign in to comment"}
                 disabled={!userId || submitting}
@@ -795,7 +1089,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
             >
               {submitting
                 ? <SpinnerIcon className="h-4 w-4" />
-                : <SendIcon className="h-4 w-4" />
+                : <SendIcon    className="h-4 w-4" />
               }
             </button>
           </form>

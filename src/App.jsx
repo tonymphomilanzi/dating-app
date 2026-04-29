@@ -100,7 +100,7 @@ const MainApp = () => {
                 <Route element={<TabsLayout />}>
                   <Route path="/discover"        element={<Discover />} />
                   <Route path="/matches"         element={<Matches />} />
-                  <Route path="/feeds"           element={<Feeds />} />
+               
                   <Route path="/messages"        element={<Messages />} />
                   <Route path="/events"          element={<Events />} />
                   <Route path="/massage-clinics" element={<MassageClinic />} />
@@ -122,6 +122,7 @@ const MainApp = () => {
                 <Route path="/calendar"               element={<Calendar />} />
                 <Route path="/massage-clinics/new"    element={<CreateMassageClinic />} />
                 <Route path="/massage-clinics/:id"    element={<MassageClinicDetail />} />
+                <Route path="/feeds"           element={<Feeds />} />
 
                 {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
                 <Route path="/subscription"           element={<SubscriptionPlans />} />
