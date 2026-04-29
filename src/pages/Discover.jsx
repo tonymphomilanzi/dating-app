@@ -1,9 +1,7 @@
 // src/pages/Discover.jsx
 import {
-  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   memo,
 } from "react";
@@ -14,7 +12,6 @@ import { discoverService }  from "../services/discover.service.js";
 import { storiesService }   from "../services/stories.service.js";
 import { updateProfileLocation } from "../utils/location.js";
 import { DiscoverCache }    from "../lib/discoverCache.js";
-import { useRevalidate }    from "../hooks/useRevalidate.js";
 import { useGeolocation }   from "../hooks/useGeolocation.js";
 import { useNotifications } from "../hooks/useNotifications";
 
@@ -28,8 +25,8 @@ const TABS = [
   { key: "for_you", label: "For You" },
 ];
 
-const LOC_SAVE_INTERVAL_MS  = 300_000; // 5 min
-const STALE_ON_RETURN_MS    = 30_000;  // treat data as stale if hidden > 30s
+const LOC_SAVE_INTERVAL_MS = 300_000; // 5 min
+const STALE_HIDDEN_MS      = 30_000;  // re-fetch if tab hidden longer than this
 
 /* ================================================================
    MAIN PAGE
@@ -38,14 +35,20 @@ const STALE_ON_RETURN_MS    = 30_000;  // treat data as stale if hidden > 30s
 export default function Discover() {
   const navigate        = useNavigate();
   const { profile }     = useAuth();
-  const userId          = profile?.id ?? "me";
   const { unreadCount } = useNotifications();
+
+  // ── Extract primitives from profile ──────────────────────────────
+  // Same technique as Feed.jsx — primitives in dep arrays, never objects
+  const userId     = profile?.id        ?? "me";
+  const profileLat = profile?.lat       ?? null;
+  const profileLng = profile?.lng       ?? null;
+  const avatarUrl  = profile?.avatar_url ?? null;
 
   // ── Tab state ────────────────────────────────────────────────────
   const [mode,       setMode]       = useState("for_you");
   const [activeMode, setActiveMode] = useState("for_you");
 
-  // ── Per-tab data maps ────────────────────────────────────────────
+  // ── Per-tab data ─────────────────────────────────────────────────
   const [profilesMap, setProfilesMap] = useState({});
   const [loadingMap,  setLoadingMap]  = useState({});
   const [errorMap,    setErrorMap]    = useState({});
@@ -54,17 +57,9 @@ export default function Discover() {
   const [stories,        setStories]       = useState({ users: [], mine: false });
   const [storiesLoading, setStoriesLoading] = useState(true);
 
-  // ── Refs ─────────────────────────────────────────────────────────
-  const reqId            = useRef({});   // per-mode request counter
-  const abortCtrls       = useRef({});   // per-mode AbortController
-  const lastSave         = useRef(0);    // last location-save timestamp
-  const initializedModes = useRef(new Set());
-  const myLocRef         = useRef(null); // always-fresh location for fetch
-  const hiddenAtRef      = useRef(null); // when tab was hidden
-  const modeRef          = useRef(mode); // stable mode ref for event handlers
-
-  // Keep modeRef current
-  useEffect(() => { modeRef.current = mode; }, [mode]);
+  // ── Location save throttle ───────────────────────────────────────
+  // One plain number — no ref needed
+  const [lastLocSave, setLastLocSave] = useState(0);
 
   // ── Derived ──────────────────────────────────────────────────────
   const profiles = profilesMap[mode] ?? [];
@@ -72,17 +67,19 @@ export default function Discover() {
   const error    = errorMap[mode]    ?? "";
 
   /* ──────────────────────────────────────────────────────────────
-     LOCATION
+     GEOLOCATION
+     Keep it simple: extract lat/lng primitives just like Feed
+     extracts params.q / params.tag
   ────────────────────────────────────────────────────────────── */
 
-  const onLocChange = useCallback(async ({ lat, lng }) => {
+  const onLocChange = async ({ lat, lng }) => {
     if (!lat || !lng) return;
-    if (Date.now() - lastSave.current < LOC_SAVE_INTERVAL_MS) return;
+    if (Date.now() - lastLocSave < LOC_SAVE_INTERVAL_MS) return;
     try {
       await updateProfileLocation(lat, lng);
-      lastSave.current = Date.now();
+      setLastLocSave(Date.now());
     } catch { /* silent */ }
-  }, []);
+  };
 
   const {
     location: geo,
@@ -94,204 +91,176 @@ export default function Discover() {
     onLocationChange: onLocChange,
   });
 
-  const myLoc = useMemo(() => {
-    if (geo?.lat && geo?.lng)
-      return { lat: geo.lat, lng: geo.lng, accuracy: geo.accuracy, isRealtime: true };
-    if (profile?.lat && profile?.lng)
-      return { lat: +profile.lat, lng: +profile.lng, isRealtime: false };
-    return null;
-  }, [geo?.lat, geo?.lng, geo?.accuracy, profile?.lat, profile?.lng]);
+  // ── Extract lat/lng primitives ───────────────────────────────────
+  // Realtime GPS wins; fall back to profile coords saved in DB
+  const geoLat = geo?.lat ?? null;
+  const geoLng = geo?.lng ?? null;
+  const geoAcc = geo?.accuracy ?? null;
 
-  // Keep ref in sync for use inside loadProfiles (avoids stale closure)
-  useEffect(() => { myLocRef.current = myLoc; }, [myLoc]);
+  const lat = geoLat ?? (profileLat ? +profileLat : null);
+  const lng = geoLng ?? (profileLng ? +profileLng : null);
+  const isRealtime = !!(geoLat && geoLng);
+
+  // myLoc object for child components — memoised so reference only
+  // changes when the primitive values actually change
+  const myLoc = useMemo(() => {
+    if (!lat || !lng) return null;
+    return { lat, lng, accuracy: geoAcc, isRealtime };
+  }, [lat, lng, geoAcc, isRealtime]);
 
   /* ──────────────────────────────────────────────────────────────
-     CORE FETCH
+     CORE FETCH — plain async function, no useCallback
+     Closes over current lat/lng/userId/mode on every render.
+     This is EXACTLY the same approach as Feed.load().
   ────────────────────────────────────────────────────────────── */
 
-  const loadProfiles = useCallback(
-    async (targetMode, silent = false) => {
-      // Increment request counter for this mode
-      if (!reqId.current[targetMode]) reqId.current[targetMode] = 0;
-      const id = ++reqId.current[targetMode];
-
-      // Cancel previous in-flight request for this mode
-      abortCtrls.current[targetMode]?.abort();
-      const ctrl = new AbortController();
-      abortCtrls.current[targetMode] = ctrl;
-
+  async function loadProfiles(targetMode, silent = false) {
+    if (!silent) {
+      setLoadingMap((p) => ({ ...p, [targetMode]: true }));
+      setErrorMap  ((p) => ({ ...p, [targetMode]: ""  }));
+    }
+    try {
+      const data = await discoverService.list(targetMode, 20, { lat, lng });
+      const list = Array.isArray(data) ? data : [];
+      setProfilesMap((p) => ({ ...p, [targetMode]: list }));
+      setActiveMode(targetMode);
+      DiscoverCache.save(userId, targetMode, list);
+    } catch (err) {
+      if (err?.name === "AbortError") return;
       if (!silent) {
-        setLoadingMap((p) => ({ ...p, [targetMode]: true }));
-        setErrorMap  ((p) => ({ ...p, [targetMode]: ""   }));
-      }
-
-      try {
-        const loc  = myLocRef.current;
-        const data = await discoverService.list(targetMode, 20, {
-          lat:    loc?.lat,
-          lng:    loc?.lng,
-          signal: ctrl.signal, // use local ctrl, not the ref (ref may be replaced)
-        });
-
-        // Ignore if a newer request exists or this one was aborted
-        if (id !== reqId.current[targetMode] || ctrl.signal.aborted) return;
-
-        const list = Array.isArray(data) ? data : [];
-        setProfilesMap((p) => ({ ...p, [targetMode]: list }));
-        setActiveMode(targetMode);
-        DiscoverCache.save(userId, targetMode, list);
-      } catch (err) {
-        if (id !== reqId.current[targetMode]) return;
-        if (err?.name === "AbortError" || ctrl.signal.aborted) return;
         setErrorMap((p) => ({
           ...p,
           [targetMode]: err?.message || "Failed to load profiles",
         }));
-      } finally {
-        // Only clear loading for this exact request
-        if (id === reqId.current[targetMode] && !silent) {
-          setLoadingMap((p) => ({ ...p, [targetMode]: false }));
-        }
       }
-    },
-    [userId], // userId is the only true external dependency
-  );
+    } finally {
+      if (!silent) {
+        setLoadingMap((p) => ({ ...p, [targetMode]: false }));
+      }
+    }
+  }
 
   /* ──────────────────────────────────────────────────────────────
-     MODE INITIALISATION
+     STORIES — plain async, same pattern
   ────────────────────────────────────────────────────────────── */
 
-  const initMode = useCallback(
-    (targetMode, { force = false } = {}) => {
-      if (!force && initializedModes.current.has(targetMode)) return;
-      initializedModes.current.add(targetMode);
-
-      const cached = DiscoverCache.load(userId, targetMode);
-
-      if (cached.items?.length) {
-        setProfilesMap((p) => ({ ...p, [targetMode]: cached.items }));
-        setLoadingMap ((p) => ({ ...p, [targetMode]: false }));
-        setActiveMode(targetMode);
-
-        // Fetch fresh data silently if cache is stale
-        if (DiscoverCache.isStale(cached.ts)) {
-          loadProfiles(targetMode, true);
-        }
-      } else {
-        loadProfiles(targetMode);
-      }
-    },
-    [userId, loadProfiles],
-  );
-
-  // Stable ref so event handlers can call initMode without
-  // being re-registered every time initMode changes
-  const initModeRef = useRef(initMode);
-  useEffect(() => { initModeRef.current = initMode; }, [initMode]);
+  async function loadStories() {
+    setStoriesLoading(true);
+    try {
+      const [users, mine] = await Promise.all([
+        storiesService.listActiveUsers(30),
+        storiesService.hasMyActive(),
+      ]);
+      setStories({ users: users ?? [], mine });
+    } catch {
+      setStories({ users: [], mine: false });
+    } finally {
+      setStoriesLoading(false);
+    }
+  }
 
   /* ──────────────────────────────────────────────────────────────
      EFFECTS
+     Dep arrays contain only primitives — Object.is works correctly.
+     This is the key lesson from Feed.jsx.
   ────────────────────────────────────────────────────────────── */
 
-  // Abort all requests + reset on unmount
+  // 1. Load profiles whenever mode, user, or location primitives change.
+  //    Cache check lives here — same place Feed checks authReady.
   useEffect(() => {
-    return () => {
-      initializedModes.current = new Set();
-      Object.values(abortCtrls.current).forEach((ac) => ac?.abort());
-      abortCtrls.current = {};
-    };
-  }, []);
+    const cached = DiscoverCache.load(userId, mode);
 
-  // Initialise whichever tab the user switches to
-  useEffect(() => { initMode(mode); }, [mode, initMode]);
+    if (cached.items?.length) {
+      // Serve cache immediately so the user sees something at once
+      setProfilesMap((p) => ({ ...p, [mode]: cached.items }));
+      setLoadingMap ((p) => ({ ...p, [mode]: false }));
+      setActiveMode(mode);
 
-  // Full reset when the logged-in user changes
+      // If stale, refresh silently in the background
+      if (DiscoverCache.isStale(cached.ts)) {
+        loadProfiles(mode, true);
+      }
+    } else {
+      loadProfiles(mode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, userId, lat, lng]);
+  // ↑ All primitives. loadProfiles intentionally omitted —
+  //   it's render-scoped and always reads the latest values.
+
+  // 2. Reset all tab data when the logged-in user switches
   useEffect(() => {
-    initializedModes.current = new Set();
     setProfilesMap({});
     setLoadingMap ({});
     setErrorMap   ({});
   }, [userId]);
 
-  // ── Visibility recovery ──────────────────────────────────────────
-  // When user returns after inactivity / tab switch, re-fetch if stale.
+  // 3. Stories — load once on mount
   useEffect(() => {
-    const handleVisibility = () => {
+    loadStories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 4. Visibility recovery — re-fetch if tab was hidden long enough
+  //    No refs needed: closure captures current primitives at the time
+  //    the tab becomes visible (a new render will have fired by then
+  //    if anything changed, so values are always fresh)
+  useEffect(() => {
+    let hiddenAt = null;
+
+    const handle = () => {
       if (document.visibilityState === "hidden") {
-        hiddenAtRef.current = Date.now();
+        hiddenAt = Date.now();
         return;
       }
-
       // Became visible
-      const hiddenMs = hiddenAtRef.current
-        ? Date.now() - hiddenAtRef.current
-        : 0;
-      hiddenAtRef.current = null;
+      const hiddenMs = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = null;
+      if (hiddenMs < STALE_HIDDEN_MS) return;
 
-      if (hiddenMs < STALE_ON_RETURN_MS) return; // hidden briefly — skip
-
-      const currentMode = modeRef.current;
-      const cached      = DiscoverCache.load(userId, currentMode);
-
-      // Force re-init (remove from set so initMode doesn't skip it)
-      initializedModes.current.delete(currentMode);
-
+      // Re-check cache; if stale, do a real fetch
+      const cached = DiscoverCache.load(userId, mode);
       if (cached.items?.length && !DiscoverCache.isStale(cached.ts)) {
-        // Cache still fresh — just re-populate state without a network call
-        setProfilesMap((p) => ({ ...p, [currentMode]: cached.items }));
-        setLoadingMap ((p) => ({ ...p, [currentMode]: false }));
-        setActiveMode(currentMode);
-        initializedModes.current.add(currentMode);
+        setProfilesMap((p) => ({ ...p, [mode]: cached.items }));
+        setLoadingMap ((p) => ({ ...p, [mode]: false }));
+        setActiveMode(mode);
       } else {
-        // Need a real fetch
-        initModeRef.current(currentMode, { force: true });
+        loadProfiles(mode);
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () =>
-      document.removeEventListener("visibilitychange", handleVisibility);
-  }, [userId]); // userId only — everything else via refs
+    document.addEventListener("visibilitychange", handle);
+    return () => document.removeEventListener("visibilitychange", handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, userId, lat, lng]);
+  // ↑ Re-register the listener whenever these primitives change so the
+  //   handler always closes over their latest values. Because they're
+  //   primitives the comparison is exact — no false re-registrations.
 
-  // ── Stories ──────────────────────────────────────────────────────
+  // 5. Periodic background refresh — plain setInterval, no hook needed
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      setStoriesLoading(true);
-      try {
-        const [users, mine] = await Promise.all([
-          storiesService.listActiveUsers(30),
-          storiesService.hasMyActive(),
-        ]);
-        if (!cancelled) setStories({ users: users ?? [], mine });
-      } catch {
-        if (!cancelled) setStories({ users: [], mine: false });
-      } finally {
-        if (!cancelled) setStoriesLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, []);
-
-  // ── Background revalidation (60 s polling) ───────────────────────
-  const silentRefetch = useCallback(
-    () => loadProfiles(mode, true),
-    [mode, loadProfiles],
-  );
-  useRevalidate({ refetch: silentRefetch, intervalMs: 60_000 });
+    const id = setInterval(() => {
+      loadProfiles(mode, true); // silent — user sees no spinner
+    }, 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, userId, lat, lng]);
+  // ↑ Same dep list as the main fetch — interval restarts whenever
+  //   something meaningful changes, which is correct behaviour.
 
   /* ──────────────────────────────────────────────────────────────
-     HANDLERS
+     HANDLERS — inline or plain functions, no useCallback needed
+     (these are not expensive; memo on child components handles
+     unnecessary re-renders if that becomes an issue)
   ────────────────────────────────────────────────────────────── */
 
-  const handleTabChange = useCallback((key) => setMode(key), []);
+  function handleTabChange(key) {
+    setMode(key);
+  }
 
-  const handleRetry = useCallback(() => {
-    initializedModes.current.delete(mode);
-    initMode(mode);
-  }, [mode, initMode]);
+  function handleRetry() {
+    loadProfiles(mode);
+  }
 
   /* ──────────────────────────────────────────────────────────────
      RENDER
@@ -301,10 +270,8 @@ export default function Discover() {
     <div className="flex min-h-screen flex-col bg-white text-gray-900">
 
       <header className="px-4 pt-4 safe-top">
-        {/* ── Top bar ─────────────────────────────────────────── */}
         <div className="mb-4 flex items-center justify-between">
 
-          {/* Left — actions */}
           <div className="flex items-center gap-2">
             <IconButton
               icon="messages"
@@ -324,7 +291,6 @@ export default function Discover() {
             />
           </div>
 
-          {/* Centre */}
           <div className="text-center">
             <span className="text-xs font-bold uppercase tracking-widest text-gray-400">
               Discover
@@ -332,10 +298,9 @@ export default function Discover() {
             <LocationStatus geo={myLoc} status={geoStatus} />
           </div>
 
-          {/* Right — avatar */}
           <Link to="/profile" className="relative group">
             <img
-              src={profile?.avatar_url || "/me.jpg"}
+              src={avatarUrl || "/me.jpg"}
               alt="My profile"
               className="h-10 w-10 rounded-full object-cover ring-2 ring-violet-600
                          ring-offset-2 transition-transform group-active:scale-90"
@@ -343,7 +308,6 @@ export default function Discover() {
           </Link>
         </div>
 
-        {/* ── Stories ─────────────────────────────────────────── */}
         <StoriesRow
           data={stories}
           loading={storiesLoading}
@@ -355,7 +319,6 @@ export default function Discover() {
           Find Your <span className="text-violet-600">Matches</span>
         </h1>
 
-        {/* ── Tab bar ─────────────────────────────────────────── */}
         <div className="mt-3 flex gap-1 rounded-full bg-gray-100 p-1 w-fit">
           {TABS.map((t) => (
             <button
@@ -373,7 +336,6 @@ export default function Discover() {
         </div>
       </header>
 
-      {/* ── Main content ─────────────────────────────────────────── */}
       <main className="flex-1 px-4 py-6">
         {loading && !profiles.length ? (
           <ProfileSkeleton />
@@ -502,7 +464,6 @@ const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
 
   return (
     <div className="no-scrollbar flex gap-4 overflow-x-auto py-3">
-      {/* My Story */}
       <button
         onClick={onMine}
         className="flex flex-col items-center gap-2 shrink-0"
@@ -538,7 +499,6 @@ const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
         </span>
       </button>
 
-      {/* Other users */}
       {data.users.map((story) => (
         <StoryThumbnail
           key={story.user_id}
@@ -556,8 +516,8 @@ const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
 
 const StoryThumbnail = memo(function StoryThumbnail({ story, onClick }) {
   const [mediaError, setMediaError] = useState(false);
-  const isVideo   = story.media_type === "video";
-  const thumbSrc  = mediaError ? (story.avatar ?? "/me.jpg") : story.media_url;
+  const isVideo  = story.media_type === "video";
+  const thumbSrc = mediaError ? (story.avatar ?? "/me.jpg") : story.media_url;
 
   return (
     <button
