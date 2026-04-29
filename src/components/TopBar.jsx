@@ -5,7 +5,7 @@ export default function TopBar({ title, right }) {
   return (
     <header className="sticky top-0 z-10 flex items-center justify-between bg-white/90 px-4 py-3 backdrop-blur">
       <button
-        onClick={() => nav(-1)}
+        onClick={() => nav("/discover")}
         className="rounded-full p-2 hover:bg-gray-100"
         aria-label="Back"
       >
