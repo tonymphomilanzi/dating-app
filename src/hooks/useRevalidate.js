@@ -1,34 +1,65 @@
-import { useEffect, useRef } from "react";
+// src/hooks/useRevalidate.js
+import { useEffect, useRef, useCallback } from "react";
 
-export function useRevalidate({
-  refetch,                // async () => void
-  intervalMs = 0,         // 0 = off
-  onFocus = true,
-  onVisibility = true,
-  onOnline = true,
-} = {}) {
-  const refetchRef = useRef(refetch);
-  refetchRef.current = refetch;
+const DEFAULT_INTERVAL_MS = 60_000;
+const STALE_THRESHOLD_MS  = 30_000; // refetch if tab was hidden > 30s
 
+export function useRevalidate({ refetch, intervalMs = DEFAULT_INTERVAL_MS }) {
+  const refetchRef    = useRef(refetch);
+  const lastFetchRef  = useRef(Date.now());
+  const hiddenAtRef   = useRef(null);
+
+  // Always call the latest refetch without re-registering effects
   useEffect(() => {
-    const doRefetch = () => refetchRef.current?.();
+    refetchRef.current = refetch;
+  }, [refetch]);
 
-    const onVis = () => {
-      if (document.visibilityState === "visible") doRefetch();
+  const safeRefetch = useCallback(() => {
+    lastFetchRef.current = Date.now();
+    refetchRef.current?.();
+  }, []);
+
+  // ── Polling interval ────────────────────────────────────────────
+  useEffect(() => {
+    const id = setInterval(safeRefetch, intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs, safeRefetch]);
+
+  // ── Visibility change (tab switch / phone lock) ─────────────────
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+
+      // Tab became visible again
+      const hiddenDuration = hiddenAtRef.current
+        ? Date.now() - hiddenAtRef.current
+        : 0;
+
+      hiddenAtRef.current = null;
+
+      if (hiddenDuration > STALE_THRESHOLD_MS) {
+        safeRefetch();
+      }
     };
 
-    if (onFocus) window.addEventListener("focus", doRefetch);
-    if (onVisibility) document.addEventListener("visibilitychange", onVis);
-    if (onOnline) window.addEventListener("online", doRefetch);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [safeRefetch]);
 
-    let id = null;
-    if (intervalMs > 0) id = setInterval(doRefetch, intervalMs);
-
-    return () => {
-      if (onFocus) window.removeEventListener("focus", doRefetch);
-      if (onVisibility) document.removeEventListener("visibilitychange", onVis);
-      if (onOnline) window.removeEventListener("online", doRefetch);
-      if (id) clearInterval(id);
+  // ── Window focus (alt-tab, clicking back into browser) ──────────
+  useEffect(() => {
+    const handleFocus = () => {
+      const staleness = Date.now() - lastFetchRef.current;
+      if (staleness > STALE_THRESHOLD_MS) {
+        safeRefetch();
+      }
     };
-  }, [intervalMs, onFocus, onVisibility, onOnline]);
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [safeRefetch]);
 }
