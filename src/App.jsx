@@ -49,10 +49,14 @@ import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
 import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext.jsx";
 import SubscriptionPlans from "./pages/SubscriptionPlans.jsx";
+
 // Import Admin App
 import AdminApp from "./admin/AdminApp.jsx";
 
-// Main App Component (wrapped in providers)
+/* ================================================================
+   MAIN APP
+   ================================================================ */
+
 const MainApp = () => {
   return (
     <AuthFlowProvider>
@@ -62,64 +66,80 @@ const MainApp = () => {
         <Routes>
           <Route element={<RootLayout />}>
 
-            {/* ── Public — no auth needed ──────────────────────────────────── */}
+            {/* ── Public ── */}
             <Route path="/auth/callback" element={<AuthCallback />} />
 
-            {/* ── Guest only (redirect to /discover if already signed in) ──── */}
+            {/* ── Guest only ── */}
             <Route element={<GuestOnly />}>
-              <Route path="/"                   element={<Onboarding />} />
-              <Route path="/auth"               element={<AuthChoice />} />
-              <Route path="/auth/email"         element={<SignInEmail />} />
-              <Route path="/auth/signin/email"  element={<SignInEmail />} />
-              <Route path="/auth/email-verify"  element={<EmailVerify />} />
-              <Route path="/auth/verify"        element={<EmailVerify />} />
-              <Route path="/auth/signup"        element={<SignUp />} />
+              <Route path="/"                     element={<Onboarding />} />
+              <Route path="/auth"                 element={<AuthChoice />} />
+              <Route path="/auth/email"           element={<SignInEmail />} />
+              <Route path="/auth/signin/email"    element={<SignInEmail />} />
+              <Route path="/auth/email-verify"    element={<EmailVerify />} />
+              <Route path="/auth/verify"          element={<EmailVerify />} />
+              <Route path="/auth/signup"          element={<SignUp />} />
               <Route path="/auth/forgot-password" element={<ForgotPassword />} />
             </Route>
 
-            {/* ── Requires a valid session ─────────────────────────────────── */}
+            {/* ── Requires auth ── */}
             <Route element={<RequireAuth />}>
 
-              {/* Setup wizard — shown before profile is complete */}
+              {/* Setup wizard */}
               <Route path="/setup/basics"    element={<SetupBasics />} />
               <Route path="/setup/dob"       element={<SetupDOB />} />
               <Route path="/setup/gender"    element={<SetupGender />} />
               <Route path="/setup/interests" element={<SetupInterests />} />
               <Route path="/setup/photo"     element={<SetupPhoto />} />
 
-              {/* ── Requires completed profile (SetupGate) ──────────────── */}
+              {/* ── Requires completed profile ── */}
               <Route element={<SetupGate />}>
 
-                {/* Bottom-tab pages */}
+                {/* Tab pages */}
                 <Route element={<TabsLayout />}>
-                  <Route path="/discover"  element={<Discover />} />
-                  <Route path="/matches"   element={<Matches />} />
-                  <Route path="/messages"  element={<Messages />} />
-                  <Route path="/events"    element={<Events />} />
+                  <Route path="/discover"        element={<Discover />} />
+                  <Route path="/matches"         element={<Matches />} />
+                  <Route path="/messages"        element={<Messages />} />
+                  <Route path="/events"          element={<Events />} />
                   <Route path="/massage-clinics" element={<MassageClinic />} />
                 </Route>
 
-                {/* Full-screen protected pages (no tab bar) */}
-                <Route path="/streams"              element={<Streams />} />
-                <Route path="/notifications"        element={<Notifications />} />
-                <Route path="/profile"              element={<ProfileYou />} />
-                <Route path="/profile/:id"          element={<ProfileView />} />
-                <Route path="/profile/:id/gallery"  element={<ProfileGallery />} />
-                <Route path="/filters"              element={<Filters />} />
-                <Route path="/chat/:id"             element={<Chat />} />
-                <Route path="/match"                element={<MatchSuccess />} />
-                <Route path="/stories/new"          element={<StoryComposer />} />
-                <Route path="/stories/:userId"      element={<StoryPage />} />
-                <Route path="/events/new"           element={<CreateEvent />} />
-                <Route path="/events/:id"           element={<EventDetail />} />
-                <Route path="/calendar"             element={<Calendar />} />
-                <Route path="/massage-clinics/new"  element={<CreateMassageClinic />} />
-                <Route path="/massage-clinics/:id"  element={<MassageClinicDetail />} />
-                <Route path="/subscription-plans"    element={<SubscriptionPlans />} />
+                {/* Full-screen pages */}
+                <Route path="/streams"                element={<Streams />} />
+                <Route path="/notifications"          element={<Notifications />} />
+                <Route path="/profile"                element={<ProfileYou />} />
+                <Route path="/profile/:id"            element={<ProfileView />} />
+                <Route path="/profile/:id/gallery"    element={<ProfileGallery />} />
+                <Route path="/filters"                element={<Filters />} />
+                <Route path="/chat/:id"               element={<Chat />} />
+                <Route path="/match"                  element={<MatchSuccess />} />
+                <Route path="/stories/new"            element={<StoryComposer />} />
+                <Route path="/stories/:userId"        element={<StoryPage />} />
+                <Route path="/events/new"             element={<CreateEvent />} />
+                <Route path="/events/:id"             element={<EventDetail />} />
+                <Route path="/calendar"               element={<Calendar />} />
+                <Route path="/massage-clinics/new"    element={<CreateMassageClinic />} />
+                <Route path="/massage-clinics/:id"    element={<MassageClinicDetail />} />
+
+                {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
+                <Route path="/subscription"           element={<SubscriptionPlans />} />
+
+                {/* Payment page (next step — swap placeholder when ready) */}
+                <Route
+                  path="/subscription/payment"
+                  element={
+                    <div className="min-h-dvh flex items-center justify-center bg-gray-50 p-8 text-center">
+                      <div className="space-y-2">
+                        <p className="text-2xl font-bold text-gray-900">Payment coming soon</p>
+                        <p className="text-sm text-gray-500">We'll wire this up next.</p>
+                      </div>
+                    </div>
+                  }
+                />
+
               </Route>
             </Route>
 
-            {/* ── Catch-all ────────────────────────────────────────────────── */}
+            {/* ── Catch-all ── */}
             <Route path="*" element={<Navigate to="/" replace />} />
 
           </Route>
@@ -129,18 +149,12 @@ const MainApp = () => {
   );
 };
 
-// Root App Component (handles routing between admin and main app)
+/* ================================================================
+   ROOT APP  — splits admin vs main
+   ================================================================ */
+
 export default function App() {
   const location = useLocation();
-  
-  // Check if we're on an admin route
-  const isAdminRoute = location.pathname.startsWith('/admin');
-  
-  // Render admin app without any main app providers
-  if (isAdminRoute) {
-    return <AdminApp />;
-  }
-  
-  // Render main app with all its providers
-  return <MainApp />;
+  const isAdminRoute = location.pathname.startsWith("/admin");
+  return isAdminRoute ? <AdminApp /> : <MainApp />;
 }
