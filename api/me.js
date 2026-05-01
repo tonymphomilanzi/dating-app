@@ -1,4 +1,3 @@
-// api/me.js
 import { createClient } from "@supabase/supabase-js";
 import { requireUser } from "./lib/_supabase.js";
 
@@ -38,25 +37,16 @@ function getBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
-/* ================================================================
-   BOT DETECTION
-   WhatsApp, Telegram, iMessage, Twitter, Facebook, Slack, Discord…
-   ================================================================ */
-const BOT_AGENTS = [
-  "whatsapp", "telegrambot", "twitterbot", "facebookexternalhit",
-  "linkedinbot", "slackbot", "discordbot", "applebot", "googlebot",
-  "bingbot", "redditbot", "skypeuripreview", "iframely", "embedly",
-  "outbrain", "pinterest", "vkshare", "w3c_validator",
-  "curl", "python-requests", "axios", "node-fetch", "wget",
-];
-
-function isBot(req) {
-  const ua = (req.headers["user-agent"] || "").toLowerCase();
-  return BOT_AGENTS.some((b) => ua.includes(b));
+function ensureAbsoluteUrl(maybeRelative, baseUrl) {
+  if (!maybeRelative) return "";
+  const s = String(maybeRelative).trim();
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  const path = s.startsWith("/") ? s : `/${s}`;
+  return `${baseUrl}${path}`;
 }
 
 /* ================================================================
-   SERVICE ROLE CLIENT  (bypasses RLS — server only, never exposed)
+   SERVICE ROLE CLIENT
    ================================================================ */
 function getServiceClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -68,9 +58,10 @@ function getServiceClient() {
 }
 
 /* ================================================================
-   OG HTML DOCUMENT
-   Served to bots — contains all meta tags WhatsApp/Telegram read.
-   Humans are redirected immediately via <meta refresh> + JS.
+   OG HTML BUILDER
+   Always returned for share URLs.
+   Bots read the meta tags.
+   Humans are redirected instantly via <meta refresh> + JS.
    ================================================================ */
 function buildOgHtml({
   title,
@@ -78,11 +69,11 @@ function buildOgHtml({
   image,
   canonicalUrl,
   redirectUrl,
-  siteName = "YourApp",   // ← change to your app name
+  siteName = "YourApp",
 }) {
-  const t          = escapeHtml(title);
-  const d          = escapeHtml(description);
-  const hasImage   = Boolean(image);
+  const t           = escapeHtml(title       || "");
+  const d           = escapeHtml(description || "");
+  const hasImage    = Boolean(image);
   const twitterCard = hasImage ? "summary_large_image" : "summary";
 
   return `<!doctype html>
@@ -99,62 +90,66 @@ function buildOgHtml({
 <meta property="og:title"       content="${t}"/>
 <meta property="og:description" content="${d}"/>
 <meta property="og:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `
-<meta property="og:image"            content="${escapeHtml(image)}"/>
+${hasImage ? `<meta property="og:image"            content="${escapeHtml(image)}"/>
 <meta property="og:image:secure_url" content="${escapeHtml(image)}"/>
-<meta property="og:image:type"       content="image/jpeg"/>
 <meta property="og:image:width"      content="1200"/>
 <meta property="og:image:height"     content="630"/>
 <meta property="og:image:alt"        content="${t}"/>` : ""}
 
-<!-- ═══ Twitter Card — X / iMessage ═══ -->
+<!-- ═══ Twitter / X Card ═══ -->
 <meta name="twitter:card"        content="${twitterCard}"/>
 <meta name="twitter:title"       content="${t}"/>
 <meta name="twitter:description" content="${d}"/>
 <meta name="twitter:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `
-<meta name="twitter:image"       content="${escapeHtml(image)}"/>
-<meta name="twitter:image:alt"   content="${t}"/>` : ""}
+${hasImage ? `<meta name="twitter:image"     content="${escapeHtml(image)}"/>
+<meta name="twitter:image:alt" content="${t}"/>` : ""}
 
 <link rel="canonical" href="${escapeHtml(canonicalUrl)}"/>
 
-<!-- Redirect humans — bots ignore these -->
+<!-- Human redirect — bots ignore both -->
 <meta http-equiv="refresh" content="0; url=${escapeHtml(redirectUrl)}"/>
-<script>window.location.replace(${JSON.stringify(redirectUrl)});</script>
+<script>(function(){try{window.location.replace(${JSON.stringify(redirectUrl)});}catch(e){}}());</script>
 
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    font-family:system-ui,-apple-system,sans-serif;
-    background:#09090b;color:#fafafa;
-    min-height:100vh;display:flex;
-    align-items:center;justify-content:center;padding:24px;
-  }
-  .card{
-    background:#18181b;border:1px solid #3f3f46;border-radius:16px;
-    overflow:hidden;max-width:540px;width:100%;
-    box-shadow:0 25px 60px -15px rgba(0,0,0,.7);
-  }
-  .cover{width:100%;aspect-ratio:1200/630;object-fit:cover;display:block}
-  .body{padding:20px 24px 24px}
-  .site{font-size:.65rem;color:#71717a;text-transform:uppercase;
-    letter-spacing:.1em;margin-bottom:10px}
-  h1{font-size:1.1rem;font-weight:700;line-height:1.4;margin-bottom:8px}
-  .desc{font-size:.85rem;color:#a1a1aa;line-height:1.6;margin-bottom:18px}
-  a{display:inline-block;font-size:.8rem;color:#8b5cf6;
-    border:1px solid #8b5cf640;border-radius:8px;padding:6px 14px;
-    text-decoration:none}
-  a:hover{background:#8b5cf620}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#09090b;color:#fafafa;
+  min-height:100vh;display:flex;
+  align-items:center;justify-content:center;padding:24px;
+}
+.card{
+  background:#18181b;border:1px solid #3f3f46;
+  border-radius:16px;overflow:hidden;
+  max-width:540px;width:100%;
+  box-shadow:0 25px 60px -15px rgba(0,0,0,.7);
+}
+.cover{width:100%;aspect-ratio:1200/630;object-fit:cover;display:block}
+.body{padding:20px 24px 24px}
+.site{
+  font-size:.65rem;color:#71717a;
+  text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px;
+}
+h1{font-size:1.1rem;font-weight:700;line-height:1.4;margin-bottom:8px}
+.desc{font-size:.85rem;color:#a1a1aa;line-height:1.6;margin-bottom:18px}
+.btn{
+  display:inline-block;font-size:.8rem;color:#8b5cf6;
+  border:1px solid #8b5cf640;border-radius:8px;
+  padding:6px 14px;text-decoration:none;
+}
+.btn:hover{background:#8b5cf620}
 </style>
 </head>
 <body>
   <div class="card">
-    ${hasImage ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>` : ""}
+    ${hasImage
+      ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>`
+      : ""}
     <div class="body">
       <div class="site">${escapeHtml(siteName)}</div>
       <h1>${t}</h1>
       <p class="desc">${d}</p>
-      <a href="${escapeHtml(redirectUrl)}">View post →</a>
+      <a class="btn" href="${escapeHtml(redirectUrl)}">View post →</a>
     </div>
   </div>
 </body>
@@ -165,31 +160,26 @@ ${hasImage ? `
    SHARE HANDLER
    GET /api/me?share=feed&id=<uuid>
 
-   • Bot  → fetch post from Supabase, return OG HTML (200)
-   • Human→ instant 302 redirect to SPA route (no DB call)
+   Always returns OG HTML — no bot-sniffing needed.
+   • Bots  → parse <meta> tags, render rich preview
+   • Humans→ JS + meta-refresh redirects them to the SPA instantly
    ================================================================ */
 async function handleShare(req, res) {
   const type    = String(q1(req.query?.share) || "").toLowerCase();
   const id      = String(q1(req.query?.id)    || "").trim();
   const baseUrl = getBaseUrl(req);
+  const siteName = "YourApp"; // ← change to your app name
 
-  /* Only feed posts for now — extend with more types later */
+  /* Unknown type or missing id → redirect to feed list */
   if (type !== "feed" || !id) {
-    res.setHeader("Location", "/feeds");
+    res.setHeader("Location", `${baseUrl}/feeds`);
     res.setHeader("Cache-Control", "no-store");
     return res.status(302).end();
   }
 
-  const spaUrl = `${baseUrl}/feeds/${encodeURIComponent(id)}`;
+  const spaUrl       = `${baseUrl}/feeds/${encodeURIComponent(id)}`;
+  const canonicalUrl = `${baseUrl}/api/me?share=feed&id=${encodeURIComponent(id)}`;
 
-  /* ── Human visitor: skip DB, redirect immediately ── */
-  if (!isBot(req)) {
-    res.setHeader("Location", spaUrl);
-    res.setHeader("Cache-Control", "no-store");
-    return res.status(302).end();
-  }
-
-  /* ── Bot: fetch post and return OG HTML ── */
   try {
     const supabase = getServiceClient();
 
@@ -203,9 +193,7 @@ async function handleShare(req, res) {
       .eq("published", true)
       .maybeSingle();
 
-    const canonicalUrl =
-      `${baseUrl}/api/me?share=feed&id=${encodeURIComponent(id)}`;
-
+    /* Post not found */
     if (error || !post) {
       const html = buildOgHtml({
         title:        "Post not found",
@@ -213,41 +201,58 @@ async function handleShare(req, res) {
         image:        "",
         canonicalUrl,
         redirectUrl:  `${baseUrl}/feeds`,
+        siteName,
       });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("Cache-Control", "no-store");
       return res.status(200).send(html);
     }
 
-    /* Build description: content excerpt + tags */
-    const adminName  = post.admin?.display_name || post.admin?.username || "Admin";
-    const tags       = Array.isArray(post.tags) && post.tags.length
+    /* Build OG fields */
+    const adminName   = post.admin?.display_name
+                     || post.admin?.username
+                     || "Admin";
+
+    const tags        = Array.isArray(post.tags) && post.tags.length
       ? "  " + post.tags.slice(0, 3).map((t) => `#${t}`).join(" ")
       : "";
+
     const description = truncate(
-      post.content || `Posted by ${adminName}`, 180
+      post.content || `Posted by ${adminName}`,
+      180
     ) + tags;
 
+    /* Ensure image URL is absolute */
+    const image = ensureAbsoluteUrl(post.image_url, baseUrl);
+
     const html = buildOgHtml({
-      title:        post.title,
+      title:        post.title || "Feed Post",
       description,
-      image:        post.image_url || "",  // must be absolute HTTPS URL
+      image,
       canonicalUrl,
       redirectUrl:  spaUrl,
+      siteName,
     });
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    /* Cache 2 min; bots re-scrape after edits via stale-while-revalidate */
     res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
-    /* Vary so CDN caches bot/human responses separately */
-    res.setHeader("Vary", "User-Agent");
     return res.status(200).send(html);
 
   } catch (err) {
     console.error("[share] error:", err.message);
-    res.setHeader("Location", spaUrl);
+
+    /* On unexpected error still return valid OG HTML, never crash */
+    const html = buildOgHtml({
+      title:        siteName,
+      description:  "Check out this post.",
+      image:        "",
+      canonicalUrl,
+      redirectUrl:  spaUrl,
+      siteName,
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
-    return res.status(302).end();
+    return res.status(200).send(html);
   }
 }
 
@@ -302,16 +307,12 @@ async function handlePatchProfile(req, res) {
    ================================================================ */
 export default async function handler(req, res) {
   try {
-    /* ── PUBLIC: OG share endpoint ──
-       GET /api/me?share=feed&id=<uuid>
-       Bots get full OG HTML → WhatsApp/Telegram renders image + title.
-       Humans get 302 → SPA loads normally.
-    ── */
+    /* PUBLIC: OG share — no auth needed */
     if (req.method === "GET" && q1(req.query?.share)) {
       return await handleShare(req, res);
     }
 
-    /* ── Authenticated profile routes ── */
+    /* Authenticated profile routes */
     if (req.method === "GET")   return await handleGetProfile(req, res);
     if (req.method === "PATCH") return await handlePatchProfile(req, res);
 

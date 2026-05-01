@@ -60,7 +60,6 @@ function useFeeds(userId) {
     return () => { mountedRef.current = false; };
   }, []);
 
-  /* ── fetch page ── */
   const load = useCallback(async (replace = false) => {
     if (replace) { offsetRef.current = 0; setLoading(true); }
     else setLoadingMore(true);
@@ -91,7 +90,6 @@ function useFeeds(userId) {
       setHasMore(rows.length === PAGE_SIZE);
       offsetRef.current = from + rows.length;
 
-      /* load which of these I've liked */
       if (userId && rows.length > 0) {
         const ids = rows.map((r) => r.id);
         const { data: liked } = await supabase
@@ -116,7 +114,7 @@ function useFeeds(userId) {
 
   useEffect(() => { load(true); }, [load]);
 
-  /* ── realtime ── */
+  /* Realtime */
   useEffect(() => {
     rtRef.current = supabase
       .channel("feeds-rt-" + Date.now())
@@ -147,7 +145,6 @@ function useFeeds(userId) {
     return () => { supabase.removeChannel(rtRef.current); };
   }, []);
 
-  /* ── toggle like ── */
   const toggleLike = useCallback(async (feedId) => {
     if (!userId) return;
     const isLiked = myLikes.has(feedId);
@@ -181,6 +178,7 @@ function useFeeds(userId) {
       }
     } catch (e) {
       console.error("toggleLike:", e.message);
+      /* Revert optimistic update */
       setMyLikes((prev) => {
         const next = new Set(prev);
         isLiked ? next.add(feedId) : next.delete(feedId);
@@ -196,7 +194,6 @@ function useFeeds(userId) {
     }
   }, [userId, myLikes]);
 
-  /* ── record a view ── */
   const recordView = useCallback(async (feedId) => {
     try {
       await supabase.rpc("increment_feed_view", { p_feed_id: feedId });
@@ -323,9 +320,7 @@ function useComments(feedId, open) {
           setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
         }
       )
-      .subscribe((status) => {
-        console.log(`[comments-rt] ${status}`);
-      });
+      .subscribe();
 
     return () => { supabase.removeChannel(rtRef.current); };
   }, [open, feedId, fetchComments]);
@@ -483,24 +478,30 @@ export default function Feeds() {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  /* ── share ── */
   const handleShare = useCallback((feed) => {
     setActiveShareFeed(feed);
   }, []);
 
-  const handleShareLog = useCallback((feed) => {
+  const handleShareLog = useCallback(async (feed) => {
     if (!user?.id || !feed) return;
-    supabase
-      .from("feed_shares")
-      .insert({ feed_id: feed.id, user_id: user.id })
-      .then(({ error }) => { if (error) console.warn("share log:", error.message); });
+    try {
+      await supabase
+        .from("feed_shares")
+        .insert({ feed_id: feed.id, user_id: user.id });
+      /* Optimistically bump share count in UI */
+      /* (realtime will sync it properly) */
+    } catch (e) {
+      console.warn("share log:", e.message);
+    }
   }, [user?.id]);
 
-  /* ── infinite scroll ── */
+  /* Infinite scroll */
   const loaderRef = useRef(null);
   useEffect(() => {
     const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting && hasMore && !loadingMore) load(); },
+      ([entry]) => {
+        if (entry.isIntersecting && hasMore && !loadingMore) load();
+      },
       { threshold: 0.1 }
     );
     if (loaderRef.current) obs.observe(loaderRef.current);
@@ -511,11 +512,9 @@ export default function Feeds() {
     <div className="min-h-dvh bg-gray-50 pb-28 antialiased">
       <Toast toast={toast} />
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
         <div className="mx-auto max-w-2xl px-4 py-4 flex items-center gap-3">
-
-          {/* ── Back Button ── */}
           <button
             onClick={() => navigate("/discover")}
             aria-label="Go back to Discover"
@@ -524,13 +523,11 @@ export default function Feeds() {
             <ChevronLeftIcon className="h-5 w-5" />
           </button>
 
-          {/* ── Title ── */}
           <div className="flex-1 min-w-0">
             <h1 className="text-xl font-extrabold text-gray-900">Feed</h1>
             <p className="text-xs text-gray-400 mt-0.5">Latest from the team</p>
           </div>
 
-          {/* ── Live badge ── */}
           <span className="flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-3 py-1.5 shrink-0">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
@@ -541,9 +538,8 @@ export default function Feeds() {
         </div>
       </div>
 
-      {/* ── Feed list ── */}
+      {/* Feed list */}
       <div className="mx-auto max-w-2xl px-4 pt-6 space-y-5">
-
         {loading && feeds.length === 0 && <FeedSkeleton />}
 
         {error && (
@@ -595,7 +591,7 @@ export default function Feeds() {
         )}
       </div>
 
-      {/* ── Comment sheet ── */}
+      {/* Comment sheet */}
       <CommentSheet
         feed={activeCommentFeed}
         userId={user?.id}
@@ -603,7 +599,7 @@ export default function Feeds() {
         onRequireAuth={() => navigate("/auth")}
       />
 
-      {/* ── Share sheet ── */}
+      {/* Share sheet */}
       {activeShareFeed && (
         <FeedShareSheet
           feed={activeShareFeed}
@@ -623,7 +619,6 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
   const [imgError, setImgError] = useState(false);
   const viewedRef = useRef(false);
 
-  /* record view once card enters viewport */
   useEffect(() => {
     if (viewedRef.current) return;
     const el = document.getElementById(`feed-${feed.id}`);
@@ -642,10 +637,10 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
     return () => obs.disconnect();
   }, [feed.id, onView]);
 
-  const admin      = feed.admin;
-  const adminName  = admin?.display_name || admin?.username || "Admin";
-  const isLong     = (feed.content || "").length > 280;
-  const displayed  = isLong && !expanded
+  const admin     = feed.admin;
+  const adminName = admin?.display_name || admin?.username || "Admin";
+  const isLong    = (feed.content || "").length > 280;
+  const displayed = isLong && !expanded
     ? feed.content.slice(0, 280) + "…"
     : (feed.content || "");
 
@@ -654,7 +649,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
       id={`feed-${feed.id}`}
       className="group rounded-3xl bg-white border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden"
     >
-      {/* cover image */}
+      {/* Cover image */}
       {feed.image_url && !imgError && (
         <div className="relative w-full bg-gray-100 overflow-hidden" style={{ maxHeight: 480 }}>
           <img
@@ -675,7 +670,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
       )}
 
       <div className="p-5">
-        {/* author row */}
+        {/* Author row */}
         <div className="flex items-center gap-3 mb-4">
           {admin?.avatar_url ? (
             <img
@@ -703,12 +698,12 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
           </div>
         </div>
 
-        {/* title */}
+        {/* Title */}
         <h2 className="text-lg font-extrabold text-gray-900 leading-snug mb-2">
           {feed.title}
         </h2>
 
-        {/* content */}
+        {/* Content */}
         <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
           {displayed}
         </p>
@@ -721,11 +716,14 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
           </button>
         )}
 
-        {/* tags */}
+        {/* Tags */}
         {feed.tags?.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {feed.tags.map((tag) => (
-              <span key={tag} className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-600">
+              <span
+                key={tag}
+                className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-600"
+              >
                 #{tag}
               </span>
             ))}
@@ -734,17 +732,18 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
 
         <div className="my-4 h-px bg-gray-100" />
 
-        {/* counts */}
+        {/* Counts */}
         <div className="flex items-center gap-4 text-xs text-gray-400 mb-3">
           <span>{fmtCount(feed.likes_count)} likes</span>
           <span>{fmtCount(feed.comments_count)} comments</span>
           <span>{fmtCount(feed.shares_count)} shares</span>
         </div>
 
-        {/* actions */}
+        {/* Actions */}
         <div className="grid grid-cols-3 gap-2">
           <button
             onClick={() => userId ? onLike() : null}
+            aria-label={liked ? "Unlike" : "Like"}
             className={[
               "flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold transition-all active:scale-95",
               liked
@@ -758,6 +757,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
 
           <button
             onClick={onComment}
+            aria-label="Comment"
             className="flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold bg-gray-50 text-gray-600 border border-gray-200 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200 transition-all active:scale-95"
           >
             <CommentIcon className="h-4 w-4" />
@@ -766,6 +766,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
 
           <button
             onClick={onShare}
+            aria-label="Share"
             className="flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold bg-gray-50 text-gray-600 border border-gray-200 hover:bg-green-50 hover:text-green-600 hover:border-green-200 transition-all active:scale-95"
           >
             <ShareIcon className="h-4 w-4" />
@@ -822,7 +823,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
       />
       <div className="fixed inset-x-0 bottom-0 z-50 md:inset-y-0 md:right-0 md:left-auto md:w-[420px] flex flex-col bg-white rounded-t-3xl md:rounded-none md:rounded-l-3xl shadow-2xl">
 
-        {/* header */}
+        {/* Header */}
         <div className="relative flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
           <div className="md:hidden absolute left-1/2 -translate-x-1/2 top-2 w-10 h-1 rounded-full bg-gray-300" />
           <div className="flex items-center gap-3">
@@ -840,7 +841,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           </button>
         </div>
 
-        {/* list */}
+        {/* Comments list */}
         <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
           {loading && (
             <div className="space-y-4">
@@ -881,7 +882,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           ))}
         </div>
 
-        {/* input */}
+        {/* Input */}
         <div
           className="shrink-0 border-t border-gray-100 px-4 pt-3"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
@@ -909,7 +910,10 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
                 value={body}
                 onChange={(e) => setBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
                 }}
                 placeholder={userId ? "Write a comment…" : "Sign in to comment"}
                 disabled={!userId || submitting}
@@ -926,7 +930,9 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               disabled={!body.trim() || submitting || !userId}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shadow-md"
             >
-              {submitting ? <SpinnerIcon className="h-4 w-4" /> : <SendIcon className="h-4 w-4" />}
+              {submitting
+                ? <SpinnerIcon className="h-4 w-4" />
+                : <SendIcon className="h-4 w-4" />}
             </button>
           </form>
         </div>
@@ -962,17 +968,18 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
               ? "Hide replies"
               : `View ${comment.replies.length} repl${comment.replies.length !== 1 ? "ies" : "y"}`}
           </button>
-          {showReplies && comment.replies.map((reply) => (
-            <CommentRow
-              key={reply.id}
-              comment={reply}
-              userId={userId}
-              liked={myLikes.has(reply.id)}
-              onLike={() => onLike(reply.id)}
-              onDelete={() => onDelete(reply.id)}
-              onReply={onReply}
-            />
-          ))}
+          {showReplies &&
+            comment.replies.map((reply) => (
+              <CommentRow
+                key={reply.id}
+                comment={reply}
+                userId={userId}
+                liked={myLikes.has(reply.id)}
+                onLike={() => onLike(reply.id)}
+                onDelete={() => onDelete(reply.id)}
+                onReply={onReply}
+              />
+            ))}
         </div>
       )}
     </div>
@@ -986,14 +993,13 @@ function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop =
   const authorName = author?.display_name || "User";
   const isOwn      = userId && userId === author?.id;
 
-  /* close menu on outside click */
   useEffect(() => {
     if (!menuOpen) return;
-    const handler = (e) => {
+    function handler(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setMenuOpen(false);
       }
-    };
+    }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
@@ -1073,7 +1079,10 @@ function FeedSkeleton() {
   return (
     <div className="space-y-5">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="rounded-3xl bg-white border border-gray-100 overflow-hidden animate-pulse">
+        <div
+          key={i}
+          className="rounded-3xl bg-white border border-gray-100 overflow-hidden animate-pulse"
+        >
           <div className="h-56 bg-gray-200" />
           <div className="p-5 space-y-3">
             <div className="flex gap-3">
@@ -1106,9 +1115,13 @@ function Toast({ toast }) {
   const isErr = toast.type === "error";
   return (
     <div className="fixed left-1/2 top-20 z-50 -translate-x-1/2 pointer-events-none">
-      <div className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
-        isErr ? "bg-red-500 border-red-400 text-white" : "bg-white border-gray-200 text-gray-900"
-      }`}>
+      <div
+        className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
+          isErr
+            ? "bg-red-500 border-red-400 text-white"
+            : "bg-white border-gray-200 text-gray-900"
+        }`}
+      >
         {isErr
           ? <AlertIcon className="h-4 w-4 shrink-0" />
           : <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />}
@@ -1145,7 +1158,9 @@ function CommentIcon({ className = "h-5 w-5" }) {
 function ShareIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
       <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
       <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
     </svg>
@@ -1154,7 +1169,8 @@ function ShareIcon({ className = "h-5 w-5" }) {
 function EyeIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -1176,7 +1192,8 @@ function AlertIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   );
 }
@@ -1197,7 +1214,8 @@ function XIcon({ className = "h-5 w-5" }) {
 function SendIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
     </svg>
   );
 }
@@ -1220,7 +1238,9 @@ function NewsIcon({ className = "h-5 w-5" }) {
 function DotsIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+      <circle cx="5" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="19" cy="12" r="2" />
     </svg>
   );
 }
