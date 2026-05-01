@@ -545,9 +545,9 @@ export default function Events() {
   }, [refresh]);
 
   // ── Edit ─────────────────────────────────────────────────────────
-  const handleEdit = useCallback((event) => {
-    navigate(`/events/${event.id}/edit`, { state: { event } });
-  }, [navigate]);
+const handleEdit = useCallback((event) => {
+  navigate(`/events/${event.id}/edit`, { state: { event } });
+}, [navigate]);
 
   // ── Delete ───────────────────────────────────────────────────────
   const handleDeleteRequest = useCallback((event) => {

@@ -57,7 +57,7 @@ import AdminApp from "./admin/AdminApp.jsx";
 
 import FeedPost from "./pages/FeedPost.jsx";
 import FeedDetail from "./pages/FeedDetail.jsx";
-
+import EditEvent from "./pages/EditEvent.jsx";
 /* ================================================================
    MAIN APP
    ================================================================ */
@@ -122,6 +122,7 @@ const MainApp = () => {
                 <Route path="/stories/:userId"        element={<StoryPage />} />
                 <Route path="/events/new"             element={<CreateEvent />} />
                 <Route path="/events/:id"             element={<EventDetail />} />
+                <Route path="/events/:id/edit" element={<EditEvent />} />
                 <Route path="/calendar"               element={<Calendar />} />
 <Route path="/massage-clinics/new"        element={<CreateMassageClinic />} />
 <Route path="/massage-clinics/:id/edit"   element={<CreateMassageClinic />} />
