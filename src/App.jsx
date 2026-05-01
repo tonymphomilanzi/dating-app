@@ -123,8 +123,8 @@ const MainApp = () => {
                 <Route path="/events/new"             element={<CreateEvent />} />
                 <Route path="/events/:id"             element={<EventDetail />} />
                 <Route path="/calendar"               element={<Calendar />} />
-                <Route path="/massage-clinics/new"    element={<CreateMassageClinic />} />
-                <Route path="/massage-clinics/:id"    element={<MassageClinicDetail />} />
+<Route path="/massage-clinics/new"        element={<CreateMassageClinic />} />
+<Route path="/massage-clinics/:id/edit"   element={<CreateMassageClinic />} />
                 <Route path="/feeds"           element={<Feeds />} />
                 <Route path="/feeds/:id" element={<FeedPost />} />
                 <Route path="/feeds/:id/detail" element={<FeedDetail />} />
