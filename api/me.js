@@ -51,7 +51,13 @@ function ensureAbsoluteUrl(maybeRelative, baseUrl) {
 function getServiceClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Missing Supabase env vars");
+
+  if (!url || !key) {
+    throw new Error(
+      `Missing env vars. url=${Boolean(url)} key=${Boolean(key)}`
+    );
+  }
+
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -59,20 +65,17 @@ function getServiceClient() {
 
 /* ================================================================
    OG HTML BUILDER
-   Always returned for share URLs.
-   Bots read the meta tags.
-   Humans are redirected instantly via <meta refresh> + JS.
    ================================================================ */
 function buildOgHtml({
-  title,
-  description,
-  image,
+  title       = "Post",
+  description = "",
+  image       = "",
   canonicalUrl,
   redirectUrl,
-  siteName = "Umunkunzi",
+  siteName    = "Umukunzi",
 }) {
-  const t           = escapeHtml(title       || "");
-  const d           = escapeHtml(description || "");
+  const t           = escapeHtml(title);
+  const d           = escapeHtml(description);
   const hasImage    = Boolean(image);
   const twitterCard = hasImage ? "summary_large_image" : "summary";
 
@@ -84,36 +87,38 @@ function buildOgHtml({
 <title>${t}</title>
 <meta name="description" content="${d}"/>
 
-<!-- ═══ Open Graph — WhatsApp / Facebook / Telegram / LinkedIn ═══ -->
 <meta property="og:type"        content="article"/>
 <meta property="og:site_name"   content="${escapeHtml(siteName)}"/>
 <meta property="og:title"       content="${t}"/>
 <meta property="og:description" content="${d}"/>
 <meta property="og:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `<meta property="og:image"            content="${escapeHtml(image)}"/>
+${hasImage ? `
+<meta property="og:image"            content="${escapeHtml(image)}"/>
 <meta property="og:image:secure_url" content="${escapeHtml(image)}"/>
 <meta property="og:image:width"      content="1200"/>
 <meta property="og:image:height"     content="630"/>
-<meta property="og:image:alt"        content="${t}"/>` : ""}
+<meta property="og:image:alt"        content="${t}"/>` : "<!-- no image -->"}
 
-<!-- ═══ Twitter / X Card ═══ -->
 <meta name="twitter:card"        content="${twitterCard}"/>
 <meta name="twitter:title"       content="${t}"/>
 <meta name="twitter:description" content="${d}"/>
 <meta name="twitter:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `<meta name="twitter:image"     content="${escapeHtml(image)}"/>
+${hasImage ? `
+<meta name="twitter:image"     content="${escapeHtml(image)}"/>
 <meta name="twitter:image:alt" content="${t}"/>` : ""}
 
 <link rel="canonical" href="${escapeHtml(canonicalUrl)}"/>
-
-<!-- Human redirect — bots ignore both -->
 <meta http-equiv="refresh" content="0; url=${escapeHtml(redirectUrl)}"/>
-<script>(function(){try{window.location.replace(${JSON.stringify(redirectUrl)});}catch(e){}}());</script>
+<script>
+(function(){
+  try { window.location.replace(${JSON.stringify(redirectUrl)}); } catch(e){}
+})();
+</script>
 
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{
-  font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-family:system-ui,-apple-system,sans-serif;
   background:#09090b;color:#fafafa;
   min-height:100vh;display:flex;
   align-items:center;justify-content:center;padding:24px;
@@ -121,86 +126,106 @@ body{
 .card{
   background:#18181b;border:1px solid #3f3f46;
   border-radius:16px;overflow:hidden;
-  max-width:540px;width:100%;
-  box-shadow:0 25px 60px -15px rgba(0,0,0,.7);
+  max-width:560px;width:100%;
 }
 .cover{width:100%;aspect-ratio:1200/630;object-fit:cover;display:block}
 .body{padding:20px 24px 24px}
-.site{
-  font-size:.65rem;color:#71717a;
-  text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px;
-}
-h1{font-size:1.1rem;font-weight:700;line-height:1.4;margin-bottom:8px}
+.site{font-size:.65rem;color:#71717a;text-transform:uppercase;
+  letter-spacing:.1em;margin-bottom:10px}
+h1{font-size:1.15rem;font-weight:700;line-height:1.4;margin-bottom:8px}
 .desc{font-size:.85rem;color:#a1a1aa;line-height:1.6;margin-bottom:18px}
 .btn{
   display:inline-block;font-size:.8rem;color:#8b5cf6;
-  border:1px solid #8b5cf640;border-radius:8px;
-  padding:6px 14px;text-decoration:none;
+  border:1px solid rgba(139,92,246,.25);border-radius:8px;
+  padding:6px 16px;text-decoration:none;
 }
-.btn:hover{background:#8b5cf620}
 </style>
 </head>
 <body>
-  <div class="card">
-    ${hasImage
-      ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>`
-      : ""}
-    <div class="body">
-      <div class="site">${escapeHtml(siteName)}</div>
-      <h1>${t}</h1>
-      <p class="desc">${d}</p>
-      <a class="btn" href="${escapeHtml(redirectUrl)}">View post →</a>
-    </div>
+<div class="card">
+  ${hasImage
+    ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>`
+    : ""}
+  <div class="body">
+    <div class="site">${escapeHtml(siteName)}</div>
+    <h1>${t}</h1>
+    <p class="desc">${d}</p>
+    <a class="btn" href="${escapeHtml(redirectUrl)}">View post →</a>
   </div>
+</div>
 </body>
 </html>`;
 }
 
 /* ================================================================
    SHARE HANDLER
-   GET /api/me?share=feed&id=<uuid>
-
-   Always returns OG HTML — no bot-sniffing needed.
-   • Bots  → parse <meta> tags, render rich preview
-   • Humans→ JS + meta-refresh redirects them to the SPA instantly
    ================================================================ */
 async function handleShare(req, res) {
-  const type    = String(q1(req.query?.share) || "").toLowerCase();
-  const id      = String(q1(req.query?.id)    || "").trim();
-  const baseUrl = getBaseUrl(req);
-  const siteName = "Umunkunzi"; // ← change to your app name
+  const type     = String(q1(req.query?.share) || "").toLowerCase();
+  const id       = String(q1(req.query?.id)    || "").trim();
+  const baseUrl  = getBaseUrl(req);
+  const siteName = "Umukunzi"; // ← CHANGE THIS
 
-  /* Unknown type or missing id → redirect to feed list */
+  /* ── guard ── */
   if (type !== "feed" || !id) {
     res.setHeader("Location", `${baseUrl}/feeds`);
     res.setHeader("Cache-Control", "no-store");
     return res.status(302).end();
   }
 
-  const spaUrl       = `${baseUrl}/feeds/${encodeURIComponent(id)}`;
+  const spaUrl       = `${baseUrl}/feeds/${id}`;
   const canonicalUrl = `${baseUrl}/api/me?share=feed&id=${encodeURIComponent(id)}`;
 
-  try {
-    const supabase = getServiceClient();
+  /* ── fallback html (used if anything goes wrong) ── */
+  function fallback(title = siteName, description = "") {
+    return buildOgHtml({
+      title,
+      description,
+      image: "",
+      canonicalUrl,
+      redirectUrl: spaUrl,
+      siteName,
+    });
+  }
 
+  let supabase;
+  try {
+    supabase = getServiceClient();
+  } catch (err) {
+    /* env vars missing — still render something */
+    console.error("[share] getServiceClient:", err.message);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(fallback());
+  }
+
+  try {
+    /* ── fetch post — NO join first, keep it simple ── */
     const { data: post, error } = await supabase
-      .from("feeds")
+      .from("feeds")           // ← your table name
       .select(`
-        id, title, content, image_url, tags, created_at,
-        admin:admin_users(username, display_name)
+        id,
+        title,
+        content,
+        image_url,
+        tags,
+        published
       `)
       .eq("id", id)
-      .eq("published", true)
+      .eq("published", true)   // ← remove this line if column doesn't exist
       .maybeSingle();
 
-    /* Post not found */
+    console.log("[share] fetched:", JSON.stringify({ post, error }));
+
+    /* ── not found ── */
     if (error || !post) {
+      console.warn("[share] not found:", error?.message);
       const html = buildOgHtml({
-        title:        "Post not found",
-        description:  "This post may have been removed or is no longer available.",
-        image:        "",
+        title:       "Post not found",
+        description: "This post may have been removed.",
+        image:       "",
         canonicalUrl,
-        redirectUrl:  `${baseUrl}/feeds`,
+        redirectUrl: `${baseUrl}/feeds`,
         siteName,
       });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -208,51 +233,38 @@ async function handleShare(req, res) {
       return res.status(200).send(html);
     }
 
-    /* Build OG fields */
-    const adminName   = post.admin?.display_name
-                     || post.admin?.username
-                     || "Admin";
+    /* ── build OG fields ── */
+    const rawTitle = post.title || siteName;
 
-    const tags        = Array.isArray(post.tags) && post.tags.length
+    const tags = Array.isArray(post.tags) && post.tags.length
       ? "  " + post.tags.slice(0, 3).map((t) => `#${t}`).join(" ")
       : "";
 
-    const description = truncate(
-      post.content || `Posted by ${adminName}`,
-      180
-    ) + tags;
+    const description = truncate(post.content || "", 180) + tags;
 
-    /* Ensure image URL is absolute */
-    const image = ensureAbsoluteUrl(post.image_url, baseUrl);
+    /* image MUST be absolute HTTPS */
+    const image = ensureAbsoluteUrl(post.image_url || "", baseUrl);
+
+    console.log("[share] building html:", { rawTitle, description, image });
 
     const html = buildOgHtml({
-      title:        post.title || "Feed Post",
+      title: rawTitle,
       description,
       image,
       canonicalUrl,
-      redirectUrl:  spaUrl,
+      redirectUrl: spaUrl,
       siteName,
     });
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=120, stale-while-revalidate=600");
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return res.status(200).send(html);
 
   } catch (err) {
-    console.error("[share] error:", err.message);
-
-    /* On unexpected error still return valid OG HTML, never crash */
-    const html = buildOgHtml({
-      title:        siteName,
-      description:  "Check out this post.",
-      image:        "",
-      canonicalUrl,
-      redirectUrl:  spaUrl,
-      siteName,
-    });
+    console.error("[share] unexpected:", err.message);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
-    return res.status(200).send(html);
+    return res.status(200).send(fallback());
   }
 }
 
@@ -307,12 +319,10 @@ async function handlePatchProfile(req, res) {
    ================================================================ */
 export default async function handler(req, res) {
   try {
-    /* PUBLIC: OG share — no auth needed */
     if (req.method === "GET" && q1(req.query?.share)) {
       return await handleShare(req, res);
     }
 
-    /* Authenticated profile routes */
     if (req.method === "GET")   return await handleGetProfile(req, res);
     if (req.method === "PATCH") return await handlePatchProfile(req, res);
 
