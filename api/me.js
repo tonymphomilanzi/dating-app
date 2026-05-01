@@ -69,7 +69,7 @@ function buildOgHtml({
   image,
   canonicalUrl,
   redirectUrl,
-  siteName = "YourApp",
+  siteName = "Umunkunzi",
 }) {
   const t           = escapeHtml(title       || "");
   const d           = escapeHtml(description || "");
@@ -168,7 +168,7 @@ async function handleShare(req, res) {
   const type    = String(q1(req.query?.share) || "").toLowerCase();
   const id      = String(q1(req.query?.id)    || "").trim();
   const baseUrl = getBaseUrl(req);
-  const siteName = "YourApp"; // ← change to your app name
+  const siteName = "Umunkunzi"; // ← change to your app name
 
   /* Unknown type or missing id → redirect to feed list */
   if (type !== "feed" || !id) {
