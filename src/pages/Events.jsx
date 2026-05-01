@@ -11,6 +11,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { eventsService } from "../services/events.service.js";
+import { useAuth } from "../contexts/AuthContext.jsx";
 
 /* ================================================================
    CONSTANTS
@@ -24,7 +25,7 @@ const GEO_MAX_AGE_MS           = 60_000;
 const DEFAULT_RADIUS_KM        = 50;
 const POPULAR_EVENTS_LIMIT     = 12;
 const UPCOMING_EVENTS_LIMIT    = 10;
-const STALE_AFTER_HIDDEN_MS    = 30_000; // treat data stale if hidden > 30s
+const STALE_AFTER_HIDDEN_MS    = 30_000;
 
 export const TABS = {
   EXPLORE: "explore",
@@ -114,11 +115,12 @@ function mapRow(ev) {
     price:       ev.price != null ? Number(ev.price) : 0,
     created_at:  ev.created_at,
     attendees:   ev.attendees   || 0,
+    user_id:     ev.user_id     || null, // owner reference
   };
 }
 
 /* ================================================================
-   MAP PIN ICON  (module-level singleton — never recreated)
+   MAP PIN ICON
    ================================================================ */
 
 const pinIcon = L.divIcon({
@@ -144,14 +146,6 @@ const pinIcon = L.divIcon({
 
 /* ================================================================
    useRevalidate
-   ─────────────────────────────────────────────────────────────────
-   KEY FIXES vs original:
-   • All options stored in refs → effect dep array is [] so listeners
-     are registered exactly once and never leak.
-   • onVis defined inside the effect so it closes over the stable
-     `fire` ref-based function (no stale capture).
-   • inFlight + pendingRef prevent overlapping fetches.
-   • cooldown enforced via elapsed-time check, not a boolean lock.
    ================================================================ */
 
 function useRevalidate({
@@ -162,7 +156,6 @@ function useRevalidate({
   onOnline     = true,
   cooldownMs   = 2_000,
 } = {}) {
-  // ── All options in refs so the effect never needs to re-run ─────
   const refetchRef     = useRef(refetch);
   const intervalMsRef  = useRef(intervalMs);
   const onFocusRef     = useRef(onFocus);
@@ -177,7 +170,6 @@ function useRevalidate({
   useEffect(() => { onOnlineRef.current   = onOnline;     }, [onOnline]);
   useEffect(() => { cooldownMsRef.current = cooldownMs;   }, [cooldownMs]);
 
-  // ── Internal state in refs ───────────────────────────────────────
   const lastFiredAt  = useRef(0);
   const timerRef     = useRef(null);
   const inFlight     = useRef(false);
@@ -192,30 +184,22 @@ function useRevalidate({
     };
   }, []);
 
-  // ── Stable fire function (never recreated) ───────────────────────
   const fire = useRef(() => {
     const attempt = () => {
       if (!mountedRef.current) return;
-
       const elapsed = Date.now() - lastFiredAt.current;
       const cd      = cooldownMsRef.current;
-
-      // Still in cooldown — schedule a single retry
       if (elapsed < cd) {
         clearTimeout(timerRef.current);
         timerRef.current = setTimeout(attempt, cd - elapsed);
         return;
       }
-
-      // Another fetch already running — mark as pending
       if (inFlight.current) {
         pendingRef.current = true;
         return;
       }
-
       inFlight.current    = true;
       lastFiredAt.current = Date.now();
-
       Promise.resolve()
         .then(() => refetchRef.current?.())
         .catch(() => {})
@@ -228,19 +212,12 @@ function useRevalidate({
           }
         });
     };
-
     attempt();
-  }).current; // .current makes this the stable function, not a new ref each render
+  }).current;
 
-  // ── Single effect — registers listeners once ─────────────────────
   useEffect(() => {
-    // Visibility wrapper defined inside effect so it's stable for
-    // removeEventListener matching, but reads fire via the closure
-    // which is itself stable (module-level ref pattern above).
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && onVisRef.current) {
-        fire();
-      }
+      if (document.visibilityState === "visible" && onVisRef.current) fire();
     };
     const handleFocus  = () => { if (onFocusRef.current)  fire(); };
     const handleOnline = () => { if (onOnlineRef.current) fire(); };
@@ -249,9 +226,6 @@ function useRevalidate({
     document.addEventListener("visibilitychange", handleVisibility, { passive: true });
     window.addEventListener("online",            handleOnline,     { passive: true });
 
-    // Interval: we need to be able to clear it, so store in a ref
-    // We read intervalMsRef at registration time; if it changes the
-    // next mount cycle will pick it up (acceptable — it rarely changes).
     const id = intervalMsRef.current > 0
       ? setInterval(fire, intervalMsRef.current)
       : null;
@@ -263,19 +237,11 @@ function useRevalidate({
       if (id) clearInterval(id);
       clearTimeout(timerRef.current);
     };
-  }, []); // ← intentionally empty: everything via refs
+  }, []);
 }
 
 /* ================================================================
    useGeolocation
-   ─────────────────────────────────────────────────────────────────
-   KEY FIXES:
-   • reverseGeocode deps are [] — reads mountedRef via closure.
-   • requestLocation deps are [] — same pattern.
-   • Both functions are therefore stable references forever.
-   • Visibility recovery: restart location request when tab re-shows
-     and status was previously granted (handles iOS Safari killing
-     the geolocation after screen lock).
    ================================================================ */
 
 function useGeolocation() {
@@ -285,7 +251,6 @@ function useGeolocation() {
 
   const mountedRef        = useRef(true);
   const geocodeAbortRef   = useRef(null);
-  // Keep latest values accessible in stable callbacks
   const locationStatusRef = useRef("idle");
 
   const setStatusBoth = useCallback((s) => {
@@ -301,7 +266,6 @@ function useGeolocation() {
     };
   }, []);
 
-  // ── Reverse-geocode: stable, reads via refs ──────────────────────
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
     geocodeAbortRef.current?.abort();
     const ac      = new AbortController();
@@ -315,7 +279,6 @@ function useGeolocation() {
       );
       clearTimeout(timerId);
       if (!mountedRef.current || ac.signal.aborted) return;
-
       const data = await res.json().catch(() => ({}));
       const city =
         data?.address?.city    ||
@@ -323,84 +286,48 @@ function useGeolocation() {
         data?.address?.village ||
         data?.address?.county  ||
         data?.address?.state   || "";
-
       if (mountedRef.current) setLocationLabel(city || "Your area");
     } catch {
       clearTimeout(timerId);
-      // Silently ignore abort / network errors
     }
-  }, []); // [] — reads mountedRef and geocodeAbortRef via closure
+  }, []);
 
-  // ── Request location: stable ─────────────────────────────────────
   const requestLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
       setStatusBoth("unsupported");
       return;
     }
-
     setStatusBoth("loading");
-
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         if (!mountedRef.current) return;
-        const pos = {
-          lat: Number(coords.latitude),
-          lng: Number(coords.longitude),
-        };
-        if (!isValidLatLng(pos.lat, pos.lng)) {
-          setStatusBoth("denied");
-          return;
-        }
+        const pos = { lat: Number(coords.latitude), lng: Number(coords.longitude) };
+        if (!isValidLatLng(pos.lat, pos.lng)) { setStatusBoth("denied"); return; }
         setUserLocation(pos);
         setStatusBoth("granted");
         reverseGeocode(pos);
       },
-      () => {
-        if (mountedRef.current) setStatusBoth("denied");
-      },
-      {
-        enableHighAccuracy: true,
-        timeout:    GEO_TIMEOUT_MS,
-        maximumAge: GEO_MAX_AGE_MS,
-      }
+      () => { if (mountedRef.current) setStatusBoth("denied"); },
+      { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS }
     );
-  }, []); // [] — reads everything via refs/closure
+  }, []);
 
-  // ── Visibility recovery ──────────────────────────────────────────
-  // Re-request location when the tab comes back into view IF we had
-  // previously been granted (avoids re-asking if user never allowed).
   useEffect(() => {
     const handleVisibility = () => {
       if (
         document.visibilityState === "visible" &&
         locationStatusRef.current === "granted"
-      ) {
-        requestLocation();
-      }
+      ) requestLocation();
     };
-
     document.addEventListener("visibilitychange", handleVisibility);
-    return () =>
-      document.removeEventListener("visibilitychange", handleVisibility);
-  }, []); // [] — reads via refs
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
-  return {
-    userLocation,
-    locationStatus,
-    locationLabel,
-    requestLocation,
-  };
+  return { userLocation, locationStatus, locationLabel, requestLocation };
 }
 
 /* ================================================================
    useEvents
-   ─────────────────────────────────────────────────────────────────
-   KEY FIXES:
-   • hasDataRef updated before setEvents so the flag is correct even
-     if React batches the state update.
-   • foreground flag stored in ref to avoid closure staleness when
-     called from useRevalidate.
-   • Explicit AbortError name check AND signal.aborted guard.
    ================================================================ */
 
 function useEvents() {
@@ -422,27 +349,20 @@ function useEvents() {
   }, []);
 
   const refresh = useCallback(async ({ foreground = false } = {}) => {
-    // Cancel previous in-flight request
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-
-    // Bump generation — any in-flight older request will self-discard
     const myGen = ++generationRef.current;
 
-    // Show spinner only on foreground fetch when we have no data yet
     if (foreground && !hasDataRef.current) {
       if (mountedRef.current) setIsLoading(true);
     }
 
     try {
       const rows = await eventsService.list({ signal: ac.signal });
-
-      if (!mountedRef.current)                  return;
-      if (generationRef.current !== myGen)       return;
-      if (ac.signal.aborted)                     return;
-
-      // Update flag BEFORE setState to avoid race with concurrent calls
+      if (!mountedRef.current)            return;
+      if (generationRef.current !== myGen) return;
+      if (ac.signal.aborted)              return;
       hasDataRef.current = true;
       setEvents((rows ?? []).map(mapRow));
       setError("");
@@ -450,13 +370,11 @@ function useEvents() {
       if (!mountedRef.current)            return;
       if (generationRef.current !== myGen) return;
       if (err?.name === "AbortError" || ac.signal.aborted) return;
-
       const status = err?.status || err?.response?.status;
       if (status === 401 || /session expired/i.test(err?.message ?? "")) {
         setError("Session expired. Please sign in again.");
         return;
       }
-
       setError(
         err?.message              ||
         err?.error                ||
@@ -464,14 +382,123 @@ function useEvents() {
         "Failed to load events"
       );
     } finally {
-      // Only touch loading state for the most-recent generation
       if (mountedRef.current && generationRef.current === myGen) {
         setIsLoading(false);
       }
     }
-  }, []); // [] — reads everything via refs; truly stable
+  }, []);
 
   return { events, setEvents, isLoading, error, refresh };
+}
+
+/* ================================================================
+   CONFIRM DELETE MODAL
+   ================================================================ */
+
+function ConfirmDeleteModal({ eventTitle, onConfirm, onCancel, isDeleting }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      {/* Dialog */}
+      <div className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50 mx-auto">
+          <TrashIcon className="h-7 w-7 text-red-500" />
+        </div>
+        <h3 className="text-center text-lg font-bold text-gray-900">Delete Event?</h3>
+        <p className="mt-2 text-center text-sm text-gray-500">
+          <span className="font-semibold text-gray-700">"{eventTitle}"</span> will be
+          permanently deleted and cannot be recovered.
+        </p>
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="flex-1 rounded-2xl border border-gray-200 bg-white py-3 text-sm
+              font-semibold text-gray-700 hover:bg-gray-50 transition-colors
+              disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="flex-1 rounded-2xl bg-red-500 py-3 text-sm font-bold text-white
+              hover:bg-red-600 active:scale-95 transition-all disabled:opacity-50
+              flex items-center justify-center gap-2"
+          >
+            {isDeleting ? (
+              <>
+                <SpinnerIcon className="h-4 w-4" />
+                Deleting…
+              </>
+            ) : (
+              "Delete"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
+   OWNER ACTION MENU  (three-dot menu shown on owner's events)
+   ================================================================ */
+
+function OwnerActionMenu({ event, onEdit, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-8 w-8 items-center justify-center rounded-full
+          bg-white/80 backdrop-blur-sm text-gray-600
+          hover:bg-white hover:text-violet-700 transition-all shadow-sm border border-gray-100"
+        aria-label="Event options"
+      >
+        <DotsVerticalIcon className="h-4 w-4" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-10 z-30 min-w-[140px] rounded-2xl
+          bg-white border border-gray-100 shadow-xl py-1 overflow-hidden">
+          <button
+            onClick={() => { setOpen(false); onEdit(event); }}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm
+              font-semibold text-gray-700 hover:bg-violet-50 hover:text-violet-700
+              transition-colors"
+          >
+            <PencilIcon className="h-4 w-4" />
+            Edit
+          </button>
+          <button
+            onClick={() => { setOpen(false); onDelete(event); }}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm
+              font-semibold text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <TrashIcon className="h-4 w-4" />
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ================================================================
@@ -481,12 +508,27 @@ function useEvents() {
 export default function Events() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
 
   const [activeTab,        setActiveTab]       = useState(TABS.EXPLORE);
   const [searchQuery,      setSearchQuery]      = useState("");
   const [radius,           setRadius]           = useState(DEFAULT_RADIUS_KM);
   const [viewType,         setViewType]         = useState(VIEW_TYPES.LIST);
   const [selectedCategory, setSelectedCategory] = useState("All");
+
+  // Delete state
+  const [deleteTarget,  setDeleteTarget]  = useState(null); // event to delete
+  const [isDeleting,    setIsDeleting]    = useState(false);
+  const [deleteError,   setDeleteError]   = useState("");
+
+  // Toast
+  const [toast, setToast] = useState(null);
+
+  const showToast = useCallback((message, type = "success") => {
+    setToast({ message, type });
+    const id = setTimeout(() => setToast(null), 3_500);
+    return () => clearTimeout(id);
+  }, []);
 
   const {
     userLocation,
@@ -497,66 +539,95 @@ export default function Events() {
 
   const { events, setEvents, isLoading, error, refresh } = useEvents();
 
-  // ── Ref mirrors for use in stable callbacks ──────────────────────
   const hiddenAtRef = useRef(null);
 
-  // ── Bootstrap: runs once on mount ───────────────────────────────
+  // ── Bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
     refresh({ foreground: true });
     requestLocation();
-  }, []); // stable refs — safe to omit from deps
+  }, []);
 
-  // ── Inject newly-created event from nav state ────────────────────
+  // ── Inject newly-created / edited event from nav state ───────────
   useEffect(() => {
     const created = location.state?.created;
-    if (!created) return;
-    setEvents((prev) =>
-      prev.some((e) => e.id === created.id)
-        ? prev
-        : [mapRow(created), ...prev]
-    );
-    navigate("/events", { replace: true, state: null });
+    const updated = location.state?.updated;
+
+    if (created) {
+      setEvents((prev) =>
+        prev.some((e) => e.id === created.id)
+          ? prev
+          : [mapRow(created), ...prev]
+      );
+      navigate("/events", { replace: true, state: null });
+    }
+
+    if (updated) {
+      setEvents((prev) =>
+        prev.map((e) => (e.id === updated.id ? mapRow(updated) : e))
+      );
+      navigate("/events", { replace: true, state: null });
+    }
   }, [location.state, navigate, setEvents]);
 
   // ── Background revalidation ──────────────────────────────────────
-  // Visibility/focus/online handlers live inside useRevalidate.
-  // We add a SEPARATE visibility effect here for the "hidden > 30s"
-  // stale-data pattern (foreground refresh, not just silent).
   useRevalidate({
-    refetch:     useCallback(() => refresh({ foreground: false }), [refresh]),
-    intervalMs:  AUTO_REFRESH_INTERVAL_MS,
-    cooldownMs:  2_000,
-    // Disable built-in visibility handler — we handle it below
-    // with the stale-threshold logic instead.
+    refetch:      useCallback(() => refresh({ foreground: false }), [refresh]),
+    intervalMs:   AUTO_REFRESH_INTERVAL_MS,
+    cooldownMs:   2_000,
     onVisibility: false,
   });
 
   useEffect(() => {
     const handleHide = () => {
-      if (document.visibilityState === "hidden") {
-        hiddenAtRef.current = Date.now();
-      }
+      if (document.visibilityState === "hidden") hiddenAtRef.current = Date.now();
     };
     const handleShow = () => {
       if (document.visibilityState !== "visible") return;
-      const hiddenMs = hiddenAtRef.current
-        ? Date.now() - hiddenAtRef.current
-        : 0;
+      const hiddenMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
       hiddenAtRef.current = null;
-
-      if (hiddenMs >= STALE_AFTER_HIDDEN_MS) {
-        // Foreground refresh so user sees spinner if no cached data
-        refresh({ foreground: false });
-      }
+      if (hiddenMs >= STALE_AFTER_HIDDEN_MS) refresh({ foreground: false });
     };
-
     document.addEventListener("visibilitychange", handleHide,  { passive: true });
     document.addEventListener("visibilitychange", handleShow, { passive: true });
     return () => {
       document.removeEventListener("visibilitychange", handleHide);
       document.removeEventListener("visibilitychange", handleShow);
     };
-  }, [refresh]); // refresh is stable ([] deps in useEvents)
+  }, [refresh]);
+
+  // ── Edit handler ─────────────────────────────────────────────────
+  const handleEdit = useCallback((event) => {
+    navigate(`/events/${event.id}/edit`, { state: { event } });
+  }, [navigate]);
+
+  // ── Delete handlers ──────────────────────────────────────────────
+  const handleDeleteRequest = useCallback((event) => {
+    setDeleteError("");
+    setDeleteTarget(event);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      await eventsService.delete(deleteTarget.id);
+      setEvents((prev) => prev.filter((e) => e.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      showToast("Event deleted successfully");
+    } catch (err) {
+      setDeleteError(
+        err?.message || err?.error || "Failed to delete event. Please try again."
+      );
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [deleteTarget, setEvents, showToast]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteTarget(null);
+    setDeleteError("");
+  }, []);
 
   // ── Derived data ─────────────────────────────────────────────────
 
@@ -567,10 +638,8 @@ export default function Events() {
 
   const filteredEvents = useMemo(() => {
     let result = events.slice();
-
     if (selectedCategory !== "All")
       result = result.filter((e) => e.category === selectedCategory);
-
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
@@ -579,42 +648,27 @@ export default function Events() {
           e.place.toLowerCase().includes(q)
       );
     }
-
     return result.sort((a, b) => {
       const dateDiff = new Date(a.dateISO) - new Date(b.dateISO);
       if (dateDiff !== 0) return dateDiff;
       if (userLocation) {
         const dA = calculateKmBetween(userLocation, a);
         const dB = calculateKmBetween(userLocation, b);
-        if (Number.isFinite(dA) && Number.isFinite(dB) && dA !== dB)
-          return dA - dB;
+        if (Number.isFinite(dA) && Number.isFinite(dB) && dA !== dB) return dA - dB;
       }
       return new Date(b.created_at) - new Date(a.created_at);
     });
   }, [events, selectedCategory, searchQuery, userLocation]);
 
-  const popularEvents = useMemo(
-    () => filteredEvents.slice(0, POPULAR_EVENTS_LIMIT),
-    [filteredEvents]
-  );
-  const upcomingEvents = useMemo(
-    () => filteredEvents.slice(0, UPCOMING_EVENTS_LIMIT),
-    [filteredEvents]
-  );
+  const popularEvents  = useMemo(() => filteredEvents.slice(0, POPULAR_EVENTS_LIMIT), [filteredEvents]);
+  const upcomingEvents = useMemo(() => filteredEvents.slice(0, UPCOMING_EVENTS_LIMIT), [filteredEvents]);
 
   const nearbyEvents = useMemo(() => {
     if (!userLocation) return [];
-
     let result = events
       .filter((e) => isValidLatLng(e.lat, e.lng))
-      .map((e) => ({
-        ...e,
-        distanceKm: calculateKmBetween(userLocation, e),
-      }))
-      .filter(
-        (e) => Number.isFinite(e.distanceKm) && e.distanceKm <= radius
-      );
-
+      .map((e) => ({ ...e, distanceKm: calculateKmBetween(userLocation, e) }))
+      .filter((e) => Number.isFinite(e.distanceKm) && e.distanceKm <= radius);
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
@@ -623,7 +677,6 @@ export default function Events() {
           e.place.toLowerCase().includes(q)
       );
     }
-
     return result.sort((a, b) => a.distanceKm - b.distanceKm);
   }, [events, userLocation, radius, searchQuery]);
 
@@ -642,6 +695,36 @@ export default function Events() {
 
   return (
     <div className="min-h-dvh bg-gray-50 text-gray-900 pb-28">
+      {/* Toast */}
+      {toast && <Toast message={toast.message} type={toast.type} />}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <ConfirmDeleteModal
+          eventTitle={deleteTarget.title}
+          onConfirm={handleDeleteConfirm}
+          onCancel={handleDeleteCancel}
+          isDeleting={isDeleting}
+        />
+      )}
+
+      {/* Delete error toast (shown after modal if API fails) */}
+      {deleteError && (
+        <div className="fixed bottom-32 left-1/2 z-50 -translate-x-1/2 w-[90vw] max-w-sm">
+          <div className="flex items-center gap-2.5 rounded-2xl bg-red-500 px-4 py-3
+            text-white text-sm font-semibold shadow-xl">
+            <WarningIcon className="h-4 w-4 shrink-0" />
+            {deleteError}
+            <button
+              onClick={() => setDeleteError("")}
+              className="ml-auto text-white/70 hover:text-white"
+            >
+              <XSmallIcon className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto w-full max-w-md">
         <PageHeader
           activeTab={activeTab}
@@ -678,6 +761,9 @@ export default function Events() {
                   popularEvents={popularEvents}
                   upcomingEvents={upcomingEvents}
                   openEventDetail={openEventDetail}
+                  currentUserId={user?.id}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteRequest}
                 />
               )}
               {activeTab === TABS.NEAR && (
@@ -691,6 +777,9 @@ export default function Events() {
                   events={nearbyEvents}
                   openEventDetail={openEventDetail}
                   onRequestLocation={requestLocation}
+                  currentUserId={user?.id}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteRequest}
                 />
               )}
             </>
@@ -742,7 +831,6 @@ function PageHeader({
 
   return (
     <div className="sticky top-0 z-10 bg-white border-b border-gray-100 shadow-sm">
-      {/* Brand row */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Events</h1>
@@ -759,7 +847,6 @@ function PageHeader({
         />
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 px-4 pb-3">
         {TABS_CONFIG.map((tab) => {
           const Icon     = tab.icon;
@@ -776,16 +863,13 @@ function PageHeader({
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200",
               ].join(" ")}
             >
-              <Icon
-                className={`h-4 w-4 ${isActive ? "text-white" : "text-gray-500"}`}
-              />
+              <Icon className={`h-4 w-4 ${isActive ? "text-white" : "text-gray-500"}`} />
               {tab.label}
             </button>
           );
         })}
       </div>
 
-      {/* Search */}
       <div className="px-4 pb-3">
         <div
           className="flex items-center gap-3 rounded-2xl bg-gray-100 px-4 py-3
@@ -823,7 +907,6 @@ function PageHeader({
           )}
         </div>
 
-        {/* Status line */}
         {statusLine && (
           <div className="mt-2 flex items-center gap-1.5 px-1">
             {statusLine.icon === "pulse" && (
@@ -840,13 +923,9 @@ function PageHeader({
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
             )}
             <span className="text-xs text-gray-500">{statusLine.text}</span>
-            {locationLabel &&
-              activeTab === TABS.NEAR &&
-              locationStatus === "granted" && (
-                <span className="text-xs font-medium text-gray-700">
-                  · {locationLabel}
-                </span>
-              )}
+            {locationLabel && activeTab === TABS.NEAR && locationStatus === "granted" && (
+              <span className="text-xs font-medium text-gray-700">· {locationLabel}</span>
+            )}
           </div>
         )}
       </div>
@@ -886,6 +965,9 @@ function ExploreSection({
   popularEvents,
   upcomingEvents,
   openEventDetail,
+  currentUserId,
+  onEdit,
+  onDelete,
 }) {
   const allUniqueEvents = useMemo(
     () => [
@@ -917,6 +999,9 @@ function ExploreSection({
         <FeaturedEventBanner
           event={popularEvents[0]}
           onClick={() => openEventDetail(popularEvents[0])}
+          currentUserId={currentUserId}
+          onEdit={onEdit}
+          onDelete={onDelete}
         />
       )}
 
@@ -943,6 +1028,9 @@ function ExploreSection({
                 key={event.id}
                 event={event}
                 onClick={() => openEventDetail(event)}
+                currentUserId={currentUserId}
+                onEdit={onEdit}
+                onDelete={onDelete}
               />
             ))}
           </div>
@@ -957,6 +1045,9 @@ function ExploreSection({
               key={event.id}
               event={event}
               onOpen={openEventDetail}
+              currentUserId={currentUserId}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           ))}
         </div>
@@ -979,6 +1070,9 @@ function NearYouSection({
   events,
   openEventDetail,
   onRequestLocation,
+  currentUserId,
+  onEdit,
+  onDelete,
 }) {
   if (locationStatus === "idle" || locationStatus === "denied") {
     return (
@@ -1084,6 +1178,9 @@ function NearYouSection({
                 key={event.id}
                 event={event}
                 onClick={() => openEventDetail(event)}
+                currentUserId={currentUserId}
+                onEdit={onEdit}
+                onDelete={onDelete}
               />
             ))
           )}
@@ -1094,237 +1191,314 @@ function NearYouSection({
 }
 
 /* ================================================================
-   CARD COMPONENTS  (unchanged — no bugs found)
+   CARD COMPONENTS — updated with owner actions
    ================================================================ */
 
-function FeaturedEventBanner({ event, onClick }) {
+function FeaturedEventBanner({ event, onClick, currentUserId, onEdit, onDelete }) {
+  const isOwner = currentUserId && event.user_id === currentUserId;
+
   return (
-    <button
-      onClick={onClick}
-      className="relative w-full overflow-hidden rounded-3xl shadow-xl text-left
-        active:scale-[0.99] transition-transform duration-150 block"
-      aria-label={`View featured event: ${event.title}`}
-    >
-      {event.img ? (
-        <img
-          src={event.img}
-          alt={event.title}
-          className="h-52 w-full object-cover"
-          loading="lazy"
-        />
-      ) : (
-        <div className="h-52 w-full bg-gradient-to-br from-violet-400 to-purple-600
-          grid place-items-center">
-          <CalendarIcon className="h-16 w-16 text-white/50" />
-        </div>
-      )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-      <div className="absolute top-3 left-3">
-        <span className="inline-flex items-center gap-1 rounded-full
-          bg-white/20 backdrop-blur-md border border-white/30
-          px-3 py-1 text-xs font-bold text-white">
-          ✨ Featured
-        </span>
-      </div>
-      <div className="absolute top-3 right-3">
-        <span className="rounded-full bg-violet-600/90 backdrop-blur-sm
-          px-2.5 py-1 text-xs font-semibold text-white">
-          {event.category}
-        </span>
-      </div>
-      <div className="absolute bottom-0 inset-x-0 p-4">
-        <p className="text-lg font-bold text-white leading-tight drop-shadow">
-          {event.title}
-        </p>
-        <div className="mt-1.5 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-sm text-white/80">
-            <MapPinIcon className="h-3.5 w-3.5" />
-            <span className="truncate max-w-[180px]">{event.place}</span>
+    <div className="relative w-full overflow-hidden rounded-3xl shadow-xl">
+      <button
+        onClick={onClick}
+        className="block w-full text-left active:scale-[0.99] transition-transform duration-150"
+        aria-label={`View featured event: ${event.title}`}
+      >
+        {event.img ? (
+          <img
+            src={event.img}
+            alt={event.title}
+            className="h-52 w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="h-52 w-full bg-gradient-to-br from-violet-400 to-purple-600
+            grid place-items-center">
+            <CalendarIcon className="h-16 w-16 text-white/50" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm text-white/70">{event.dateLabel}</span>
-            <span className="rounded-full bg-white/20 backdrop-blur-sm
-              px-2.5 py-0.5 text-sm font-bold text-white">
-              {event.price === 0 ? "Free" : `$${event.price}`}
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+        <div className="absolute top-3 left-3">
+          <span className="inline-flex items-center gap-1 rounded-full
+            bg-white/20 backdrop-blur-md border border-white/30
+            px-3 py-1 text-xs font-bold text-white">
+            ✨ Featured
+          </span>
+        </div>
+        {!isOwner && (
+          <div className="absolute top-3 right-3">
+            <span className="rounded-full bg-violet-600/90 backdrop-blur-sm
+              px-2.5 py-1 text-xs font-semibold text-white">
+              {event.category}
             </span>
           </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function EventCard({ event, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="group w-[220px] shrink-0 overflow-hidden rounded-2xl bg-white
-        border border-gray-100 text-left shadow-sm
-        hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98]
-        transition-all duration-200"
-    >
-      <div className="relative h-36 bg-gray-100 overflow-hidden">
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-full w-full object-cover group-hover:scale-105
-              transition-transform duration-300"
-            loading="lazy"
-            draggable={false}
-          />
-        ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-100 to-purple-100">
-            <CalendarIcon className="h-10 w-10 text-violet-300" />
-          </div>
         )}
-        <div className="absolute left-2 top-2 rounded-lg bg-black/60 backdrop-blur-sm
-          px-2 py-1 text-xs text-white font-medium">
-          {event.dateLabel}
-        </div>
-        <div className="absolute right-2 top-2 rounded-full bg-white/95
-          px-2 py-0.5 text-xs font-bold text-violet-700 shadow-sm">
-          {event.price === 0 ? "Free" : `$${event.price}`}
-        </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16
-          bg-gradient-to-t from-black/50 to-transparent" />
-        <div className="absolute inset-x-2.5 bottom-2">
-          <p className="truncate text-sm font-bold text-white drop-shadow">
+        <div className="absolute bottom-0 inset-x-0 p-4">
+          <p className="text-lg font-bold text-white leading-tight drop-shadow">
             {event.title}
           </p>
+          <div className="mt-1.5 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-sm text-white/80">
+              <MapPinIcon className="h-3.5 w-3.5" />
+              <span className="truncate max-w-[180px]">{event.place}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-white/70">{event.dateLabel}</span>
+              <span className="rounded-full bg-white/20 backdrop-blur-sm
+                px-2.5 py-0.5 text-sm font-bold text-white">
+                {event.price === 0 ? "Free" : `$${event.price}`}
+              </span>
+            </div>
+          </div>
         </div>
-      </div>
-      <div className="px-3 py-2.5">
-        <div className="flex items-center gap-1 text-xs text-gray-500">
-          <MapPinIcon className="h-3 w-3 text-violet-500 shrink-0" />
-          <span className="truncate">{event.place}</span>
+      </button>
+
+      {/* Owner menu — outside the clickable button */}
+      {isOwner && (
+        <div className="absolute top-3 right-3 z-10">
+          <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
         </div>
-        <div className="mt-1.5 flex items-center gap-1 text-xs text-gray-400">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
-          <span>{event.category}</span>
-        </div>
-      </div>
-    </button>
+      )}
+    </div>
   );
 }
 
-function NearbyEventCard({ event, onClick }) {
+function EventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
+  const isOwner = currentUserId && event.user_id === currentUserId;
+
   return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-stretch gap-3 rounded-2xl bg-white
-        border border-gray-100 p-3 text-left shadow-sm
-        hover:shadow-md hover:border-violet-100 active:scale-[0.99]
-        transition-all duration-200"
-    >
-      <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-gray-100">
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            draggable={false}
-          />
-        ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-50 to-purple-100">
-            <CalendarIcon className="h-7 w-7 text-violet-300" />
+    <div className="group relative w-[220px] shrink-0 overflow-hidden rounded-2xl bg-white
+      border border-gray-100 text-left shadow-sm
+      hover:shadow-lg hover:-translate-y-0.5
+      transition-all duration-200">
+      <button
+        onClick={onClick}
+        className="block w-full text-left active:scale-[0.98]"
+      >
+        <div className="relative h-36 bg-gray-100 overflow-hidden">
+          {event.img ? (
+            <img
+              src={event.img}
+              alt={event.title}
+              className="h-full w-full object-cover group-hover:scale-105
+                transition-transform duration-300"
+              loading="lazy"
+              draggable={false}
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-100 to-purple-100">
+              <CalendarIcon className="h-10 w-10 text-violet-300" />
+            </div>
+          )}
+          <div className="absolute left-2 top-2 rounded-lg bg-black/60 backdrop-blur-sm
+            px-2 py-1 text-xs text-white font-medium">
+            {event.dateLabel}
           </div>
-        )}
-      </div>
-      <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
-        <div>
-          <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
-            {Number.isFinite(event.distanceKm) && (
-              <span className="shrink-0 rounded-full bg-violet-50 border border-violet-100
-                px-2 py-0.5 text-[11px] font-semibold text-violet-700">
-                {formatDistanceLabel(event.distanceKm)}
+          {!isOwner && (
+            <div className="absolute right-2 top-2 rounded-full bg-white/95
+              px-2 py-0.5 text-xs font-bold text-violet-700 shadow-sm">
+              {event.price === 0 ? "Free" : `$${event.price}`}
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16
+            bg-gradient-to-t from-black/50 to-transparent" />
+          <div className="absolute inset-x-2.5 bottom-2">
+            <p className="truncate text-sm font-bold text-white drop-shadow">
+              {event.title}
+            </p>
+          </div>
+        </div>
+        <div className="px-3 py-2.5">
+          <div className="flex items-center gap-1 text-xs text-gray-500">
+            <MapPinIcon className="h-3 w-3 text-violet-500 shrink-0" />
+            <span className="truncate">{event.place}</span>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between">
+            <div className="flex items-center gap-1 text-xs text-gray-400">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+              <span>{event.category}</span>
+            </div>
+            {isOwner && (
+              <span className="text-xs font-bold text-violet-700">
+                {event.price === 0 ? "Free" : `$${event.price}`}
               </span>
             )}
           </div>
-          <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
-            <MapPinIcon className="h-3 w-3 text-violet-400 shrink-0" />
-            <span className="truncate">{event.place}</span>
-          </div>
         </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-baseline gap-0.5">
-            <span className="text-sm font-bold text-violet-700">
-              {event.price === 0 ? "Free" : `$${event.price}`}
-            </span>
-            {event.price > 0 && (
-              <span className="text-[11px] text-gray-400">/person</span>
-            )}
-          </div>
-          <span className="text-xs text-gray-400">{event.dateLabel}</span>
+      </button>
+
+      {/* Owner menu */}
+      {isOwner && (
+        <div className="absolute top-2 right-2 z-10">
+          <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
         </div>
-      </div>
-    </button>
+      )}
+    </div>
   );
 }
 
-function UpcomingEventRow({ event, onOpen }) {
+function NearbyEventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
+  const isOwner = currentUserId && event.user_id === currentUserId;
+
   return (
-    <button
-      onClick={() => onOpen(event)}
-      className="flex w-full items-stretch gap-3 rounded-2xl bg-white
-        border border-gray-100 p-3 text-left shadow-sm
-        hover:shadow-md hover:border-violet-100 active:scale-[0.99]
-        transition-all duration-200"
-    >
-      <div className="flex w-14 shrink-0 flex-col items-center justify-center
-        rounded-xl bg-gradient-to-b from-violet-50 to-violet-100/60
-        border border-violet-100 py-2">
-        <div className="text-xl font-extrabold text-violet-700 leading-none">
-          {event.day}
+    <div className="relative flex w-full items-stretch gap-3 rounded-2xl bg-white
+      border border-gray-100 p-3 shadow-sm
+      hover:shadow-md hover:border-violet-100
+      transition-all duration-200">
+      <button
+        onClick={onClick}
+        className="flex flex-1 items-stretch gap-3 text-left active:scale-[0.99]"
+      >
+        <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-gray-100">
+          {event.img ? (
+            <img
+              src={event.img}
+              alt={event.title}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              draggable={false}
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-50 to-purple-100">
+              <CalendarIcon className="h-7 w-7 text-violet-300" />
+            </div>
+          )}
         </div>
-        <div className="text-[10px] uppercase tracking-widest text-violet-400 mt-0.5">
-          {event.month}
-        </div>
-      </div>
-      <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-gray-100">
-        {event.img ? (
-          <img
-            src={event.img}
-            alt={event.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            draggable={false}
-          />
-        ) : (
-          <div className="grid h-full w-full place-items-center bg-gradient-to-br
-            from-violet-50 to-purple-100">
-            <CalendarIcon className="h-6 w-6 text-violet-300" />
+        <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5 pr-8">
+          <div>
+            <div className="flex items-start justify-between gap-2">
+              <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
+              {Number.isFinite(event.distanceKm) && (
+                <span className="shrink-0 rounded-full bg-violet-50 border border-violet-100
+                  px-2 py-0.5 text-[11px] font-semibold text-violet-700">
+                  {formatDistanceLabel(event.distanceKm)}
+                </span>
+              )}
+            </div>
+            <div className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+              <MapPinIcon className="h-3 w-3 text-violet-400 shrink-0" />
+              <span className="truncate">{event.place}</span>
+            </div>
           </div>
-        )}
-      </div>
-      <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
-        <div>
-          <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
-          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
-            <MapPinIcon className="h-3 w-3 text-violet-400 shrink-0" />
-            <span className="truncate">{event.place}</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-baseline gap-0.5">
+              <span className="text-sm font-bold text-violet-700">
+                {event.price === 0 ? "Free" : `$${event.price}`}
+              </span>
+              {event.price > 0 && (
+                <span className="text-[11px] text-gray-400">/person</span>
+              )}
+            </div>
+            <span className="text-xs text-gray-400">{event.dateLabel}</span>
           </div>
         </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-baseline gap-0.5">
-            <span className="text-sm font-bold text-violet-700">
-              {event.price === 0 ? "Free" : `$${event.price}`}
+      </button>
+
+      {/* Owner menu — absolutely positioned to avoid layout shift */}
+      {isOwner && (
+        <div className="absolute right-3 top-3 z-10">
+          <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UpcomingEventRow({ event, onOpen, currentUserId, onEdit, onDelete }) {
+  const isOwner = currentUserId && event.user_id === currentUserId;
+
+  return (
+    <div className="relative flex w-full items-stretch gap-3 rounded-2xl bg-white
+      border border-gray-100 p-3 shadow-sm
+      hover:shadow-md hover:border-violet-100
+      transition-all duration-200">
+      <button
+        onClick={() => onOpen(event)}
+        className="flex flex-1 items-stretch gap-3 text-left active:scale-[0.99]"
+      >
+        <div className="flex w-14 shrink-0 flex-col items-center justify-center
+          rounded-xl bg-gradient-to-b from-violet-50 to-violet-100/60
+          border border-violet-100 py-2">
+          <div className="text-xl font-extrabold text-violet-700 leading-none">
+            {event.day}
+          </div>
+          <div className="text-[10px] uppercase tracking-widest text-violet-400 mt-0.5">
+            {event.month}
+          </div>
+        </div>
+        <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-gray-100">
+          {event.img ? (
+            <img
+              src={event.img}
+              alt={event.title}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              draggable={false}
+            />
+          ) : (
+            <div className="grid h-full w-full place-items-center bg-gradient-to-br
+              from-violet-50 to-purple-100">
+              <CalendarIcon className="h-6 w-6 text-violet-300" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5 pr-8">
+          <div>
+            <p className="truncate text-sm font-bold text-gray-900">{event.title}</p>
+            <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
+              <MapPinIcon className="h-3 w-3 text-violet-400 shrink-0" />
+              <span className="truncate">{event.place}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-baseline gap-0.5">
+              <span className="text-sm font-bold text-violet-700">
+                {event.price === 0 ? "Free" : `$${event.price}`}
+              </span>
+              {event.price > 0 && (
+                <span className="text-[11px] text-gray-400">/person</span>
+              )}
+            </div>
+            <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5
+              text-[11px] text-gray-500">
+              {event.category}
             </span>
-            {event.price > 0 && (
-              <span className="text-[11px] text-gray-400">/person</span>
-            )}
           </div>
-          <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5
-            text-[11px] text-gray-500">
-            {event.category}
-          </span>
         </div>
+      </button>
+
+      {/* Owner menu */}
+      {isOwner && (
+        <div className="absolute right-3 top-3 z-10">
+          <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
+   TOAST
+   ================================================================ */
+
+function Toast({ message, type = "success" }) {
+  const isError = type === "error";
+  return (
+    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+      <div className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl
+        border text-sm font-semibold ${
+          isError
+            ? "bg-red-500 border-red-400 text-white"
+            : "bg-white border-gray-200 text-gray-900"
+        }`}>
+        {isError
+          ? <WarningIcon className="h-4 w-4 shrink-0" />
+          : <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />}
+        {message}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -1562,7 +1736,7 @@ function RecenterMap({ position }) {
 }
 
 /* ================================================================
-   SVG ICONS  (unchanged)
+   SVG ICONS
    ================================================================ */
 
 function CompassIcon({ className = "h-5 w-5" }) {
@@ -1670,6 +1844,57 @@ function WarningIcon({ className = "h-5 w-5" }) {
       <path strokeLinecap="round" strokeLinejoin="round"
         d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2
            2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+    </svg>
+  );
+}
+
+function DotsVerticalIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5"  r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+    </svg>
+  );
+}
+
+function SpinnerIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10"
+        stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24"
+      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 6L9 17l-5-5" />
     </svg>
   );
 }
