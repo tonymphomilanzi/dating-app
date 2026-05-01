@@ -53,7 +53,7 @@ function useFeeds(userId) {
 
   const offsetRef  = useRef(0);
   const mountedRef = useRef(true);
-  const rtRef      = useRef(null); // realtime channel
+  const rtRef      = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -116,7 +116,7 @@ function useFeeds(userId) {
 
   useEffect(() => { load(true); }, [load]);
 
-  /* ── realtime: feeds UPDATE (counts) / INSERT / DELETE ── */
+  /* ── realtime ── */
   useEffect(() => {
     rtRef.current = supabase
       .channel("feeds-rt-" + Date.now())
@@ -152,7 +152,6 @@ function useFeeds(userId) {
     if (!userId) return;
     const isLiked = myLikes.has(feedId);
 
-    /* optimistic */
     setMyLikes((prev) => {
       const next = new Set(prev);
       isLiked ? next.delete(feedId) : next.add(feedId);
@@ -178,12 +177,10 @@ function useFeeds(userId) {
         const { error } = await supabase
           .from("feed_likes")
           .insert({ feed_id: feedId, user_id: userId });
-        /* ignore duplicate-key error (user double-tapped) */
         if (error && error.code !== "23505") throw error;
       }
     } catch (e) {
       console.error("toggleLike:", e.message);
-      /* revert */
       setMyLikes((prev) => {
         const next = new Set(prev);
         isLiked ? next.add(feedId) : next.delete(feedId);
@@ -199,7 +196,7 @@ function useFeeds(userId) {
     }
   }, [userId, myLikes]);
 
-  /* ── record a view (called once per card mount) ── */
+  /* ── record a view ── */
   const recordView = useCallback(async (feedId) => {
     try {
       await supabase.rpc("increment_feed_view", { p_feed_id: feedId });
@@ -228,7 +225,6 @@ function useComments(feedId, open) {
   const rtRef      = useRef(null);
   const { user }   = useAuth();
 
-  // The disambiguated select string — used in every query
   const COMMENT_SELECT = `
     id, feed_id, parent_id, body, likes_count, created_at,
     user:feed_comments_user_id_fkey(id, display_name, avatar_url)
@@ -289,7 +285,6 @@ function useComments(feedId, open) {
         },
         async (payload) => {
           if (!mountedRef.current) return;
-          // Fetch full row with disambiguated FK
           const { data, error } = await supabase
             .from("feed_comments")
             .select(COMMENT_SELECT)
@@ -340,7 +335,6 @@ function useComments(feedId, open) {
     setSubmitting(true);
     setSubmitError("");
 
-    // Optimistic temp comment
     const tempId = `temp-${Date.now()}`;
     const tempComment = {
       id:          tempId,
@@ -374,7 +368,6 @@ function useComments(feedId, open) {
       if (error) throw error;
 
       if (mountedRef.current && data) {
-        // Replace temp with real row
         setComments((prev) =>
           prev.map((c) => (c.id === tempId ? data : c))
         );
@@ -425,7 +418,6 @@ function useComments(feedId, open) {
       }
     } catch (e) {
       console.error("toggleCommentLike:", e.message);
-      // Revert
       setMyLikes((prev) => {
         const next = new Set(prev);
         isLiked ? next.add(commentId) : next.delete(commentId);
@@ -443,7 +435,6 @@ function useComments(feedId, open) {
 
   const deleteComment = useCallback(async (commentId) => {
     if (!user?.id) return;
-    // Optimistic remove
     setComments((prev) => prev.filter((c) => c.id !== commentId));
     const { error } = await supabase
       .from("feed_comments")
@@ -452,7 +443,7 @@ function useComments(feedId, open) {
       .eq("user_id", user.id);
     if (error) {
       console.error("deleteComment:", error.message);
-      fetchComments(); // restore on failure
+      fetchComments();
     }
   }, [user?.id, fetchComments]);
 
@@ -484,7 +475,7 @@ export default function Feeds() {
   } = useFeeds(user?.id);
 
   const [activeCommentFeed, setActiveCommentFeed] = useState(null);
-  const [activeShareFeed,   setActiveShareFeed]   = useState(null); // ← ADD
+  const [activeShareFeed,   setActiveShareFeed]   = useState(null);
   const [toast,             setToast]             = useState(null);
 
   const showToast = useCallback((message, type = "success") => {
@@ -494,17 +485,16 @@ export default function Feeds() {
 
   /* ── share ── */
   const handleShare = useCallback((feed) => {
-  setActiveShareFeed(feed);
-}, []);
+    setActiveShareFeed(feed);
+  }, []);
 
-
-const handleShareLog = useCallback((feed) => {
-  if (!user?.id || !feed) return;
-  supabase
-    .from("feed_shares")
-    .insert({ feed_id: feed.id, user_id: user.id })
-    .then(({ error }) => { if (error) console.warn("share log:", error.message); });
-}, [user?.id]);
+  const handleShareLog = useCallback((feed) => {
+    if (!user?.id || !feed) return;
+    supabase
+      .from("feed_shares")
+      .insert({ feed_id: feed.id, user_id: user.id })
+      .then(({ error }) => { if (error) console.warn("share log:", error.message); });
+  }, [user?.id]);
 
   /* ── infinite scroll ── */
   const loaderRef = useRef(null);
@@ -523,12 +513,25 @@ const handleShareLog = useCallback((feed) => {
 
       {/* ── Header ── */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
-        <div className="mx-auto max-w-2xl px-4 py-4 flex items-center justify-between gap-3">
-          <div>
+        <div className="mx-auto max-w-2xl px-4 py-4 flex items-center gap-3">
+
+          {/* ── Back Button ── */}
+          <button
+            onClick={() => navigate("/discover")}
+            aria-label="Go back to Discover"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-violet-100 hover:text-violet-600 transition-colors active:scale-95"
+          >
+            <ChevronLeftIcon className="h-5 w-5" />
+          </button>
+
+          {/* ── Title ── */}
+          <div className="flex-1 min-w-0">
             <h1 className="text-xl font-extrabold text-gray-900">Feed</h1>
             <p className="text-xs text-gray-400 mt-0.5">Latest from the team</p>
           </div>
-          <span className="flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-3 py-1.5">
+
+          {/* ── Live badge ── */}
+          <span className="flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-3 py-1.5 shrink-0">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
               <span className="relative h-2 w-2 rounded-full bg-green-500" />
@@ -599,6 +602,15 @@ const handleShareLog = useCallback((feed) => {
         onClose={() => setActiveCommentFeed(null)}
         onRequireAuth={() => navigate("/auth")}
       />
+
+      {/* ── Share sheet ── */}
+      {activeShareFeed && (
+        <FeedShareSheet
+          feed={activeShareFeed}
+          onClose={() => setActiveShareFeed(null)}
+          onShare={() => handleShareLog(activeShareFeed)}
+        />
+      )}
     </div>
   );
 }
@@ -632,10 +644,10 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
 
   const admin      = feed.admin;
   const adminName  = admin?.display_name || admin?.username || "Admin";
-  const isLong     = feed.content.length > 280;
+  const isLong     = (feed.content || "").length > 280;
   const displayed  = isLong && !expanded
     ? feed.content.slice(0, 280) + "…"
-    : feed.content;
+    : (feed.content || "");
 
   return (
     <article
@@ -969,9 +981,22 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
 
 function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef    = useRef(null);
   const author     = comment.user;
   const authorName = author?.display_name || "User";
   const isOwn      = userId && userId === author?.id;
+
+  /* close menu on outside click */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpen]);
 
   return (
     <div className="flex gap-2.5">
@@ -1016,7 +1041,7 @@ function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop =
           )}
 
           {isOwn && (
-            <div className="relative ml-auto">
+            <div ref={menuRef} className="relative ml-auto">
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
                 className="text-gray-300 hover:text-gray-500 transition-colors"
@@ -1096,6 +1121,13 @@ function Toast({ toast }) {
 /* ================================================================
    ICONS
    ================================================================ */
+function ChevronLeftIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
 function HeartIcon({ className = "h-5 w-5", filled = false }) {
   return (
     <svg className={className} fill={filled ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
