@@ -3,7 +3,7 @@ import { useRef, useState, useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import TopBar from "../components/TopBar.jsx";
 import Button from "../components/Button.jsx";
-import { supabase } from "../lib/supabase.client.js";
+import { supabase } from "../lib/supabase.client.js"; // only for image upload
 import { eventsService } from "../services/events.service.js";
 import {
   getCurrentLocationWithAddress,

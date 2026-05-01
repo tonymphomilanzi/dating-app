@@ -121,8 +121,9 @@ const MainApp = () => {
                 <Route path="/stories/new"            element={<StoryComposer />} />
                 <Route path="/stories/:userId"        element={<StoryPage />} />
                 <Route path="/events/new"             element={<CreateEvent />} />
-                <Route path="/events/:id"             element={<EventDetail />} />
+              
                 <Route path="/events/:id/edit" element={<EditEvent />} />
+                  <Route path="/events/:id"             element={<EventDetail />} />
                 <Route path="/calendar"               element={<Calendar />} />
 <Route path="/massage-clinics/new"        element={<CreateMassageClinic />} />
 <Route path="/massage-clinics/:id/edit"   element={<CreateMassageClinic />} />
