@@ -51,13 +51,7 @@ function ensureAbsoluteUrl(maybeRelative, baseUrl) {
 function getServiceClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !key) {
-    throw new Error(
-      `Missing env vars. url=${Boolean(url)} key=${Boolean(key)}`
-    );
-  }
-
+  if (!url || !key) throw new Error(`Missing env: url=${!!url} key=${!!key}`);
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -92,60 +86,40 @@ function buildOgHtml({
 <meta property="og:title"       content="${t}"/>
 <meta property="og:description" content="${d}"/>
 <meta property="og:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `
-<meta property="og:image"            content="${escapeHtml(image)}"/>
+${hasImage ? `<meta property="og:image"            content="${escapeHtml(image)}"/>
 <meta property="og:image:secure_url" content="${escapeHtml(image)}"/>
 <meta property="og:image:width"      content="1200"/>
 <meta property="og:image:height"     content="630"/>
-<meta property="og:image:alt"        content="${t}"/>` : "<!-- no image -->"}
+<meta property="og:image:alt"        content="${t}"/>` : ""}
 
 <meta name="twitter:card"        content="${twitterCard}"/>
 <meta name="twitter:title"       content="${t}"/>
 <meta name="twitter:description" content="${d}"/>
 <meta name="twitter:url"         content="${escapeHtml(canonicalUrl)}"/>
-${hasImage ? `
-<meta name="twitter:image"     content="${escapeHtml(image)}"/>
+${hasImage ? `<meta name="twitter:image"     content="${escapeHtml(image)}"/>
 <meta name="twitter:image:alt" content="${t}"/>` : ""}
 
 <link rel="canonical" href="${escapeHtml(canonicalUrl)}"/>
 <meta http-equiv="refresh" content="0; url=${escapeHtml(redirectUrl)}"/>
-<script>
-(function(){
-  try { window.location.replace(${JSON.stringify(redirectUrl)}); } catch(e){}
-})();
-</script>
+<script>(function(){try{window.location.replace(${JSON.stringify(redirectUrl)});}catch(e){}}());</script>
 
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{
-  font-family:system-ui,-apple-system,sans-serif;
-  background:#09090b;color:#fafafa;
-  min-height:100vh;display:flex;
-  align-items:center;justify-content:center;padding:24px;
-}
-.card{
-  background:#18181b;border:1px solid #3f3f46;
-  border-radius:16px;overflow:hidden;
-  max-width:560px;width:100%;
-}
+body{font-family:system-ui,-apple-system,sans-serif;background:#09090b;color:#fafafa;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+.card{background:#18181b;border:1px solid #3f3f46;border-radius:16px;overflow:hidden;max-width:560px;width:100%;}
 .cover{width:100%;aspect-ratio:1200/630;object-fit:cover;display:block}
 .body{padding:20px 24px 24px}
-.site{font-size:.65rem;color:#71717a;text-transform:uppercase;
-  letter-spacing:.1em;margin-bottom:10px}
+.site{font-size:.65rem;color:#71717a;text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px}
 h1{font-size:1.15rem;font-weight:700;line-height:1.4;margin-bottom:8px}
 .desc{font-size:.85rem;color:#a1a1aa;line-height:1.6;margin-bottom:18px}
-.btn{
-  display:inline-block;font-size:.8rem;color:#8b5cf6;
-  border:1px solid rgba(139,92,246,.25);border-radius:8px;
-  padding:6px 16px;text-decoration:none;
-}
+.btn{display:inline-block;font-size:.8rem;color:#8b5cf6;
+  border:1px solid rgba(139,92,246,.25);border-radius:8px;padding:6px 16px;text-decoration:none;}
 </style>
 </head>
 <body>
 <div class="card">
-  ${hasImage
-    ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>`
-    : ""}
+  ${hasImage ? `<img class="cover" src="${escapeHtml(image)}" alt="${t}"/>` : ""}
   <div class="body">
     <div class="site">${escapeHtml(siteName)}</div>
     <h1>${t}</h1>
@@ -159,96 +133,106 @@ h1{font-size:1.15rem;font-weight:700;line-height:1.4;margin-bottom:8px}
 
 /* ================================================================
    SHARE HANDLER
+   GET /api/me?share=feed&id=<uuid>
    ================================================================ */
 async function handleShare(req, res) {
-  const type     = String(q1(req.query?.share) || "").toLowerCase();
-  const id       = String(q1(req.query?.id)    || "").trim();
+  const id       = String(q1(req.query?.id) || "").trim();
   const baseUrl  = getBaseUrl(req);
-  const siteName = "Umukunzi"; // ← CHANGE THIS
+  const siteName = "Umukunzi";
 
-  /* ── guard ── */
-  if (type !== "feed" || !id) {
+  const spaUrl       = `${baseUrl}/feeds/${id}`;
+  const canonicalUrl = `${baseUrl}/api/me?share=feed&id=${encodeURIComponent(id)}`;
+
+  /* Helper: send fallback OG page and redirect to feeds list or spaUrl */
+  function sendFallback(title = siteName, description = "", redirectTo = spaUrl) {
+    const html = buildOgHtml({
+      title, description, image: "",
+      canonicalUrl,
+      redirectUrl: redirectTo,
+      siteName,
+    });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(html);
+  }
+
+  /* No id at all */
+  if (!id) {
     res.setHeader("Location", `${baseUrl}/feeds`);
     res.setHeader("Cache-Control", "no-store");
     return res.status(302).end();
   }
 
-  const spaUrl       = `${baseUrl}/feeds/${id}`;
-  const canonicalUrl = `${baseUrl}/api/me?share=feed&id=${encodeURIComponent(id)}`;
-
-  /* ── fallback html (used if anything goes wrong) ── */
-  function fallback(title = siteName, description = "") {
-    return buildOgHtml({
-      title,
-      description,
-      image: "",
-      canonicalUrl,
-      redirectUrl: spaUrl,
-      siteName,
-    });
-  }
-
+  /* Get Supabase service client */
   let supabase;
   try {
     supabase = getServiceClient();
   } catch (err) {
-    /* env vars missing — still render something */
-    console.error("[share] getServiceClient:", err.message);
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    return res.status(200).send(fallback());
+    console.error("[share] no supabase client:", err.message);
+    return sendFallback();
   }
 
   try {
-    /* ── fetch post — NO join first, keep it simple ── */
+    /*
+      Fetch WITHOUT the published filter first so we can debug.
+      We will log exactly what comes back.
+      Change .maybeSingle() — if it returns null we know the ID is wrong.
+    */
     const { data: post, error } = await supabase
-      .from("feeds")           // ← your table name
-      .select(`
-        id,
-        title,
-        content,
-        image_url,
-        tags,
-        published
-      `)
+      .from("feeds")
+      .select("id, title, content, image_url, tags, published")
       .eq("id", id)
-      .eq("published", true)   // ← remove this line if column doesn't exist
-      .maybeSingle();
+      .maybeSingle();            // ← NO published filter yet
 
-    console.log("[share] fetched:", JSON.stringify({ post, error }));
+    /* Log everything so you can read it in Vercel Function Logs */
+    console.log("[share] query result:", JSON.stringify({
+      id,
+      found:     Boolean(post),
+      published: post?.published,
+      title:     post?.title,
+      image_url: post?.image_url,
+      error:     error?.message,
+    }));
 
-    /* ── not found ── */
+    /* Row not found at all */
     if (error || !post) {
-      console.warn("[share] not found:", error?.message);
-      const html = buildOgHtml({
-        title:       "Post not found",
-        description: "This post may have been removed.",
-        image:       "",
-        canonicalUrl,
-        redirectUrl: `${baseUrl}/feeds`,
-        siteName,
-      });
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Cache-Control", "no-store");
-      return res.status(200).send(html);
+      return sendFallback(
+        "Post not found",
+        "This post may have been removed.",
+        `${baseUrl}/feeds`
+      );
     }
 
-    /* ── build OG fields ── */
-    const rawTitle = post.title || siteName;
+    /* Row found but not published — still redirect, no OG needed */
+    if (post.published === false) {
+      res.setHeader("Location", `${baseUrl}/feeds`);
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(302).end();
+    }
 
+    /* Build OG content */
     const tags = Array.isArray(post.tags) && post.tags.length
       ? "  " + post.tags.slice(0, 3).map((t) => `#${t}`).join(" ")
       : "";
 
     const description = truncate(post.content || "", 180) + tags;
 
-    /* image MUST be absolute HTTPS */
+    /*
+      image_url MUST be an absolute HTTPS URL.
+      If it is stored as a relative path in Supabase storage,
+      ensureAbsoluteUrl will prepend your domain — but that likely
+      won't resolve. In that case you need the full Supabase storage URL.
+    */
     const image = ensureAbsoluteUrl(post.image_url || "", baseUrl);
 
-    console.log("[share] building html:", { rawTitle, description, image });
+    console.log("[share] sending OG html:", {
+      title: post.title,
+      image,
+      description: description.slice(0, 80),
+    });
 
     const html = buildOgHtml({
-      title: rawTitle,
+      title:       post.title || siteName,
       description,
       image,
       canonicalUrl,
@@ -261,10 +245,8 @@ async function handleShare(req, res) {
     return res.status(200).send(html);
 
   } catch (err) {
-    console.error("[share] unexpected:", err.message);
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    return res.status(200).send(fallback());
+    console.error("[share] crash:", err.message);
+    return sendFallback();
   }
 }
 
@@ -319,10 +301,16 @@ async function handlePatchProfile(req, res) {
    ================================================================ */
 export default async function handler(req, res) {
   try {
-    if (req.method === "GET" && q1(req.query?.share)) {
+    /*
+      PUBLIC: OG share page
+      GET /api/me?share=feed&id=<uuid>
+      Must be checked BEFORE the auth routes below
+    */
+    if (req.method === "GET" && q1(req.query?.share) === "feed") {
       return await handleShare(req, res);
     }
 
+    /* Authenticated profile routes */
     if (req.method === "GET")   return await handleGetProfile(req, res);
     if (req.method === "PATCH") return await handlePatchProfile(req, res);
 
