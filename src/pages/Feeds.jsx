@@ -606,13 +606,12 @@ export default function Feeds() {
   );
 
   // Navigate to feed detail
-  const handleCardClick = useCallback(
-    (feedId) => {
-      navigate(`/feeds/${feedId}`);
-    },
-    [navigate]
-  );
-
+const handleCardClick = useCallback(
+  (feedId) => {
+    navigate(`/feeds/${feedId}`);
+  },
+  [navigate]
+);
   /* Infinite scroll */
   const loaderRef = useRef(null);
   useEffect(() => {

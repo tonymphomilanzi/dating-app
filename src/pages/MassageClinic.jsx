@@ -620,17 +620,23 @@ export default function MassageClinic() {
   const [error, setError] = useState("");
 
   // ── Refs ──────────────────────────────────────────────────────────
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationLabel, setLocationLabel] = useState("");
+  const [locationStatus, setLocationStatus] = useState("idle");
+  // "idle" | "loading" | "granted" | "denied"
+
+  // ── Refs ──────────────────────────────────────────────────────────
   const locationFilterRef = useRef(null);
-  const locationRequested = useRef(false); // prevent multiple requests
   const isMounted = useRef(true);
 
-  useEffect(() => {
+ useEffect(() => {
     isMounted.current = true;
     window.scrollTo(0, 0);
     return () => {
       isMounted.current = false;
     };
   }, []);
+
 
   /* ── Toast helper ──────────────────────────────────────────────── */
   const showToast = useCallback((message, type = "success") => {
@@ -640,7 +646,7 @@ export default function MassageClinic() {
     }, 3500);
   }, []);
 
-  /* ── Reverse geocode ───────────────────────────────────────────── */
+ /* ── Reverse geocode ───────────────────────────────────────────── */
   const reverseGeocode = useCallback(async (pos) => {
     try {
       const res = await fetch(
@@ -658,14 +664,18 @@ export default function MassageClinic() {
     }
   }, []);
 
-  /* ── Request location — only once ──────────────────────────────── */
+
+ /* ── Request location ──────────────────────────────────────────── */
   const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setLocationStatus("denied");
       return;
     }
-
-    setLocationStatus("loading");
+    // Don't re-request if already loading or granted
+    setLocationStatus((current) => {
+      if (current === "loading") return current;
+      return "loading";
+    });
 
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
@@ -674,7 +684,6 @@ export default function MassageClinic() {
         setUserLocation(pos);
         setSearchLocation(pos);
         setLocationStatus("granted");
-
         const label = await reverseGeocode(pos);
         if (isMounted.current) setLocationLabel(label);
       },
@@ -685,12 +694,14 @@ export default function MassageClinic() {
     );
   }, [reverseGeocode]);
 
-  /* ── Request location once on mount ───────────────────────────── */
+  /* ── Request location ONCE on mount ───────────────────────────── */
   useEffect(() => {
-    if (locationRequested.current) return;
-    locationRequested.current = true;
     requestLocation();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Empty deps intentional: we only want this on mount.
+  // requestLocation is stable but listing it would re-run on every render
+  // in StrictMode (double-invoke). The geolocation API handles duplicates.
 
   /* ── Load clinics ──────────────────────────────────────────────── */
   const loadClinics = useCallback(async () => {

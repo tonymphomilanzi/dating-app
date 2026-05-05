@@ -51,13 +51,11 @@ import { NotificationProvider } from "./contexts/NotificationContext.jsx";
 import SubscriptionPlans from "./pages/SubscriptionPlans.jsx";
 import SubscriptionPayment from "./pages/SubscriptionPayment.jsx";
 import Feeds from "./pages/Feeds.jsx";
-
-// Import Admin App
-import AdminApp from "./admin/AdminApp.jsx";
-
 import FeedPost from "./pages/FeedPost.jsx";
 import FeedDetail from "./pages/FeedDetail.jsx";
 import EditEvent from "./pages/EditEvent.jsx";
+import AdminApp from "./admin/AdminApp.jsx";
+
 /* ================================================================
    MAIN APP
    ================================================================ */
@@ -99,40 +97,46 @@ const MainApp = () => {
               {/* ── Requires completed profile ── */}
               <Route element={<SetupGate />}>
 
-                {/* Tab pages */}
+                {/* ── Tab pages ── */}
                 <Route element={<TabsLayout />}>
                   <Route path="/discover"        element={<Discover />} />
                   <Route path="/matches"         element={<Matches />} />
-               
                   <Route path="/messages"        element={<Messages />} />
                   <Route path="/events"          element={<Events />} />
                   <Route path="/massage-clinics" element={<MassageClinic />} />
                 </Route>
 
-                {/* Full-screen pages */}
-                <Route path="/streams"                element={<Streams />} />
-                <Route path="/notifications"          element={<Notifications />} />
-                <Route path="/profile"                element={<ProfileYou />} />
-                <Route path="/profile/:id"            element={<ProfileView />} />
-                <Route path="/profile/:id/gallery"    element={<ProfileGallery />} />
-                <Route path="/filters"                element={<Filters />} />
-                <Route path="/chat/:id"               element={<Chat />} />
-                <Route path="/match"                  element={<MatchSuccess />} />
-                <Route path="/stories/new"            element={<StoryComposer />} />
-                <Route path="/stories/:userId"        element={<StoryPage />} />
-                <Route path="/events/new"             element={<CreateEvent />} />
-              
+                {/* ── Full-screen pages ── */}
+                <Route path="/streams"             element={<Streams />} />
+                <Route path="/notifications"       element={<Notifications />} />
+                <Route path="/profile"             element={<ProfileYou />} />
+                <Route path="/profile/:id"         element={<ProfileView />} />
+                <Route path="/profile/:id/gallery" element={<ProfileGallery />} />
+                <Route path="/filters"             element={<Filters />} />
+                <Route path="/chat/:id"            element={<Chat />} />
+                <Route path="/match"               element={<MatchSuccess />} />
+                <Route path="/stories/new"         element={<StoryComposer />} />
+                <Route path="/stories/:userId"     element={<StoryPage />} />
+
+                {/* Events */}
+                <Route path="/events/new"      element={<CreateEvent />} />
                 <Route path="/events/:id/edit" element={<EditEvent />} />
-                  <Route path="/events/:id"             element={<EventDetail />} />
-                <Route path="/calendar"               element={<Calendar />} />
-<Route path="/massage-clinics/new"        element={<CreateMassageClinic />} />
-<Route path="/massage-clinics/:id/edit"   element={<CreateMassageClinic />} />
-                <Route path="/feeds"           element={<Feeds />} />
-                <Route path="/feeds/:id" element={<FeedPost />} />
-                <Route path="/feeds/:id/detail" element={<FeedDetail />} />
-                {/* ✅ Subscription — matches navigate("/subscription") in ProfileYou */}
-                <Route path="/subscription"           element={<SubscriptionPlans />} />
-                <Route path="/subscription/payment"    element={<SubscriptionPayment />} />
+                <Route path="/events/:id"      element={<EventDetail />} />
+                <Route path="/calendar"        element={<Calendar />} />
+
+                {/* Massage clinics — DETAIL must be before :id/edit to avoid conflicts */}
+                <Route path="/massage-clinics/new"      element={<CreateMassageClinic />} />
+                <Route path="/massage-clinics/:id/edit" element={<CreateMassageClinic />} />
+                <Route path="/massage-clinics/:id"      element={<MassageClinicDetail />} />
+
+                {/* Feeds */}
+                <Route path="/feeds"     element={<Feeds />} />
+                <Route path="/feeds/new" element={<FeedPost />} />
+                <Route path="/feed/:id"  element={<FeedDetail />} />
+
+                {/* Subscriptions */}
+                <Route path="/subscription"         element={<SubscriptionPlans />} />
+                <Route path="/subscription/payment" element={<SubscriptionPayment />} />
 
               </Route>
             </Route>
@@ -148,7 +152,7 @@ const MainApp = () => {
 };
 
 /* ================================================================
-   ROOT APP  — splits admin vs main
+   ROOT APP — splits admin vs main
    ================================================================ */
 
 export default function App() {
