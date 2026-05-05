@@ -619,11 +619,7 @@ export default function MassageClinic() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // ── Refs ──────────────────────────────────────────────────────────
-  const [userLocation, setUserLocation] = useState(null);
-  const [locationLabel, setLocationLabel] = useState("");
-  const [locationStatus, setLocationStatus] = useState("idle");
-  // "idle" | "loading" | "granted" | "denied"
+
 
   // ── Refs ──────────────────────────────────────────────────────────
   const locationFilterRef = useRef(null);
