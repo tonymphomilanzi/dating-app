@@ -608,7 +608,7 @@ export default function Feeds() {
   // Navigate to feed detail
 const handleCardClick = useCallback(
   (feedId) => {
-    navigate(`/FeedPostDetail/${feedId}`);
+    navigate(`/feed/${feedId}`);
   },
   [navigate]
 );
