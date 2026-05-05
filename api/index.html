@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Number Eats Itself — Google I/O 2026</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+  }
+
+  #header {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    z-index: 10;
+  }
+
+  #header h1 {
+    font-size: 13px;
+    letter-spacing: 6px;
+    color: #00ff88;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+
+  #header p {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: #ffffff44;
+    margin-top: 4px;
+  }
+
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  #hud {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 32px;
+    align-items: center;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: #ffffff33;
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    font-size: 18px;
+    letter-spacing: 2px;
+    color: #00ff88;
+    font-weight: bold;
+  }
+
+  #integrity-bar-wrap {
+    width: 200px;
+  }
+
+  #integrity-bar-track {
+    width: 100%;
+    height: 3px;
+    background: #ffffff11;
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+
+  #integrity-bar {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, #ff4444, #ffaa00, #00ff88);
+    background-size: 200% 100%;
+    background-position: 100% 0;
+    border-radius: 2px;
+    transition: width 0.3s ease, background-position 0.5s ease;
+  }
+
+  .btn {
+    background: none;
+    border: 1px solid #ffffff22;
+    color: #ffffff66;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    padding: 8px 16px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+
+  .btn:hover {
+    border-color: #00ff88;
+    color: #00ff88;
+    box-shadow: 0 0 12px #00ff8833;
+  }
+
+  #controls {
+    position: fixed;
+    top: 50%;
+    right: 24px;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .ctrl-btn {
+    background: none;
+    border: 1px solid #ffffff11;
+    color: #ffffff33;
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    letter-spacing: 2px;
+    padding: 10px 14px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s;
+    text-align: left;
+    width: 130px;
+  }
+
+  .ctrl-btn:hover {
+    border-color: #00ff8866;
+    color: #00ff88aa;
+  }
+
+  .ctrl-btn.active {
+    border-color: #00ff88;
+    color: #00ff88;
+    box-shadow: 0 0 8px #00ff8833;
+  }
+
+  #digit-selector {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .digit-btn {
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid #ffffff11;
+    color: #ffffff22;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .digit-btn:hover, .digit-btn.active {
+    border-color: #00ff88;
+    color: #00ff88;
+    box-shadow: 0 0 8px #00ff8833;
+  }
+
+  #chaos-meter {
+    position: fixed;
+    top: 50%;
+    left: 24px;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #chaos-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: #ffffff22;
+    text-transform: uppercase;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+  }
+
+  #chaos-bar-track {
+    width: 3px;
+    height: 160px;
+    background: #ffffff11;
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+
+  #chaos-bar {
+    width: 100%;
+    height: 0%;
+    background: linear-gradient(0deg, #ff4444, #ffaa00);
+    border-radius: 2px;
+    transition: height 0.5s ease;
+  }
+
+  #message-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  #collapse-msg {
+    font-size: 48px;
+    font-weight: bold;
+    letter-spacing: 12px;
+    color: #ff4444;
+    text-transform: uppercase;
+    opacity: 0;
+    transform: scale(1.5);
+    transition: all 0.5s ease;
+    text-shadow: 0 0 40px #ff444488;
+    pointer-events: none;
+  }
+
+  #collapse-msg.show {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  #generation-flash {
+    position: fixed;
+    inset: 0;
+    background: #00ff88;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 4;
+    transition: opacity 0.1s;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>The Number Eats Itself</h1>
+  <p>Google I/O 2026 Countdown</p>
+</div>
+
+<div id="generation-flash"></div>
+
+<div id="message-overlay">
+  <div id="collapse-msg">CHAOS</div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="chaos-meter">
+  <div id="chaos-bar-track">
+    <div id="chaos-bar"></div>
+  </div>
+  <div id="chaos-label">Chaos</div>
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn active" id="btn-contain" onclick="toggleContain()">◼ Contained</button>
+  <button class="ctrl-btn" id="btn-infect" onclick="triggerInfect()">⚡ Infect</button>
+  <button class="ctrl-btn" id="btn-reset" onclick="resetSim()">↺ Reset</button>
+  <button class="ctrl-btn" id="btn-pause" onclick="togglePause()">⏸ Pause</button>
+</div>
+
+<div id="digit-selector"></div>
+
+<div id="hud">
+  <div class="stat">
+    <div class="stat-label">Generation</div>
+    <div class="stat-value" id="gen-counter">0</div>
+  </div>
+  <div class="stat integrity-bar-wrap" style="width:180px">
+    <div class="stat-label">Number Integrity</div>
+    <div id="integrity-bar-track">
+      <div id="integrity-bar"></div>
+    </div>
+    <div class="stat-value" id="integrity-val">100%</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Live Cells</div>
+    <div class="stat-value" id="cell-counter">0</div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ─────────────────────────────────────────────────────────────────
+const CELL = 9;           // pixel size of each cell
+const COLS = 90;
+const ROWS = 70;
+const W = COLS * CELL;
+const H = ROWS * CELL;
+const SIM_SPEED = 80;     // ms per generation
+
+// Colors
+const COLOR_BG        = '#000000';
+const COLOR_GRID      = '#0a0a0a';
+const COLOR_DIGIT_ALIVE = '#00ff88';  // cells inside number shape, alive
+const COLOR_DIGIT_DEAD  = '#003322';  // cells inside number shape, dead
+const COLOR_WILD_ALIVE  = '#ff4444';  // cells outside number shape, alive
+const COLOR_WILD_DEAD   = '#000000';  // cells outside number shape, dead
+const COLOR_GLOW_INNER  = '#00ff8844';
+
+// ─── DIGIT BITMAPS (on a 9x14 grid) ─────────────────────────────────────────
+// 0=dead, 1=alive
+const DIGIT_MAPS = {
+  1: [
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,1,1,1,0,0,0,0],
+    [0,1,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,1,1,1,1,1,1,0,0],
+  ],
+  2: [
+    [0,0,1,1,1,1,1,0,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,1,1,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,1,1,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,0,0,0,0,0,0,0],
+    [0,1,0,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,0],
+  ],
+  3: [
+    [0,1,1,1,1,1,1,0,0],
+    [1,1,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,1,1,1,1,0,0,0],
+    [0,0,1,1,1,1,0,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [1,1,0,0,0,0,1,1,0],
+    [0,1,1,1,1,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  4: [
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,1,1,1,0,0],
+    [0,0,0,1,0,1,1,0,0],
+    [0,0,1,0,0,1,1,0,0],
+    [0,1,0,0,0,1,1,0,0],
+    [1,1,0,0,0,1,1,0,0],
+    [1,1,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  5: [
+    [0,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,1,0,0,0,0,1,1,0],
+    [0,1,1,1,1,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  6: [
+    [0,0,1,1,1,1,1,0,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,1,1,1,1,0,0],
+    [0,1,1,1,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,0,1,1,1,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  7: [
+    [0,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,1,1,0,0,0],
+    [0,0,0,0,1,1,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,0,1,1,0,0,0,0,0],
+    [0,0,1,1,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,1,1,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  8: [
+    [0,0,1,1,1,1,1,0,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,0,1,1,0,1,1,0,0],
+    [0,0,0,1,1,1,0,0,0],
+    [0,0,0,1,1,1,0,0,0],
+    [0,0,1,1,0,1,1,0,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,0,1,1,1,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  9: [
+    [0,0,1,1,1,1,1,0,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,1,1,0,0,0,1,1,0],
+    [0,0,1,1,1,1,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,0,1,1,0],
+    [0,0,0,0,0,1,1,0,0],
+    [0,0,0,0,1,1,0,0,0],
+    [0,0,0,1,1,0,0,0,0],
+    [0,1,1,1,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+  10: [
+    [0,1,0,1,1,1,1,0,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [1,1,0,1,0,0,1,1,0],
+    [0,0,0,0,1,1,1,0,0],
+    [0,0,0,0,0,0,0,0,0],
+  ],
+};
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let currentDigit = 7;
+let grid = [];          // current generation: 0 or 1
+let digitMask = [];     // true = cell is part of digit silhouette
+let originalMask = [];  // initial digit cells (for integrity calc)
+let generation = 0;
+let paused = false;
+let contained = true;   // if true, outside cells are killed each gen
+let infected = false;
+let totalDigitCells = 0;
+let simInterval = null;
+let chaosLevel = 0;     // 0–1
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = W;
+canvas.height = H;
+
+// ─── DIGIT MASK BUILDER ───────────────────────────────────────────────────────
+function buildMask(digit) {
+  const map = DIGIT_MAPS[digit];
+  const dRows = map.length;
+  const dCols = map[0].length;
+
+  // Scale up the digit map to fill the canvas nicely
+  const scaleX = Math.floor((COLS * 0.65) / dCols);
+  const scaleY = Math.floor((ROWS * 0.85) / dRows);
+  const scale = Math.min(scaleX, scaleY, 5);
+
+  const scaledW = dCols * scale;
+  const scaledH = dRows * scale;
+  const offX = Math.floor((COLS - scaledW) / 2);
+  const offY = Math.floor((ROWS - scaledH) / 2);
+
+  const mask = Array.from({length: ROWS}, () => new Array(COLS).fill(false));
+
+  for (let r = 0; r < dRows; r++) {
+    for (let c = 0; c < dCols; c++) {
+      if (map[r][c] === 1) {
+        for (let sy = 0; sy < scale; sy++) {
+          for (let sx = 0; sx < scale; sx++) {
+            const gr = offY + r * scale + sy;
+            const gc = offX + c * scale + sx;
+            if (gr >= 0 && gr < ROWS && gc >= 0 && gc < COLS) {
+              mask[gr][gc] = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return mask;
+}
+
+// ─── INIT GRID ────────────────────────────────────────────────────────────────
+function initGrid(digit) {
+  currentDigit = digit;
+  generation = 0;
+  chaosLevel = 0;
+  infected = false;
+
+  digitMask    = buildMask(digit);
+  originalMask = digitMask.map(r => [...r]);
+
+  // Count total digit cells
+  totalDigitCells = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (originalMask[r][c]) totalDigitCells++;
+
+  // Seed grid: digit cells ~90% alive, outside ~5% random
+  grid = Array.from({length: ROWS}, (_, r) =>
+    Array.from({length: COLS}, (_, c) => {
+      if (digitMask[r][c]) return Math.random() < 0.88 ? 1 : 0;
+      return Math.random() < 0.03 ? 1 : 0;
+    })
+  );
+
+  updateHUD();
+}
+
+// ─── CONWAY STEP ─────────────────────────────────────────────────────────────
+function step() {
+  const next = Array.from({length: ROWS}, () => new Array(COLS).fill(0));
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      let neighbors = 0;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+            neighbors += grid[nr][nc];
+          }
+        }
+      }
+
+      const alive = grid[r][c] === 1;
+      let survives = false;
+
+      if (alive) {
+        survives = (neighbors === 2 || neighbors === 3);
+      } else {
+        survives = (neighbors === 3);
+      }
+
+      // Containment: kill cells outside digit mask if contained mode
+      if (contained && !digitMask[r][c]) {
+        // Allow brief outside life for dramatic effect
+        survives = survives && (Math.random() < 0.12);
+      }
+
+      next[r][c] = survives ? 1 : 0;
+    }
+  }
+
+  grid = next;
+  generation++;
+  updateChaos();
+  updateHUD();
+}
+
+// ─── CHAOS TRACKING ──────────────────────────────────────────────────────────
+function updateChaos() {
+  if (totalDigitCells === 0) return;
+
+  // Count how many original digit cells are now dead
+  let deadDigitCells = 0;
+  let wildCells = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (originalMask[r][c] && grid[r][c] === 0) deadDigitCells++;
+      if (!originalMask[r][c] && grid[r][c] === 1) wildCells++;
+    }
+  }
+
+  const erosion   = deadDigitCells / totalDigitCells;
+  const invasion  = Math.min(wildCells / (totalDigitCells * 0.5), 1);
+  chaosLevel = Math.min(erosion * 0.7 + invasion * 0.3, 1);
+}
+
+// ─── DRAW ─────────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.fillStyle = COLOR_BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Optional subtle grid lines
+  ctx.strokeStyle = COLOR_GRID;
+  ctx.lineWidth = 0.3;
+  // (skip grid lines for performance, add if desired)
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const alive = grid[r][c] === 1;
+      const inDigit = digitMask[r][c];
+      const inOriginal = originalMask[r][c];
+      const x = c * CELL;
+      const y = r * CELL;
+
+      if (alive) {
+        if (inDigit) {
+          // Alive inside digit — bright green
+          ctx.fillStyle = COLOR_DIGIT_ALIVE;
+          ctx.fillRect(x, y, CELL - 1, CELL - 1);
+
+          // Inner glow pulse
+          const pulse = 0.4 + 0.6 * Math.sin(Date.now() / 300 + r * 0.4 + c * 0.4);
+          ctx.fillStyle = `rgba(0,255,136,${0.15 * pulse})`;
+          ctx.fillRect(x - 1, y - 1, CELL + 1, CELL + 1);
+
+        } else {
+          // Alive outside digit — chaos red, gets brighter with chaos
+          const intensity = Math.floor(100 + chaosLevel * 155);
+          ctx.fillStyle = `rgb(${intensity},${Math.floor(intensity * 0.2)},${Math.floor(intensity * 0.1)})`;
+          ctx.fillRect(x, y, CELL - 1, CELL - 1);
+        }
+      } else {
+        if (inOriginal) {
+          // Dead inside original digit area — show erosion
+          const erosionAlpha = 0.08 + chaosLevel * 0.12;
+          ctx.fillStyle = `rgba(0,255,136,${erosionAlpha})`;
+          ctx.fillRect(x, y, CELL - 1, CELL - 1);
+        }
+        // else: pure black — totally empty
+      }
+    }
+  }
+
+  // Draw digit outline silhouette (fades as chaos grows)
+  drawDigitOutline();
+
+  requestAnimationFrame(draw);
+}
+
+// ─── DIGIT OUTLINE ────────────────────────────────────────────────────────────
+function drawDigitOutline() {
+  const alpha = Math.max(0, 0.15 - chaosLevel * 0.13);
+  if (alpha <= 0) return;
+  ctx.strokeStyle = `rgba(0,255,136,${alpha})`;
+  ctx.lineWidth = 0.5;
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!digitMask[r][c]) continue;
+      // Only draw border edges
+      const isEdge = (
+        (r === 0 || !digitMask[r-1][c]) ||
+        (r === ROWS-1 || !digitMask[r+1][c]) ||
+        (c === 0 || !digitMask[r][c-1]) ||
+        (c === COLS-1 || !digitMask[r][c+1])
+      );
+      if (isEdge) {
+        ctx.strokeRect(c * CELL + 0.5, r * CELL + 0.5, CELL - 1, CELL - 1);
+      }
+    }
+  }
+}
+
+// ─── HUD UPDATE ───────────────────────────────────────────────────────────────
+function updateHUD() {
+  document.getElementById('gen-counter').textContent = generation;
+
+  // Count live cells
+  let live = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (grid[r][c]) live++;
+  document.getElementById('cell-counter').textContent = live;
+
+  // Integrity: how many original digit cells are still alive
+  let surviving = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (originalMask[r][c] && grid[r][c]) surviving++;
+
+  const integrity = totalDigitCells > 0
+    ? Math.round((surviving / totalDigitCells) * 100)
+    : 0;
+
+  document.getElementById('integrity-val').textContent = integrity + '%';
+
+  const bar = document.getElementById('integrity-bar');
+  bar.style.width = integrity + '%';
+  // Shift gradient: green at 100%, red at 0%
+  bar.style.backgroundPosition = (100 - integrity) + '% 0';
+
+  // Chaos bar
+  document.getElementById('chaos-bar').style.height = (chaosLevel * 100) + '%';
+
+  // Chaos message
+  const msg = document.getElementById('collapse-msg');
+  if (chaosLevel > 0.85) {
+    msg.textContent = 'CHAOS';
+    msg.classList.add('show');
+    msg.style.color = '#ff4444';
+  } else if (chaosLevel > 0.6) {
+    msg.textContent = 'COLLAPSING';
+    msg.classList.add('show');
+    msg.style.color = '#ffaa00';
+  } else {
+    msg.classList.remove('show');
+  }
+}
+
+// ─── CONTROLS ─────────────────────────────────────────────────────────────────
+function toggleContain() {
+  contained = !contained;
+  const btn = document.getElementById('btn-contain');
+  if (contained) {
+    btn.textContent = '◼ Contained';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = '◻ Released';
+    btn.classList.remove('active');
+  }
+}
+
+function triggerInfect() {
+  // Seed chaos cells around the digit edges
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!digitMask[r][c] && Math.random() < 0.18) {
+        grid[r][c] = 1;
+      }
+    }
+  }
+  // Flash
+  const flash = document.getElementById('generation-flash');
+  flash.style.background = '#ff444411';
+  flash.style.opacity = '1';
+  setTimeout(() => flash.style.opacity = '0', 150);
+
+  // Force release containment
+  if (contained) toggleContain();
+}
+
+function resetSim() {
+  initGrid(currentDigit);
+  contained = true;
+  const btn = document.getElementById('btn-contain');
+  btn.textContent = '◼ Contained';
+  btn.classList.add('active');
+
+  const flash = document.getElementById('generation-flash');
+  flash.style.background = '#00ff8811';
+  flash.style.opacity = '1';
+  setTimeout(() => flash.style.opacity = '0', 200);
+}
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('btn-pause');
+  if (paused) {
+    btn.textContent = '▶ Resume';
+    btn.classList.add('active');
+    clearInterval(simInterval);
+  } else {
+    btn.textContent = '⏸ Pause';
+    btn.classList.remove('active');
+    simInterval = setInterval(step, SIM_SPEED);
+  }
+}
+
+// ─── DIGIT SELECTOR ───────────────────────────────────────────────────────────
+function buildDigitSelector() {
+  const sel = document.getElementById('digit-selector');
+  [1,2,3,4,5,6,7,8,9,10].forEach(d => {
+    const b = document.createElement('button');
+    b.className = 'digit-btn' + (d === 7 ? ' active' : '');
+    b.textContent = d;
+    b.onclick = () => {
+      document.querySelectorAll('.digit-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      resetSim();
+      initGrid(d);
+    };
+    sel.appendChild(b);
+  });
+}
+
+// ─── MOUSE PAINT ─────────────────────────────────────────────────────────────
+let mouseDown = false;
+canvas.addEventListener('mousedown', e => { mouseDown = true; paint(e); });
+canvas.addEventListener('mouseup',   () => { mouseDown = false; });
+canvas.addEventListener('mousemove', e => { if (mouseDown) paint(e); });
+
+function paint(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = COLS / rect.width;
+  const scaleY = ROWS / rect.height;
+  const c = Math.floor((e.clientX - rect.left) * scaleX);
+  const r = Math.floor((e.clientY - rect.top)  * scaleY);
+  // Paint a 3×3 brush
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+        grid[nr][nc] = 1;
+      }
+    }
+  }
+}
+
+// Touch support
+canvas.addEventListener('touchstart', e => { e.preventDefault(); mouseDown = true; paintTouch(e); }, {passive:false});
+canvas.addEventListener('touchend',   e => { e.preventDefault(); mouseDown = false; }, {passive:false});
+canvas.addEventListener('touchmove',  e => { e.preventDefault(); if(mouseDown) paintTouch(e); }, {passive:false});
+
+function paintTouch(e) {
+  const touch = e.touches[0];
+  paint({ clientX: touch.clientX, clientY: touch.clientY });
+}
+
+// ─── BOOT ────────────────────────────────────────────────────────────────────
+buildDigitSelector();
+initGrid(7);
+draw();
+simInterval = setInterval(step, SIM_SPEED);
+</script>
+</body>
+</html>

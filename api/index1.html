@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gravity Well Countdown — Google I/O 2026</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background:#000;
+  overflow:hidden;
+  font-family:'Courier New',monospace;
+  user-select:none;
+}
+
+canvas { display:block; }
+
+/* ── HUD SHELL ── */
+#ui {
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+}
+
+/* top bar */
+#topbar {
+  position:absolute;
+  top:0; left:0; right:0;
+  padding:18px 28px;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+}
+
+.brand {
+  font-size:10px;
+  letter-spacing:5px;
+  color:#ffffff25;
+  text-transform:uppercase;
+  line-height:1.8;
+}
+.brand span { color:#ffffff55; }
+
+#countdown-strip {
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+
+.cd-pip {
+  width:22px; height:22px;
+  border:1px solid #ffffff15;
+  border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:9px;
+  color:#ffffff25;
+  letter-spacing:0;
+  transition:all .4s ease;
+  pointer-events:all;
+  cursor:pointer;
+}
+.cd-pip:hover   { border-color:#ffffff55; color:#ffffff88; }
+.cd-pip.done    { border-color:#ffffff30; background:#ffffff08; color:#ffffff40; }
+.cd-pip.done::after { content:'✓'; font-size:8px; }
+.cd-pip.active  {
+  border-color:#fff;
+  color:#fff;
+  box-shadow:0 0 14px #ffffff66, 0 0 40px #ffffff22;
+  background:#ffffff12;
+}
+.cd-pip.active span { display:none; }
+.cd-pip.active::after { content:'●'; font-size:7px; }
+
+/* centre overlay */
+#centre-ui {
+  position:absolute;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  text-align:center;
+  pointer-events:none;
+}
+
+#big-digit {
+  font-size:clamp(120px,20vw,260px);
+  font-weight:900;
+  letter-spacing:-0.05em;
+  line-height:1;
+  color:transparent;
+  -webkit-text-stroke:1px rgba(255,255,255,0.08);
+  text-shadow:
+    0 0 80px rgba(255,255,255,0.03),
+    0 0 200px rgba(120,160,255,0.04);
+  transition:all .6s ease;
+  pointer-events:none;
+  font-variant-numeric:tabular-nums;
+}
+
+#big-digit.collapsing {
+  -webkit-text-stroke:1px rgba(255,80,80,0.4);
+  text-shadow:
+    0 0 60px rgba(255,60,60,0.5),
+    0 0 120px rgba(255,0,0,0.3),
+    0 0 200px rgba(255,100,0,0.2);
+  animation: digitShake .08s infinite;
+}
+
+@keyframes digitShake {
+  0%   { transform:translate(-1px,0) scale(0.995); }
+  50%  { transform:translate(1px,0)  scale(1.005); }
+  100% { transform:translate(0,0)    scale(1); }
+}
+
+#big-digit.collapsed {
+  transform:scale(0);
+  opacity:0;
+}
+
+#sub-label {
+  font-size:10px;
+  letter-spacing:6px;
+  color:#ffffff20;
+  text-transform:uppercase;
+  margin-top:12px;
+  transition:all .4s ease;
+}
+
+/* bottom hud */
+#bottombar {
+  position:absolute;
+  bottom:0; left:0; right:0;
+  padding:20px 28px;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+}
+
+.stat-block { text-align:left; line-height:2; }
+.stat-block.right { text-align:right; }
+
+.s-label {
+  font-size:8px;
+  letter-spacing:3px;
+  color:#ffffff20;
+  text-transform:uppercase;
+  display:block;
+}
+.s-val {
+  font-size:16px;
+  color:#ffffff55;
+  letter-spacing:2px;
+}
+
+/* instructions */
+#instructions {
+  position:absolute;
+  bottom:70px; left:50%;
+  transform:translateX(-50%);
+  font-size:9px;
+  letter-spacing:3px;
+  color:#ffffff18;
+  text-transform:uppercase;
+  text-align:center;
+  line-height:2.2;
+  transition:opacity 1s;
+}
+
+/* collapse btn */
+#collapse-btn {
+  position:absolute;
+  bottom:65px; right:28px;
+  pointer-events:all;
+  cursor:pointer;
+  background:none;
+  border:1px solid #ffffff18;
+  color:#ffffff30;
+  font-family:'Courier New',monospace;
+  font-size:9px;
+  letter-spacing:3px;
+  padding:10px 18px;
+  text-transform:uppercase;
+  transition:all .3s;
+}
+#collapse-btn:hover {
+  border-color:#ff444488;
+  color:#ff4444bb;
+  box-shadow:0 0 20px #ff444433;
+}
+#collapse-btn.hot {
+  border-color:#ff4444;
+  color:#ff4444;
+  box-shadow:0 0 30px #ff444466, 0 0 60px #ff444422;
+  animation:btnPulse 1s infinite;
+}
+
+@keyframes btnPulse {
+  0%,100%{ box-shadow:0 0 20px #ff444466; }
+  50%    { box-shadow:0 0 50px #ff4444cc, 0 0 100px #ff444444; }
+}
+
+/* event flash */
+#flash {
+  position:absolute;
+  inset:0;
+  background:radial-gradient(circle at center,#ffffff,transparent 70%);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .08s;
+}
+
+/* orbit ring hint */
+#orbit-hint {
+  position:absolute;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  border-radius:50%;
+  border:1px solid #ffffff05;
+  pointer-events:none;
+  transition:all .5s;
+}
+
+/* gravity strength slider */
+#grav-control {
+  position:absolute;
+  top:50%;
+  right:24px;
+  transform:translateY(-50%);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+  pointer-events:all;
+}
+#grav-label {
+  font-size:8px;
+  letter-spacing:2px;
+  color:#ffffff20;
+  text-transform:uppercase;
+  writing-mode:vertical-rl;
+  text-orientation:mixed;
+}
+#grav-slider {
+  -webkit-appearance:none;
+  appearance:none;
+  writing-mode:vertical-lr;
+  direction:rtl;
+  width:4px;
+  height:120px;
+  background:#ffffff10;
+  outline:none;
+  border-radius:2px;
+  cursor:pointer;
+}
+#grav-slider::-webkit-slider-thumb {
+  -webkit-appearance:none;
+  width:12px; height:12px;
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 0 8px #fff8;
+  cursor:pointer;
+}
+
+/* mode badges */
+#mode-badge {
+  position:absolute;
+  top:50%;
+  left:24px;
+  transform:translateY(-50%);
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  pointer-events:all;
+}
+.mode-btn {
+  background:none;
+  border:1px solid #ffffff12;
+  color:#ffffff25;
+  font-family:'Courier New',monospace;
+  font-size:8px;
+  letter-spacing:2px;
+  padding:8px 12px;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all .25s;
+  text-align:left;
+  width:110px;
+}
+.mode-btn:hover { border-color:#ffffff44; color:#ffffff88; }
+.mode-btn.on {
+  border-color:#7df;
+  color:#7df;
+  box-shadow:0 0 10px #77ddff33;
+}
+
+/* transition veil */
+#veil {
+  position:absolute;
+  inset:0;
+  background:#000;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .5s;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div id="veil"></div>
+  <div id="flash"></div>
+
+  <!-- orbit hint ring -->
+  <div id="orbit-hint"></div>
+
+  <!-- top -->
+  <div id="topbar">
+    <div class="brand">
+      Google I/O 2026<br>
+      <span>Countdown</span>
+    </div>
+    <div id="countdown-strip"></div>
+  </div>
+
+  <!-- centre -->
+  <div id="centre-ui">
+    <div id="big-digit">7</div>
+    <div id="sub-label">Days Remaining</div>
+  </div>
+
+  <!-- gravity slider -->
+  <div id="grav-control">
+    <div id="grav-label">Mass</div>
+    <input type="range" id="grav-slider" min="200" max="4000" value="1200" step="50">
+  </div>
+
+  <!-- mode buttons -->
+  <div id="mode-badge">
+    <button class="mode-btn on"  id="btn-orbit"  onclick="setMode('orbit')">⊙ Orbit</button>
+    <button class="mode-btn"     id="btn-cannon" onclick="setMode('cannon')">↗ Cannon</button>
+    <button class="mode-btn"     id="btn-rain"   onclick="setMode('rain')">↓ Rain</button>
+    <button class="mode-btn"     id="btn-swirl"  onclick="setMode('swirl')">↺ Swirl</button>
+  </div>
+
+  <!-- bottom -->
+  <div id="bottombar">
+    <div class="stat-block">
+      <span class="s-label">Particles</span>
+      <span class="s-val" id="s-particles">0</span>
+    </div>
+    <div id="instructions">
+      Click &amp; drag to throw particles &nbsp;·&nbsp; Scroll to zoom<br>
+      Orbit any star to charge the collapse
+    </div>
+    <div class="stat-block right">
+      <span class="s-label">Orbiting</span>
+      <span class="s-val" id="s-orbiting">0</span>
+    </div>
+  </div>
+
+  <!-- collapse -->
+  <button id="collapse-btn" onclick="startCollapse()">⬤ Collapse</button>
+
+  <!-- countdown pips -->
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════
+const MAX_PARTICLES   = 1800;
+const PARTICLE_RADIUS = 1.6;
+const TAIL_LEN        = 22;
+const GLOW_RADIUS     = 180;   // px around planet that glows
+const ORBIT_THRESHOLD = 280;   // distance considered "orbiting"
+const ORBIT_NEEDED    = 60;    // orbiting particles to unlock collapse
+const COLLAPSE_FRAMES = 180;
+const DIGITS          = [10,9,8,7,6,5,4,3,2,1];
+
+// Planet palette per digit
+const PALETTES = {
+  10:{ core:'#c8d8ff', glow:'#4466ff', trail:'#8899ff', ring:'#2244cc' },
+   9:{ core:'#ffd8c8', glow:'#ff6644', trail:'#ff9977', ring:'#cc4422' },
+   8:{ core:'#d8ffd8', glow:'#44ff88', trail:'#77ff99', ring:'#22cc66' },
+   7:{ core:'#ffd8ff', glow:'#cc44ff', trail:'#dd88ff', ring:'#8822cc' },
+   6:{ core:'#fff8c8', glow:'#ffcc33', trail:'#ffdd77', ring:'#cc9911' },
+   5:{ core:'#c8ffff', glow:'#33ccff', trail:'#77ddff', ring:'#11aacc' },
+   4:{ core:'#ffc8c8', glow:'#ff3344', trail:'#ff7788', ring:'#cc1122' },
+   3:{ core:'#c8ffc8', glow:'#33ff66', trail:'#77ff99', ring:'#11cc44' },
+   2:{ core:'#ffeec8', glow:'#ffaa33', trail:'#ffcc77', ring:'#cc7711' },
+   1:{ core:'#ffffff', glow:'#aaccff', trail:'#ddeeff', ring:'#6688cc' },
+};
+
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W, H, cx, cy;
+
+let digitIdx   = 3;           // start at 7 (DIGITS[3])
+let currentDigit = DIGITS[digitIdx];
+let palette      = PALETTES[currentDigit];
+
+let particles    = [];
+let stars        = [];        // background stars
+let collapseState = null;     // null | { frame, phase }
+let orbitCount   = 0;
+let chargeLevel  = 0;         // 0–1 for collapse button heat
+let gravMass     = 1200;
+let emitMode     = 'orbit';   // orbit | cannon | rain | swirl
+let mouseX = 0, mouseY = 0;
+let dragStart = null;
+let dragCurrent = null;
+let isMouseDown = false;
+let emitTimer   = 0;
+let frameN      = 0;
+let planetScale = 1;          // for collapse animation
+let planetAlpha = 1;
+let blackHoleR  = 0;          // grows during collapse
+let accretionAngle = 0;
+
+// ═══════════════════════════════════════════════════════════
+//  RESIZE
+// ═══════════════════════════════════════════════════════════
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  cx = W / 2; cy = H / 2;
+  buildStars();
+  updateOrbitHint();
+}
+window.addEventListener('resize', resize);
+
+// ═══════════════════════════════════════════════════════════
+//  BACKGROUND STARS
+// ═══════════════════════════════════════════════════════════
+function buildStars() {
+  stars = Array.from({length:260}, () => ({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    r: Math.random() * 1.2,
+    a: Math.random(),
+    twinkle: Math.random() * Math.PI * 2,
+    speed: 0.005 + Math.random() * 0.02,
+  }));
+}
+
+function drawStars() {
+  stars.forEach(s => {
+    s.twinkle += s.speed;
+    const alpha = s.a * (0.5 + 0.5 * Math.sin(s.twinkle));
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PLANET DRAW
+// ═══════════════════════════════════════════════════════════
+function getPlanetRadius() {
+  return Math.min(W, H) * 0.09;
+}
+
+function drawPlanet() {
+  if (!planetAlpha) return;
+  const R = getPlanetRadius() * planetScale;
+  if (R <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = planetAlpha;
+
+  // Outer atmospheric glow
+  const glowR = R * 3.5;
+  const grad = ctx.createRadialGradient(cx, cy, R * 0.5, cx, cy, glowR);
+  grad.addColorStop(0,   palette.glow + '55');
+  grad.addColorStop(0.4, palette.glow + '18');
+  grad.addColorStop(1,   'transparent');
+  ctx.beginPath();
+  ctx.arc(cx, cy, glowR, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Ring (decorative halo)
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1, 0.28);
+  ctx.beginPath();
+  ctx.arc(0, 0, R * 1.7, 0, Math.PI*2);
+  ctx.strokeStyle = palette.ring + '55';
+  ctx.lineWidth = R * 0.18;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, R * 2.1, 0, Math.PI*2);
+  ctx.strokeStyle = palette.ring + '28';
+  ctx.lineWidth = R * 0.10;
+  ctx.stroke();
+  ctx.restore();
+
+  // Planet body
+  const bodyGrad = ctx.createRadialGradient(cx - R*0.25, cy - R*0.25, R*0.1, cx, cy, R);
+  bodyGrad.addColorStop(0, palette.core);
+  bodyGrad.addColorStop(0.5, palette.glow + 'cc');
+  bodyGrad.addColorStop(1,   palette.ring);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI*2);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // Specular highlight
+  const specGrad = ctx.createRadialGradient(cx - R*0.35, cy - R*0.35, 0, cx - R*0.2, cy - R*0.2, R*0.6);
+  specGrad.addColorStop(0,   'rgba(255,255,255,0.45)');
+  specGrad.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+  specGrad.addColorStop(1,   'transparent');
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI*2);
+  ctx.fillStyle = specGrad;
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawBlackHole() {
+  if (blackHoleR <= 0) return;
+  ctx.save();
+
+  // Event horizon
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, blackHoleR * 3);
+  grad.addColorStop(0,   '#000000');
+  grad.addColorStop(0.4, '#000000');
+  grad.addColorStop(0.7, palette.glow + '44');
+  grad.addColorStop(1,   'transparent');
+  ctx.beginPath();
+  ctx.arc(cx, cy, blackHoleR * 3, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Hard horizon
+  ctx.beginPath();
+  ctx.arc(cx, cy, blackHoleR, 0, Math.PI*2);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  ctx.strokeStyle = palette.glow;
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = palette.glow;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Accretion disk
+  accretionAngle += 0.04;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(accretionAngle);
+  ctx.scale(1, 0.22);
+  for (let i = 0; i < 3; i++) {
+    const rr = blackHoleR * (1.6 + i * 0.6);
+    const alpha = 0.7 - i * 0.2;
+    const diskGrad = ctx.createRadialGradient(0,0,rr*0.85, 0,0,rr*1.15);
+    diskGrad.addColorStop(0,   'transparent');
+    diskGrad.addColorStop(0.3, palette.glow + Math.floor(alpha*255).toString(16).padStart(2,'0'));
+    diskGrad.addColorStop(0.7, palette.trail + Math.floor(alpha*180).toString(16).padStart(2,'0'));
+    diskGrad.addColorStop(1,   'transparent');
+    ctx.beginPath();
+    ctx.arc(0, 0, rr, 0, Math.PI*2);
+    ctx.strokeStyle = diskGrad;
+    ctx.lineWidth = blackHoleR * 0.4;
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PARTICLES
+// ═══════════════════════════════════════════════════════════
+function spawnParticle(x, y, vx, vy) {
+  if (particles.length >= MAX_PARTICLES) {
+    // remove oldest non-orbiting
+    const idx = particles.findIndex(p => !p.captured);
+    if (idx !== -1) particles.splice(idx, 1);
+    else return;
+  }
+  particles.push({
+    x, y, vx, vy,
+    tail: [],
+    life: 1,
+    size: PARTICLE_RADIUS * (0.7 + Math.random() * 0.8),
+    hue: Math.random() * 40 - 20,  // color jitter
+    captured: false,
+    age: 0,
+  });
+}
+
+function spawnBurst(n, x, y, speed) {
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const s     = speed * (0.5 + Math.random() * 0.8);
+    spawnParticle(x, y, Math.cos(angle)*s, Math.sin(angle)*s);
+  }
+}
+
+function emitModeParticles() {
+  if (collapseState) return;
+  emitTimer++;
+
+  if (emitMode === 'rain' && emitTimer % 3 === 0) {
+    const x = Math.random() * W;
+    const vx = (Math.random() - 0.5) * 0.5;
+    const vy = 1 + Math.random();
+    spawnParticle(x, -10, vx, vy);
+  }
+
+  if (emitMode === 'swirl' && emitTimer % 4 === 0) {
+    const angle = emitTimer * 0.08;
+    const dist  = 340 + Math.sin(emitTimer * 0.03) * 80;
+    const x = cx + Math.cos(angle) * dist;
+    const y = cy + Math.sin(angle) * dist;
+    // tangential velocity
+    const speed = 1.8;
+    const vx = -Math.sin(angle) * speed + (Math.random()-0.5)*0.4;
+    const vy =  Math.cos(angle) * speed + (Math.random()-0.5)*0.4;
+    spawnParticle(x, y, vx, vy);
+  }
+
+  if (emitMode === 'orbit' && emitTimer % 6 === 0) {
+    // spawn just outside planet in tangential direction
+    const R   = getPlanetRadius() * 1.6 + Math.random() * 160;
+    const ang = Math.random() * Math.PI * 2;
+    const x   = cx + Math.cos(ang) * R;
+    const y   = cy + Math.sin(ang) * R;
+    // circular orbit speed
+    const orbV = Math.sqrt(gravMass / R) * 0.85;
+    const vx   = -Math.sin(ang) * orbV + (Math.random()-0.5)*0.4;
+    const vy   =  Math.cos(ang) * orbV + (Math.random()-0.5)*0.4;
+    spawnParticle(x, y, vx, vy);
+  }
+}
+
+function updateParticles() {
+  const R2 = getPlanetRadius() * planetScale;
+  const bhR = blackHoleR || 0;
+  orbitCount = 0;
+
+  particles = particles.filter(p => {
+    // Gravity
+    const dx = cx - p.x;
+    const dy = cy - p.y;
+    const dist2 = dx*dx + dy*dy;
+    const dist  = Math.sqrt(dist2) || 0.01;
+
+    const mass = collapseState ? gravMass * 6 : gravMass;
+    const force = mass / dist2;
+    p.vx += dx / dist * force;
+    p.vy += dy / dist * force;
+
+    // Velocity cap
+    const spd = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+    if (spd > 18) { p.vx *= 18/spd; p.vy *= 18/spd; }
+
+    // Move
+    p.x += p.vx;
+    p.y += p.vy;
+    p.age++;
+
+    // Tail
+    p.tail.push({x: p.x, y: p.y});
+    if (p.tail.length > TAIL_LEN) p.tail.shift();
+
+    // Out of bounds
+    if (p.x < -200 || p.x > W+200 || p.y < -200 || p.y > H+200) return false;
+
+    // Black hole absorption
+    if (bhR > 0 && dist < bhR * 1.2) return false;
+
+    // Planet collision
+    if (!collapseState && dist < R2 + 2) {
+      // Elastic bounce off planet surface
+      const nx = dx/dist, ny = dy/dist;
+      const dot = p.vx*nx + p.vy*ny;
+      p.vx -= 2 * dot * nx * 0.6;
+      p.vy -= 2 * dot * ny * 0.6;
+      p.x  = cx - nx * (R2 + 3);
+      p.y  = cy - ny * (R2 + 3);
+    }
+
+    // Orbit detection
+    if (dist < ORBIT_THRESHOLD) {
+      p.captured = true;
+      orbitCount++;
+    } else {
+      p.captured = false;
+    }
+
+    return true;
+  });
+
+  chargeLevel = Math.min(orbitCount / ORBIT_NEEDED, 1);
+  const btn = document.getElementById('collapse-btn');
+  if (chargeLevel >= 1) btn.classList.add('hot');
+  else                  btn.classList.remove('hot');
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    if (p.tail.length < 2) return;
+    const dist = Math.hypot(cx - p.x, cy - p.y);
+    const proximity = 1 - Math.min(dist / (ORBIT_THRESHOLD * 1.5), 1);
+
+    // Trail
+    for (let i = 1; i < p.tail.length; i++) {
+      const t   = i / p.tail.length;
+      const a   = t * 0.55 * (0.4 + proximity * 0.6);
+      const col = palette.trail;
+      ctx.beginPath();
+      ctx.moveTo(p.tail[i-1].x, p.tail[i-1].y);
+      ctx.lineTo(p.tail[i].x,   p.tail[i].y);
+      ctx.strokeStyle = col + Math.floor(a*255).toString(16).padStart(2,'0');
+      ctx.lineWidth   = p.size * t * 0.9;
+      ctx.stroke();
+    }
+
+    // Core dot
+    const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 3);
+    glow.addColorStop(0,   palette.core + 'ff');
+    glow.addColorStop(0.4, palette.glow + 'aa');
+    glow.addColorStop(1,   'transparent');
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI*2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DRAG-TO-THROW
+// ═══════════════════════════════════════════════════════════
+function drawSlingshot() {
+  if (!isMouseDown || !dragStart || emitMode !== 'cannon') return;
+  const mx = dragCurrent ? dragCurrent.x : mouseX;
+  const my = dragCurrent ? dragCurrent.y : mouseY;
+  const dx = dragStart.x - mx;
+  const dy = dragStart.y - my;
+  const len = Math.sqrt(dx*dx + dy*dy);
+  if (len < 5) return;
+
+  // Draw trajectory prediction
+  let px = dragStart.x, py = dragStart.y;
+  let pvx = dx * 0.06, pvy = dy * 0.06;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  for (let i = 0; i < 55; i++) {
+    const ddx = cx - px, ddy = cy - py;
+    const dd2 = ddx*ddx + ddy*ddy;
+    const dd  = Math.sqrt(dd2) || 0.01;
+    pvx += ddx/dd * gravMass/dd2;
+    pvy += ddy/dd * gravMass/dd2;
+    px  += pvx; py += pvy;
+    ctx.lineTo(px, py);
+    if (dd < getPlanetRadius()) break;
+  }
+  ctx.strokeStyle = palette.trail + '44';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([4,4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Arrow
+  ctx.beginPath();
+  ctx.moveTo(dragStart.x, dragStart.y);
+  ctx.lineTo(mx, my);
+  ctx.strokeStyle = '#ffffff22';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // Dot at launch
+  ctx.beginPath();
+  ctx.arc(dragStart.x, dragStart.y, 4, 0, Math.PI*2);
+  ctx.fillStyle = palette.core + '88';
+  ctx.fill();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  COLLAPSE SEQUENCE
+// ═══════════════════════════════════════════════════════════
+function startCollapse() {
+  if (collapseState) return;
+  if (chargeLevel < 1 && orbitCount < 20) {
+    // Not enough charge — shake button
+    const btn = document.getElementById('collapse-btn');
+    btn.style.animation = 'none';
+    void btn.offsetWidth;
+    return;
+  }
+
+  collapseState = { frame: 0, phase: 'implode' };
+  document.getElementById('big-digit').classList.add('collapsing');
+}
+
+function updateCollapse() {
+  if (!collapseState) return;
+  collapseState.frame++;
+  const f = collapseState.frame;
+
+  if (collapseState.phase === 'implode') {
+    // Planet shrinks, black hole grows
+    const t = Math.min(f / 60, 1);
+    planetScale = 1 - t * t;
+    blackHoleR  = t * t * getPlanetRadius() * 2.5;
+    planetAlpha = 1 - t;
+
+    if (t >= 1) {
+      collapseState.phase = 'hold';
+      collapseState.frame = 0;
+      planetAlpha = 0;
+      document.getElementById('big-digit').classList.remove('collapsing');
+      document.getElementById('big-digit').classList.add('collapsed');
+      flashScreen();
+    }
+  }
+
+  if (collapseState.phase === 'hold') {
+    // Black hole holds, sucks particles
+    const t = Math.min(f / 70, 1);
+    blackHoleR = getPlanetRadius() * 2.5 * (1 - t * 0.5);
+
+    if (t >= 1) {
+      collapseState.phase = 'transition';
+      collapseState.frame = 0;
+    }
+  }
+
+  if (collapseState.phase === 'transition') {
+    const t = Math.min(collapseState.frame / 50, 1);
+    blackHoleR = getPlanetRadius() * 1.25 * (1 - t);
+
+    if (t >= 1) {
+      advanceDigit();
+    }
+  }
+}
+
+function flashScreen() {
+  const flash = document.getElementById('flash');
+  flash.style.opacity = '0.4';
+  setTimeout(() => { flash.style.opacity = '0'; }, 120);
+}
+
+function advanceDigit() {
+  // Veil transition
+  const veil = document.getElementById('veil');
+  veil.style.opacity = '1';
+
+  setTimeout(() => {
+    digitIdx = (digitIdx + 1) % DIGITS.length;
+    currentDigit = DIGITS[digitIdx];
+    palette = PALETTES[currentDigit];
+
+    // Mark pip done
+    document.querySelectorAll('.cd-pip').forEach((p, i) => {
+      if (i < digitIdx) { p.classList.add('done'); p.classList.remove('active'); }
+      else if (i === digitIdx) { p.classList.add('active'); p.classList.remove('done'); }
+      else { p.classList.remove('done','active'); }
+    });
+
+    // Update digit display
+    const bd = document.getElementById('big-digit');
+    bd.textContent = currentDigit;
+    bd.classList.remove('collapsed','collapsing');
+
+    // Reset sim
+    collapseState = null;
+    planetScale   = 1;
+    planetAlpha   = 1;
+    blackHoleR    = 0;
+    particles     = [];
+    chargeLevel   = 0;
+    orbitCount    = 0;
+    updateOrbitHint();
+
+    // Spawn welcome burst
+    setTimeout(() => {
+      spawnBurst(120, cx, cy, 5);
+      veil.style.opacity = '0';
+    }, 100);
+
+  }, 500);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  HUD
+// ═══════════════════════════════════════════════════════════
+function updateHUD() {
+  document.getElementById('s-particles').textContent = particles.length;
+  document.getElementById('s-orbiting').textContent  = orbitCount;
+
+  // Collapse button opacity driven by charge
+  const btn = document.getElementById('collapse-btn');
+  btn.style.opacity = 0.3 + chargeLevel * 0.7;
+}
+
+function updateOrbitHint() {
+  const hint = document.getElementById('orbit-hint');
+  const d    = ORBIT_THRESHOLD * 2;
+  hint.style.width  = d + 'px';
+  hint.style.height = d + 'px';
+  hint.style.left   = (cx - ORBIT_THRESHOLD) + 'px';
+  hint.style.top    = (cy - ORBIT_THRESHOLD) + 'px';
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CHARGE RING (canvas layer)
+// ═══════════════════════════════════════════════════════════
+function drawChargeRing() {
+  if (chargeLevel <= 0) return;
+  const r   = ORBIT_THRESHOLD;
+  const arc = chargeLevel * Math.PI * 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI/2, -Math.PI/2 + arc);
+  ctx.strokeStyle = palette.glow + Math.floor(chargeLevel * 200).toString(16).padStart(2,'0');
+  ctx.lineWidth   = 1.5;
+  ctx.shadowBlur  = 15;
+  ctx.shadowColor = palette.glow;
+  ctx.stroke();
+  ctx.shadowBlur  = 0;
+
+  // Full ring ghost
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI*2);
+  ctx.strokeStyle = palette.glow + '12';
+  ctx.lineWidth   = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MODE BUTTONS
+// ═══════════════════════════════════════════════════════════
+function setMode(m) {
+  emitMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('on'));
+  document.getElementById('btn-' + m).classList.add('on');
+
+  const instr = document.getElementById('instructions');
+  const msgs = {
+    orbit:  'Particles auto-spawn in orbital paths · Orbit any star to charge collapse',
+    cannon: 'Click & drag to aim · Release to throw · Build up orbiting mass',
+    rain:   'Particles fall from above · Gravity curves their paths',
+    swirl:  'Spiral injection · Watch the accretion disk form',
+  };
+  instr.textContent = msgs[m];
+}
+
+// ═══════════════════════════════════════════════════════════
+//  COUNTDOWN PIPS
+// ═══════════════════════════════════════════════════════════
+function buildPips() {
+  const strip = document.getElementById('countdown-strip');
+  DIGITS.forEach((d, i) => {
+    const pip = document.createElement('div');
+    pip.className = 'cd-pip' + (i === digitIdx ? ' active' : '');
+    pip.innerHTML = `<span>${d}</span>`;
+    pip.title = `Jump to ${d}`;
+    pip.onclick = () => jumpToDigit(i);
+    strip.appendChild(pip);
+  });
+}
+
+function jumpToDigit(idx) {
+  if (collapseState) return;
+  const veil = document.getElementById('veil');
+  veil.style.opacity = '1';
+  setTimeout(() => {
+    digitIdx     = idx;
+    currentDigit = DIGITS[idx];
+    palette      = PALETTES[currentDigit];
+
+    document.querySelectorAll('.cd-pip').forEach((p, i) => {
+      p.classList.toggle('active', i === idx);
+      p.classList.toggle('done',   i < idx);
+    });
+
+    document.getElementById('big-digit').textContent = currentDigit;
+    document.getElementById('big-digit').classList.remove('collapsed','collapsing');
+
+    particles   = [];
+    chargeLevel = 0;
+    orbitCount  = 0;
+
+    spawnBurst(100, cx, cy, 5);
+    veil.style.opacity = '0';
+  }, 350);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MOUSE / TOUCH
+// ═══════════════════════════════════════════════════════════
+canvas.addEventListener('mousedown', e => {
+  isMouseDown = true;
+  dragStart   = { x: e.clientX, y: e.clientY };
+  dragCurrent = { x: e.clientX, y: e.clientY };
+  mouseX = e.clientX; mouseY = e.clientY;
+});
+
+canvas.addEventListener('mousemove', e => {
+  mouseX = e.clientX; mouseY = e.clientY;
+  if (isMouseDown) dragCurrent = { x: e.clientX, y: e.clientY };
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!isMouseDown) return;
+  isMouseDown = false;
+
+  if (emitMode === 'cannon' && dragStart) {
+    const dx  = dragStart.x - e.clientX;
+    const dy  = dragStart.y - e.clientY;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len > 8) {
+      const n  = Math.min(Math.floor(len / 8), 25);
+      for (let i = 0; i < n; i++) {
+        const spread = 0.08;
+        const vx = dx * 0.06 + (Math.random()-0.5) * spread * len;
+        const vy = dy * 0.06 + (Math.random()-0.5) * spread * len;
+        spawnParticle(
+          dragStart.x + (Math.random()-0.5)*8,
+          dragStart.y + (Math.random()-0.5)*8,
+          vx, vy
+        );
+      }
+    } else {
+      // Click-in-place: spawn small burst
+      spawnBurst(12, e.clientX, e.clientY, 2.5);
+    }
+  } else {
+    spawnBurst(18, e.clientX, e.clientY, 3);
+  }
+
+  dragStart = null;
+});
+
+canvas.addEventListener('click', e => {
+  if (emitMode !== 'cannon') {
+    spawnBurst(22, e.clientX, e.clientY, 3.5);
+  }
+});
+
+// Touch
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  dragStart   = { x: t.clientX, y: t.clientY };
+  dragCurrent = { x: t.clientX, y: t.clientY };
+  isMouseDown = true;
+}, { passive:false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  dragCurrent = { x: t.clientX, y: t.clientY };
+}, { passive:false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (dragStart && dragCurrent) {
+    const dx = dragStart.x - dragCurrent.x;
+    const dy = dragStart.y - dragCurrent.y;
+    spawnBurst(20, dragStart.x, dragStart.y, 3);
+    const len = Math.sqrt(dx*dx+dy*dy);
+    if (len > 10) {
+      for (let i = 0; i < 15; i++) {
+        spawnParticle(dragStart.x, dragStart.y, dx*0.05, dy*0.05);
+      }
+    }
+  }
+  isMouseDown = false;
+  dragStart   = null;
+}, { passive:false });
+
+// Gravity slider
+document.getElementById('grav-slider').addEventListener('input', e => {
+  gravMass = +e.target.value;
+});
+
+// ═══════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ═══════════════════════════════════════════════════════════
+function loop() {
+  requestAnimationFrame(loop);
+  frameN++;
+
+  // Clear
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // Background
+  drawStars();
+
+  // Physics
+  emitModeParticles();
+  updateParticles();
+  updateCollapse();
+
+  // Draw order: planet → particles → BH → charge ring → slingshot
+  if (!collapseState || collapseState.phase === 'implode') {
+    drawPlanet();
+  }
+  drawParticles();
+  drawBlackHole();
+  drawChargeRing();
+  drawSlingshot();
+
+  // HUD
+  updateHUD();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  BOOT
+// ═══════════════════════════════════════════════════════════
+resize();
+buildPips();
+setMode('orbit');
+
+// Initial digit display
+document.getElementById('big-digit').textContent = currentDigit;
+document.querySelectorAll('.cd-pip')[digitIdx].classList.add('active');
+
+// Welcome burst
+setTimeout(() => spawnBurst(160, cx, cy, 6), 200);
+
+loop();
+</script>
+</body>
+</html>

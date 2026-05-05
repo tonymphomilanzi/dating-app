@@ -14,9 +14,14 @@ import FeedShareSheet from "../components/FeedShareSheet";
 /* ================================================================
    CONSTANTS
    ================================================================ */
-const PAGE_SIZE       = 10;
+const PAGE_SIZE = 10;
 const MAX_COMMENT_LEN = 1000;
-const COMMENT_PAGE    = 20;
+const COMMENT_PAGE = 20;
+
+const COMMENT_SELECT = `
+  id, feed_id, parent_id, body, likes_count, created_at,
+  user:feed_comments_user_id_fkey(id, display_name, avatar_url)
+`;
 
 /* ================================================================
    HELPERS
@@ -24,19 +29,21 @@ const COMMENT_PAGE    = 20;
 function timeAgo(iso) {
   if (!iso) return "";
   const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60)     return "just now";
-  if (diff < 3600)   return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400)  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
   return new Date(iso).toLocaleDateString([], {
-    day: "numeric", month: "short", year: "numeric",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
   });
 }
 
 function fmtCount(n) {
   if (!n) return "0";
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
 
@@ -44,85 +51,113 @@ function fmtCount(n) {
    HOOK — useFeeds
    ================================================================ */
 function useFeeds(userId) {
-  const [feeds,       setFeeds]       = useState([]);
-  const [myLikes,     setMyLikes]     = useState(new Set());
-  const [loading,     setLoading]     = useState(true);
+  const [feeds, setFeeds] = useState([]);
+  const [myLikes, setMyLikes] = useState(new Set());
+  const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore,     setHasMore]     = useState(true);
-  const [error,       setError]       = useState("");
+  const [hasMore, setHasMore] = useState(true);
+  const [error, setError] = useState("");
 
-  const offsetRef  = useRef(0);
-  const mountedRef = useRef(true);
-  const rtRef      = useRef(null);
+  const offsetRef = useRef(0);
+  const isMounted = useRef(true);
+  const userIdRef = useRef(userId); // stable ref so callbacks don't go stale
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const load = useCallback(async (replace = false) => {
-    if (replace) { offsetRef.current = 0; setLoading(true); }
-    else setLoadingMore(true);
-    setError("");
-
-    try {
-      const from = offsetRef.current;
-      const to   = from + PAGE_SIZE - 1;
-
-      const { data, error: err } = await supabase
-        .from("feeds")
-        .select(`
-          id, title, content, image_url, tags, pinned,
-          views_count, likes_count, comments_count, shares_count,
-          created_at, updated_at,
-          admin:admin_users(id, username, display_name, avatar_url)
-        `)
-        .eq("published", true)
-        .order("pinned",     { ascending: false })
-        .order("created_at", { ascending: false })
-        .range(from, to);
-
-      if (err) throw err;
-      if (!mountedRef.current) return;
-
-      const rows = data ?? [];
-      setFeeds((prev) => replace ? rows : [...prev, ...rows]);
-      setHasMore(rows.length === PAGE_SIZE);
-      offsetRef.current = from + rows.length;
-
-      if (userId && rows.length > 0) {
-        const ids = rows.map((r) => r.id);
-        const { data: liked } = await supabase
-          .from("feed_likes")
-          .select("feed_id")
-          .eq("user_id", userId)
-          .in("feed_id", ids);
-        if (mountedRef.current && liked) {
-          setMyLikes((prev) => {
-            const next = new Set(prev);
-            liked.forEach((l) => next.add(l.feed_id));
-            return next;
-          });
-        }
-      }
-    } catch (e) {
-      if (mountedRef.current) setError(e.message || "Failed to load feeds");
-    } finally {
-      if (mountedRef.current) { setLoading(false); setLoadingMore(false); }
-    }
+    userIdRef.current = userId;
   }, [userId]);
 
-  useEffect(() => { load(true); }, [load]);
-
-  /* Realtime */
   useEffect(() => {
-    rtRef.current = supabase
-      .channel("feeds-rt-" + Date.now())
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  const fetchLikes = useCallback(async (ids) => {
+    const uid = userIdRef.current;
+    if (!uid || !ids.length) return;
+    try {
+      const { data: liked } = await supabase
+        .from("feed_likes")
+        .select("feed_id")
+        .eq("user_id", uid)
+        .in("feed_id", ids);
+      if (isMounted.current && liked) {
+        setMyLikes((prev) => {
+          const next = new Set(prev);
+          liked.forEach((l) => next.add(l.feed_id));
+          return next;
+        });
+      }
+    } catch (e) {
+      console.warn("fetchLikes:", e.message);
+    }
+  }, []); // no deps — uses refs
+
+  const load = useCallback(
+    async (replace = false) => {
+      if (replace) {
+        offsetRef.current = 0;
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+      setError("");
+
+      try {
+        const from = offsetRef.current;
+        const to = from + PAGE_SIZE - 1;
+
+        const { data, error: err } = await supabase
+          .from("feeds")
+          .select(
+            `id, title, content, image_url, tags, pinned,
+             views_count, likes_count, comments_count, shares_count,
+             created_at, updated_at,
+             admin:admin_users(id, username, display_name, avatar_url)`
+          )
+          .eq("published", true)
+          .order("pinned", { ascending: false })
+          .order("created_at", { ascending: false })
+          .range(from, to);
+
+        if (err) throw err;
+        if (!isMounted.current) return;
+
+        const rows = data ?? [];
+        setFeeds((prev) => (replace ? rows : [...prev, ...rows]));
+        setHasMore(rows.length === PAGE_SIZE);
+        offsetRef.current = from + rows.length;
+
+        if (rows.length > 0) {
+          await fetchLikes(rows.map((r) => r.id));
+        }
+      } catch (e) {
+        if (isMounted.current) setError(e.message || "Failed to load feeds");
+      } finally {
+        if (isMounted.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [fetchLikes]
+  );
+
+  // Initial load
+  useEffect(() => {
+    load(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Realtime subscription — set up once
+  useEffect(() => {
+    const channel = supabase
+      .channel("feeds-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "feeds" },
         (payload) => {
-          if (!mountedRef.current) return;
+          if (!isMounted.current) return;
           if (payload.eventType === "INSERT" && payload.new.published) {
             setFeeds((prev) =>
               prev.some((f) => f.id === payload.new.id)
@@ -142,13 +177,18 @@ function useFeeds(userId) {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(rtRef.current); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const toggleLike = useCallback(async (feedId) => {
-    if (!userId) return;
+    const uid = userIdRef.current;
+    if (!uid) return;
+
     const isLiked = myLikes.has(feedId);
 
+    // Optimistic update
     setMyLikes((prev) => {
       const next = new Set(prev);
       isLiked ? next.delete(feedId) : next.add(feedId);
@@ -157,7 +197,10 @@ function useFeeds(userId) {
     setFeeds((prev) =>
       prev.map((f) =>
         f.id === feedId
-          ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (isLiked ? -1 : 1)) }
+          ? {
+              ...f,
+              likes_count: Math.max(0, (f.likes_count || 0) + (isLiked ? -1 : 1)),
+            }
           : f
       )
     );
@@ -168,17 +211,17 @@ function useFeeds(userId) {
           .from("feed_likes")
           .delete()
           .eq("feed_id", feedId)
-          .eq("user_id", userId);
+          .eq("user_id", uid);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from("feed_likes")
-          .insert({ feed_id: feedId, user_id: userId });
+          .insert({ feed_id: feedId, user_id: uid });
         if (error && error.code !== "23505") throw error;
       }
     } catch (e) {
       console.error("toggleLike:", e.message);
-      /* Revert optimistic update */
+      // Revert
       setMyLikes((prev) => {
         const next = new Set(prev);
         isLiked ? next.add(feedId) : next.delete(feedId);
@@ -187,12 +230,18 @@ function useFeeds(userId) {
       setFeeds((prev) =>
         prev.map((f) =>
           f.id === feedId
-            ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (isLiked ? 1 : -1)) }
+            ? {
+                ...f,
+                likes_count: Math.max(
+                  0,
+                  (f.likes_count || 0) + (isLiked ? 1 : -1)
+                ),
+              }
             : f
         )
       );
     }
-  }, [userId, myLikes]);
+  }, [myLikes]); // myLikes needed to read current state
 
   const recordView = useCallback(async (feedId) => {
     try {
@@ -203,8 +252,15 @@ function useFeeds(userId) {
   }, []);
 
   return {
-    feeds, myLikes, loading, loadingMore,
-    hasMore, error, load, toggleLike, recordView,
+    feeds,
+    myLikes,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    load,
+    toggleLike,
+    recordView,
   };
 }
 
@@ -212,28 +268,27 @@ function useFeeds(userId) {
    HOOK — useComments
    ================================================================ */
 function useComments(feedId, open) {
-  const [comments,    setComments]    = useState([]);
-  const [loading,     setLoading]     = useState(false);
-  const [submitting,  setSubmitting]  = useState(false);
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [myLikes,     setMyLikes]     = useState(new Set());
+  const [myLikes, setMyLikes] = useState(new Set());
 
-  const mountedRef = useRef(true);
-  const rtRef      = useRef(null);
-  const { user }   = useAuth();
-
-  const COMMENT_SELECT = `
-    id, feed_id, parent_id, body, likes_count, created_at,
-    user:feed_comments_user_id_fkey(id, display_name, avatar_url)
-  `;
+  const isMounted = useRef(true);
+  const { user } = useAuth();
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
+  // Reset when feedId changes
   useEffect(() => {
-    if (!feedId) { setComments([]); setSubmitError(""); }
+    setComments([]);
+    setSubmitError("");
+    setMyLikes(new Set());
   }, [feedId]);
 
   const fetchComments = useCallback(async () => {
@@ -248,60 +303,70 @@ function useComments(feedId, open) {
         .limit(COMMENT_PAGE);
 
       if (error) throw error;
-      if (!mountedRef.current) return;
-      setComments(data ?? []);
+      if (!isMounted.current) return;
 
-      if (user?.id && data?.length) {
-        const ids = data.map((c) => c.id);
+      const list = data ?? [];
+      setComments(list);
+
+      if (user?.id && list.length > 0) {
+        const ids = list.map((c) => c.id);
         const { data: liked } = await supabase
           .from("feed_comment_likes")
           .select("comment_id")
           .eq("user_id", user.id)
           .in("comment_id", ids);
-        if (mountedRef.current && liked)
+        if (isMounted.current && liked) {
           setMyLikes(new Set(liked.map((l) => l.comment_id)));
+        }
       }
     } catch (e) {
       console.error("fetchComments:", e.message);
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
   }, [feedId, user?.id]);
 
+  // Fetch + subscribe when sheet opens
   useEffect(() => {
     if (!open || !feedId) return;
+
     fetchComments();
 
-    rtRef.current = supabase
-      .channel(`comments-${feedId}-${Date.now()}`)
+    const channel = supabase
+      .channel(`comments-${feedId}`)
       .on(
         "postgres_changes",
         {
-          event: "INSERT", schema: "public",
-          table: "feed_comments", filter: `feed_id=eq.${feedId}`,
+          event: "INSERT",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
         },
         async (payload) => {
-          if (!mountedRef.current) return;
-          const { data, error } = await supabase
+          if (!isMounted.current) return;
+          // Fetch full row with joined user
+          const { data } = await supabase
             .from("feed_comments")
             .select(COMMENT_SELECT)
             .eq("id", payload.new.id)
             .single();
-          if (error) { console.error("rt insert fetch:", error.message); return; }
-          if (data && mountedRef.current)
+          if (data && isMounted.current) {
             setComments((prev) =>
               prev.some((c) => c.id === data.id) ? prev : [...prev, data]
             );
+          }
         }
       )
       .on(
         "postgres_changes",
         {
-          event: "UPDATE", schema: "public",
-          table: "feed_comments", filter: `feed_id=eq.${feedId}`,
+          event: "UPDATE",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
         },
         (payload) => {
-          if (!mountedRef.current) return;
+          if (!isMounted.current) return;
           setComments((prev) =>
             prev.map((c) =>
               c.id === payload.new.id ? { ...c, ...payload.new } : c
@@ -312,139 +377,165 @@ function useComments(feedId, open) {
       .on(
         "postgres_changes",
         {
-          event: "DELETE", schema: "public",
-          table: "feed_comments", filter: `feed_id=eq.${feedId}`,
+          event: "DELETE",
+          schema: "public",
+          table: "feed_comments",
+          filter: `feed_id=eq.${feedId}`,
         },
         (payload) => {
-          if (!mountedRef.current) return;
+          if (!isMounted.current) return;
           setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
         }
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(rtRef.current); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [open, feedId, fetchComments]);
 
-  const submitComment = useCallback(async (body, parentId = null) => {
-    if (!user?.id || !feedId || !body.trim()) return false;
-    setSubmitting(true);
-    setSubmitError("");
+  const submitComment = useCallback(
+    async (body, parentId = null) => {
+      if (!user?.id || !feedId || !body.trim()) return false;
+      setSubmitting(true);
+      setSubmitError("");
 
-    const tempId = `temp-${Date.now()}`;
-    const tempComment = {
-      id:          tempId,
-      feed_id:     feedId,
-      parent_id:   parentId,
-      body:        body.trim(),
-      likes_count: 0,
-      created_at:  new Date().toISOString(),
-      user: {
-        id:           user.id,
-        display_name: user.user_metadata?.display_name
-                      || user.email?.split("@")[0]
-                      || "You",
-        avatar_url:   user.user_metadata?.avatar_url || null,
-      },
-    };
-    setComments((prev) => [...prev, tempComment]);
+      const tempId = `temp-${Date.now()}`;
+      const tempComment = {
+        id: tempId,
+        feed_id: feedId,
+        parent_id: parentId,
+        body: body.trim(),
+        likes_count: 0,
+        created_at: new Date().toISOString(),
+        user: {
+          id: user.id,
+          display_name:
+            user.user_metadata?.display_name ||
+            user.email?.split("@")[0] ||
+            "You",
+          avatar_url: user.user_metadata?.avatar_url || null,
+        },
+      };
+      setComments((prev) => [...prev, tempComment]);
 
-    try {
-      const { data, error } = await supabase
-        .from("feed_comments")
-        .insert({
-          feed_id:   feedId,
-          user_id:   user.id,
-          parent_id: parentId ?? null,
-          body:      body.trim(),
-        })
-        .select(COMMENT_SELECT)
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from("feed_comments")
+          .insert({
+            feed_id: feedId,
+            user_id: user.id,
+            parent_id: parentId ?? null,
+            body: body.trim(),
+          })
+          .select(COMMENT_SELECT)
+          .single();
 
-      if (error) throw error;
-
-      if (mountedRef.current && data) {
-        setComments((prev) =>
-          prev.map((c) => (c.id === tempId ? data : c))
-        );
-      }
-      return true;
-    } catch (e) {
-      console.error("submitComment:", e.message);
-      if (mountedRef.current) {
-        setComments((prev) => prev.filter((c) => c.id !== tempId));
-        setSubmitError(e.message || "Failed to post comment");
-      }
-      return false;
-    } finally {
-      if (mountedRef.current) setSubmitting(false);
-    }
-  }, [user, feedId]);
-
-  const toggleCommentLike = useCallback(async (commentId) => {
-    if (!user?.id) return;
-    const isLiked = myLikes.has(commentId);
-
-    setMyLikes((prev) => {
-      const next = new Set(prev);
-      isLiked ? next.delete(commentId) : next.add(commentId);
-      return next;
-    });
-    setComments((prev) =>
-      prev.map((c) =>
-        c.id === commentId
-          ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (isLiked ? -1 : 1)) }
-          : c
-      )
-    );
-
-    try {
-      if (isLiked) {
-        const { error } = await supabase
-          .from("feed_comment_likes")
-          .delete()
-          .eq("comment_id", commentId)
-          .eq("user_id", user.id);
         if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("feed_comment_likes")
-          .insert({ comment_id: commentId, user_id: user.id });
-        if (error && error.code !== "23505") throw error;
+
+        if (isMounted.current && data) {
+          setComments((prev) => prev.map((c) => (c.id === tempId ? data : c)));
+        }
+        return true;
+      } catch (e) {
+        console.error("submitComment:", e.message);
+        if (isMounted.current) {
+          setComments((prev) => prev.filter((c) => c.id !== tempId));
+          setSubmitError(e.message || "Failed to post comment");
+        }
+        return false;
+      } finally {
+        if (isMounted.current) setSubmitting(false);
       }
-    } catch (e) {
-      console.error("toggleCommentLike:", e.message);
+    },
+    [user, feedId]
+  );
+
+  const toggleCommentLike = useCallback(
+    async (commentId) => {
+      if (!user?.id) return;
+      const isLiked = myLikes.has(commentId);
+
       setMyLikes((prev) => {
         const next = new Set(prev);
-        isLiked ? next.add(commentId) : next.delete(commentId);
+        isLiked ? next.delete(commentId) : next.add(commentId);
         return next;
       });
       setComments((prev) =>
         prev.map((c) =>
           c.id === commentId
-            ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (isLiked ? 1 : -1)) }
+            ? {
+                ...c,
+                likes_count: Math.max(
+                  0,
+                  (c.likes_count || 0) + (isLiked ? -1 : 1)
+                ),
+              }
             : c
         )
       );
-    }
-  }, [user?.id, myLikes]);
 
-  const deleteComment = useCallback(async (commentId) => {
-    if (!user?.id) return;
-    setComments((prev) => prev.filter((c) => c.id !== commentId));
-    const { error } = await supabase
-      .from("feed_comments")
-      .delete()
-      .eq("id", commentId)
-      .eq("user_id", user.id);
-    if (error) {
-      console.error("deleteComment:", error.message);
-      fetchComments();
-    }
-  }, [user?.id, fetchComments]);
+      try {
+        if (isLiked) {
+          const { error } = await supabase
+            .from("feed_comment_likes")
+            .delete()
+            .eq("comment_id", commentId)
+            .eq("user_id", user.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase
+            .from("feed_comment_likes")
+            .insert({ comment_id: commentId, user_id: user.id });
+          if (error && error.code !== "23505") throw error;
+        }
+      } catch (e) {
+        console.error("toggleCommentLike:", e.message);
+        // Revert
+        setMyLikes((prev) => {
+          const next = new Set(prev);
+          isLiked ? next.add(commentId) : next.delete(commentId);
+          return next;
+        });
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === commentId
+              ? {
+                  ...c,
+                  likes_count: Math.max(
+                    0,
+                    (c.likes_count || 0) + (isLiked ? 1 : -1)
+                  ),
+                }
+              : c
+          )
+        );
+      }
+    },
+    [user?.id, myLikes]
+  );
+
+  const deleteComment = useCallback(
+    async (commentId) => {
+      if (!user?.id) return;
+      // Optimistic removal
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+      const { error } = await supabase
+        .from("feed_comments")
+        .delete()
+        .eq("id", commentId)
+        .eq("user_id", user.id);
+      if (error) {
+        console.error("deleteComment:", error.message);
+        fetchComments(); // reconcile
+      }
+    },
+    [user?.id, fetchComments]
+  );
 
   const threaded = useMemo(() => {
-    const top     = comments.filter((c) => !c.parent_id);
-    const replies = comments.filter((c) =>  c.parent_id);
+    const top = comments.filter((c) => !c.parent_id);
+    const replies = comments.filter((c) => c.parent_id);
     return top.map((c) => ({
       ...c,
       replies: replies.filter((r) => r.parent_id === c.id),
@@ -452,8 +543,14 @@ function useComments(feedId, open) {
   }, [comments]);
 
   return {
-    threaded, loading, submitting, submitError,
-    myLikes, submitComment, toggleCommentLike, deleteComment,
+    threaded,
+    loading,
+    submitting,
+    submitError,
+    myLikes,
+    submitComment,
+    toggleCommentLike,
+    deleteComment,
   };
 }
 
@@ -465,13 +562,25 @@ export default function Feeds() {
   const navigate = useNavigate();
 
   const {
-    feeds, myLikes: likedPosts, loading, loadingMore,
-    hasMore, error, load, toggleLike, recordView,
+    feeds,
+    myLikes: likedPosts,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    load,
+    toggleLike,
+    recordView,
   } = useFeeds(user?.id);
 
   const [activeCommentFeed, setActiveCommentFeed] = useState(null);
-  const [activeShareFeed,   setActiveShareFeed]   = useState(null);
-  const [toast,             setToast]             = useState(null);
+  const [activeShareFeed, setActiveShareFeed] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  // Scroll to top on mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
@@ -482,29 +591,40 @@ export default function Feeds() {
     setActiveShareFeed(feed);
   }, []);
 
-  const handleShareLog = useCallback(async (feed) => {
-    if (!user?.id || !feed) return;
-    try {
-      await supabase
-        .from("feed_shares")
-        .insert({ feed_id: feed.id, user_id: user.id });
-      /* Optimistically bump share count in UI */
-      /* (realtime will sync it properly) */
-    } catch (e) {
-      console.warn("share log:", e.message);
-    }
-  }, [user?.id]);
+  const handleShareLog = useCallback(
+    async (feed) => {
+      if (!user?.id || !feed) return;
+      try {
+        await supabase
+          .from("feed_shares")
+          .insert({ feed_id: feed.id, user_id: user.id });
+      } catch (e) {
+        console.warn("share log:", e.message);
+      }
+    },
+    [user?.id]
+  );
+
+  // Navigate to feed detail
+  const handleCardClick = useCallback(
+    (feedId) => {
+      navigate(`/feeds/${feedId}`);
+    },
+    [navigate]
+  );
 
   /* Infinite scroll */
   const loaderRef = useRef(null);
   useEffect(() => {
+    const el = loaderRef.current;
+    if (!el) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && hasMore && !loadingMore) load();
       },
       { threshold: 0.1 }
     );
-    if (loaderRef.current) obs.observe(loaderRef.current);
+    obs.observe(el);
     return () => obs.disconnect();
   }, [hasMore, loadingMore, load]);
 
@@ -571,10 +691,20 @@ export default function Feeds() {
             feed={feed}
             liked={likedPosts.has(feed.id)}
             userId={user?.id}
-            onLike={() => toggleLike(feed.id)}
-            onComment={() => setActiveCommentFeed(feed)}
-            onShare={() => handleShare(feed)}
+            onLike={(e) => {
+              e.stopPropagation();
+              toggleLike(feed.id);
+            }}
+            onComment={(e) => {
+              e.stopPropagation();
+              setActiveCommentFeed(feed);
+            }}
+            onShare={(e) => {
+              e.stopPropagation();
+              handleShare(feed);
+            }}
             onView={() => recordView(feed.id)}
+            onClick={() => handleCardClick(feed.id)}
           />
         ))}
 
@@ -614,13 +744,17 @@ export default function Feeds() {
 /* ================================================================
    FEED CARD
    ================================================================ */
-function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
+function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onClick }) {
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
   const viewedRef = useRef(false);
 
+  // View tracking via IntersectionObserver
   useEffect(() => {
-    if (viewedRef.current) return;
+    viewedRef.current = false; // reset if feed changes
+  }, [feed.id]);
+
+  useEffect(() => {
     const el = document.getElementById(`feed-${feed.id}`);
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -635,23 +769,28 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [feed.id, onView]);
+  }, [feed.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const admin     = feed.admin;
+  const admin = feed.admin;
   const adminName = admin?.display_name || admin?.username || "Admin";
-  const isLong    = (feed.content || "").length > 280;
-  const displayed = isLong && !expanded
-    ? feed.content.slice(0, 280) + "…"
-    : (feed.content || "");
+  const isLong = (feed.content || "").length > 280;
+  const displayed =
+    isLong && !expanded
+      ? feed.content.slice(0, 280) + "…"
+      : feed.content || "";
 
   return (
     <article
       id={`feed-${feed.id}`}
-      className="group rounded-3xl bg-white border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden"
+      onClick={onClick}
+      className="group rounded-3xl bg-white border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden cursor-pointer"
     >
       {/* Cover image */}
       {feed.image_url && !imgError && (
-        <div className="relative w-full bg-gray-100 overflow-hidden" style={{ maxHeight: 480 }}>
+        <div
+          className="relative w-full bg-gray-100 overflow-hidden"
+          style={{ maxHeight: 480 }}
+        >
           <img
             src={feed.image_url}
             alt={feed.title}
@@ -685,7 +824,9 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-extrabold text-gray-900">{adminName}</span>
+              <span className="text-sm font-extrabold text-gray-900">
+                {adminName}
+              </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
                 <ShieldIcon className="h-2.5 w-2.5" /> Admin
               </span>
@@ -709,7 +850,10 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
         </p>
         {isLong && (
           <button
-            onClick={() => setExpanded(!expanded)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
             className="mt-1.5 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
           >
             {expanded ? "Show less" : "Read more"}
@@ -739,10 +883,10 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
           <span>{fmtCount(feed.shares_count)} shares</span>
         </div>
 
-        {/* Actions */}
+        {/* Action buttons — stopPropagation so card click doesn't fire */}
         <div className="grid grid-cols-3 gap-2">
           <button
-            onClick={() => userId ? onLike() : null}
+            onClick={onLike}
             aria-label={liked ? "Unlike" : "Like"}
             className={[
               "flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold transition-all active:scale-95",
@@ -783,32 +927,47 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView }) {
    ================================================================ */
 function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
   const {
-    threaded, loading, submitting, submitError,
-    myLikes, submitComment, toggleCommentLike, deleteComment,
+    threaded,
+    loading,
+    submitting,
+    submitError,
+    myLikes,
+    submitComment,
+    toggleCommentLike,
+    deleteComment,
   } = useComments(feed?.id, !!feed);
 
-  const [body,    setBody]    = useState("");
+  const [body, setBody] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const inputRef = useRef(null);
-  const listRef  = useRef(null);
+  const listRef = useRef(null);
 
+  // Reset form when sheet opens for a different feed
   useEffect(() => {
     if (feed) {
-      setBody(""); setReplyTo(null);
+      setBody("");
+      setReplyTo(null);
       setTimeout(() => inputRef.current?.focus(), 300);
     }
   }, [feed?.id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!userId) { onRequireAuth(); return; }
+    if (!userId) {
+      onRequireAuth();
+      return;
+    }
     if (!body.trim()) return;
+
     const ok = await submitComment(body, replyTo?.id ?? null);
     if (ok) {
       setBody("");
       setReplyTo(null);
       setTimeout(() => {
-        listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+        listRef.current?.scrollTo({
+          top: listRef.current.scrollHeight,
+          behavior: "smooth",
+        });
       }, 150);
     }
   };
@@ -830,7 +989,9 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
             <CommentIcon className="h-5 w-5 text-violet-600" />
             <div>
               <p className="text-sm font-extrabold text-gray-900">Comments</p>
-              <p className="text-xs text-gray-400 truncate max-w-[200px]">{feed.title}</p>
+              <p className="text-xs text-gray-400 truncate max-w-[200px]">
+                {feed.title}
+              </p>
             </div>
           </div>
           <button
@@ -842,7 +1003,10 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
         </div>
 
         {/* Comments list */}
-        <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
+        <div
+          ref={listRef}
+          className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0"
+        >
           {loading && (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
@@ -862,7 +1026,9 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <CommentIcon className="h-10 w-10 text-gray-300" />
               <p className="text-sm font-bold text-gray-500">No comments yet</p>
-              <p className="text-xs text-gray-400">Be the first to share your thoughts!</p>
+              <p className="text-xs text-gray-400">
+                Be the first to share your thoughts!
+              </p>
             </div>
           )}
 
@@ -882,7 +1048,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           ))}
         </div>
 
-        {/* Input */}
+        {/* Input area */}
         <div
           className="shrink-0 border-t border-gray-100 px-4 pt-3"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
@@ -896,9 +1062,13 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           {replyTo && (
             <div className="flex items-center justify-between rounded-xl bg-violet-50 border border-violet-100 px-3 py-2 mb-2">
               <p className="text-xs text-violet-700 font-medium">
-                Replying to <span className="font-bold">{replyTo.name}</span>
+                Replying to{" "}
+                <span className="font-bold">{replyTo.name}</span>
               </p>
-              <button onClick={() => setReplyTo(null)} className="text-violet-400 hover:text-violet-600">
+              <button
+                onClick={() => setReplyTo(null)}
+                className="text-violet-400 hover:text-violet-600"
+              >
                 <XIcon className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -908,14 +1078,18 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               <textarea
                 ref={inputRef}
                 value={body}
-                onChange={(e) => setBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
+                onChange={(e) =>
+                  setBody(e.target.value.slice(0, MAX_COMMENT_LEN))
+                }
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSubmit(e);
                   }
                 }}
-                placeholder={userId ? "Write a comment…" : "Sign in to comment"}
+                placeholder={
+                  userId ? "Write a comment…" : "Sign in to comment"
+                }
                 disabled={!userId || submitting}
                 rows={1}
                 className="w-full resize-none rounded-2xl border border-gray-200 px-4 py-3 pr-12 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all disabled:opacity-50"
@@ -930,9 +1104,11 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               disabled={!body.trim() || submitting || !userId}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shadow-md"
             >
-              {submitting
-                ? <SpinnerIcon className="h-4 w-4" />
-                : <SendIcon className="h-4 w-4" />}
+              {submitting ? (
+                <SpinnerIcon className="h-4 w-4" />
+              ) : (
+                <SendIcon className="h-4 w-4" />
+              )}
             </button>
           </form>
         </div>
@@ -966,7 +1142,9 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
           >
             {showReplies
               ? "Hide replies"
-              : `View ${comment.replies.length} repl${comment.replies.length !== 1 ? "ies" : "y"}`}
+              : `View ${comment.replies.length} repl${
+                  comment.replies.length !== 1 ? "ies" : "y"
+                }`}
           </button>
           {showReplies &&
             comment.replies.map((reply) => (
@@ -986,12 +1164,20 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
   );
 }
 
-function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop = false }) {
+function CommentRow({
+  comment,
+  userId,
+  liked,
+  onLike,
+  onDelete,
+  onReply,
+  isTop = false,
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef    = useRef(null);
-  const author     = comment.user;
+  const menuRef = useRef(null);
+  const author = comment.user;
   const authorName = author?.display_name || "User";
-  const isOwn      = userId && userId === author?.id;
+  const isOwn = !!(userId && userId === author?.id);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -1020,17 +1206,25 @@ function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop =
 
       <div className="flex-1 min-w-0">
         <div className="inline-block max-w-full rounded-2xl bg-gray-50 border border-gray-100 px-3.5 py-2.5">
-          <p className="text-xs font-extrabold text-gray-900 mb-0.5">{authorName}</p>
-          <p className="text-sm text-gray-700 leading-relaxed break-words">{comment.body}</p>
+          <p className="text-xs font-extrabold text-gray-900 mb-0.5">
+            {authorName}
+          </p>
+          <p className="text-sm text-gray-700 leading-relaxed break-words">
+            {comment.body}
+          </p>
         </div>
 
         <div className="flex items-center gap-3 mt-1.5 px-1">
-          <span className="text-[11px] text-gray-400">{timeAgo(comment.created_at)}</span>
+          <span className="text-[11px] text-gray-400">
+            {timeAgo(comment.created_at)}
+          </span>
 
           <button
             onClick={onLike}
             className={`text-[11px] font-bold transition-colors ${
-              liked ? "text-red-500" : "text-gray-400 hover:text-red-500"
+              liked
+                ? "text-red-500"
+                : "text-gray-400 hover:text-red-500"
             }`}
           >
             {liked ? "Liked" : "Like"}
@@ -1057,7 +1251,10 @@ function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop =
               {menuOpen && (
                 <div className="absolute right-0 bottom-6 rounded-2xl bg-white border border-gray-100 shadow-xl py-1 z-10 min-w-[120px]">
                   <button
-                    onClick={() => { onDelete(); setMenuOpen(false); }}
+                    onClick={() => {
+                      onDelete();
+                      setMenuOpen(false);
+                    }}
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors"
                   >
                     <TrashIcon className="h-3.5 w-3.5" /> Delete
@@ -1122,9 +1319,11 @@ function Toast({ toast }) {
             : "bg-white border-gray-200 text-gray-900"
         }`}
       >
-        {isErr
-          ? <AlertIcon className="h-4 w-4 shrink-0" />
-          : <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />}
+        {isErr ? (
+          <AlertIcon className="h-4 w-4 shrink-0" />
+        ) : (
+          <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />
+        )}
         {toast.message}
       </div>
     </div>

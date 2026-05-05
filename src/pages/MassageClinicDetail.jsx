@@ -1,6 +1,6 @@
 // src/pages/MassageClinicDetail.jsx
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "../lib/supabase.client.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
@@ -9,8 +9,8 @@ import { useAuth } from "../contexts/AuthContext.jsx";
    ================================================================ */
 
 const DAYS_ORDER = [
-  "Monday","Tuesday","Wednesday","Thursday",
-  "Friday","Saturday","Sunday",
+  "Monday", "Tuesday", "Wednesday", "Thursday",
+  "Friday", "Saturday", "Sunday",
 ];
 
 const CLINIC_SELECT = `
@@ -46,19 +46,21 @@ function parseHours(raw) {
   try {
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 function getOpenStatus(hours) {
   if (!hours.length) return "unknown";
-  const now      = new Date();
+  const now = new Date();
   const todayIdx = (now.getDay() + 6) % 7; // Mon = 0
-  const today    = DAYS_ORDER[todayIdx];
-  const slot     = hours.find((h) => h.day === today);
+  const today = DAYS_ORDER[todayIdx];
+  const slot = hours.find((h) => h.day === today);
   if (!slot) return "closed";
   const [fh, fm] = slot.from.split(":").map(Number);
   const [th, tm] = slot.to.split(":").map(Number);
-  const nowMins  = now.getHours() * 60 + now.getMinutes();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
   return nowMins >= fh * 60 + fm && nowMins < th * 60 + tm ? "open" : "closed";
 }
 
@@ -78,161 +80,10 @@ function timeAgo(iso) {
   const days = Math.floor(diff / 86_400_000);
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
-  if (days < 30)  return `${days}d ago`;
+  if (days < 30) return `${days}d ago`;
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo ago`;
   return `${Math.floor(months / 12)}y ago`;
-}
-
-/* ================================================================
-   useFetchClinic
-   ================================================================ */
-
-function useFetchClinic(id) {
-  const location = useLocation();
-
-  // Seed from nav state but always re-fetch in background for freshness
-  const [clinic,  setClinic]  = useState(() => {
-    const s = location.state?.clinic;
-    return s ? normaliseClinic(s) : null;
-  });
-  const [loading, setLoading] = useState(true); // always true on mount → triggers bg fetch
-  const [error,   setError]   = useState("");
-
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const doFetch = useCallback(async ({ showLoader = false } = {}) => {
-    if (!id) { setError("Invalid clinic ID."); setLoading(false); return; }
-    if (showLoader) setLoading(true);
-    setError("");
-
-    const { data, error: err } = await supabase
-      .from("massage_clinics")
-      .select(CLINIC_SELECT)
-      .eq("id", id)
-      .single();
-
-    if (!mountedRef.current) return;
-
-    if (err) {
-      // Only show error if we have no cached data
-      if (!clinic) setError("Clinic not found.");
-    } else if (data) {
-      setClinic(normaliseClinic(data));
-    }
-    setLoading(false);
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Background fetch on mount (or explicit refetch)
-  useEffect(() => {
-    // If we have nav-state data, do a silent background refresh
-    doFetch({ showLoader: !location.state?.clinic });
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-validate on focus / visibility (handles back navigation)
-  useEffect(() => {
-    const onFocus    = () => doFetch({ showLoader: false });
-    const onVisible  = () => {
-      if (document.visibilityState === "visible") doFetch({ showLoader: false });
-    };
-    window.addEventListener("focus",            onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus",            onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [doFetch]);
-
-  // Optimistic local update — lets callers patch the clinic without a full refetch
-  const patchClinic = useCallback((patch) => {
-    setClinic((prev) => (prev ? { ...prev, ...patch } : prev));
-  }, []);
-
-  return { clinic, loading, error, refetch: () => doFetch({ showLoader: false }), patchClinic };
-}
-
-/* ================================================================
-   useReviews
-   ================================================================ */
-
-function useReviews(clinicId) {
-  const [reviews,        setReviews]        = useState([]);
-  const [loadingReviews, setLoadingReviews] = useState(true);
-  const [myReview,       setMyReview]       = useState(null);
-  const { user } = useAuth();
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const loadReviews = useCallback(async () => {
-    if (!clinicId) return;
-
-    const { data } = await supabase
-      .from("clinic_reviews")
-      .select(`id, rating, body, created_at, author_id,
-        profiles ( display_name, avatar_url )`)
-      .eq("clinic_id", clinicId)
-      .order("created_at", { ascending: false })
-      .limit(30);
-
-    if (!mountedRef.current) return;
-    const list = data ?? [];
-    setReviews(list);
-    setMyReview(user ? (list.find((r) => r.author_id === user.id) ?? null) : null);
-    setLoadingReviews(false);
-  }, [clinicId, user]);
-
-  useEffect(() => { loadReviews(); }, [loadReviews]);
-
-  const submitReview = useCallback(async ({ rating, body }) => {
-    if (!user || !clinicId) throw new Error("Must be signed in to review.");
-    const payload = { clinic_id: clinicId, author_id: user.id, rating, body };
-
-    const { error } = myReview
-      ? await supabase.from("clinic_reviews")
-          .update({ rating, body }).eq("id", myReview.id)
-      : await supabase.from("clinic_reviews").insert(payload);
-
-    if (error) throw new Error(error.message);
-
-    // Optimistic update — immediately show new review without a reload
-    const now = new Date().toISOString();
-    const newReview = {
-      id:         myReview?.id ?? `temp-${Date.now()}`,
-      rating,
-      body,
-      created_at: myReview?.created_at ?? now,
-      author_id:  user.id,
-      profiles:   { display_name: user.user_metadata?.display_name ?? "You", avatar_url: null },
-    };
-    setReviews((prev) =>
-      myReview
-        ? prev.map((r) => (r.id === myReview.id ? newReview : r))
-        : [newReview, ...prev]
-    );
-    setMyReview(newReview);
-
-    // Reconcile in background
-    loadReviews();
-  }, [user, clinicId, myReview, loadReviews]);
-
-  const deleteReview = useCallback(async () => {
-    if (!myReview) return;
-    await supabase.from("clinic_reviews").delete().eq("id", myReview.id);
-    // Optimistic removal
-    setReviews((prev) => prev.filter((r) => r.id !== myReview.id));
-    setMyReview(null);
-    loadReviews();
-  }, [myReview, loadReviews]);
-
-  return { reviews, loadingReviews, myReview, submitReview, deleteReview, loadReviews };
 }
 
 /* ================================================================
@@ -240,41 +91,150 @@ function useReviews(clinicId) {
    ================================================================ */
 
 export default function MassageClinicDetail() {
-  const { id }   = useParams();
+  const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const { clinic, loading, error, refetch, patchClinic } = useFetchClinic(id);
-  const { reviews, loadingReviews, myReview, submitReview, deleteReview } =
-    useReviews(id);
+  // ── Clinic state ──────────────────────────────────────────────────
+  const [clinic, setClinic] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [activePhoto,      setActivePhoto]      = useState(0);
-  const [showAllHours,     setShowAllHours]      = useState(false);
-  const [reviewDraft,      setReviewDraft]       = useState({ rating: 0, body: "" });
-  const [reviewMode,       setReviewMode]        = useState(false);
-  const [reviewSubmitting, setReviewSubmitting]  = useState(false);
-  const [reviewError,      setReviewError]       = useState("");
-  const [copied,           setCopied]            = useState(false);
-  const [imgError,         setImgError]          = useState({});
+  // ── Reviews state ─────────────────────────────────────────────────
+  const [reviews, setReviews] = useState([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+  const [myReview, setMyReview] = useState(null);
+
+  // ── UI state ──────────────────────────────────────────────────────
+  const [activePhoto, setActivePhoto] = useState(0);
+  const [showAllHours, setShowAllHours] = useState(false);
+  const [reviewDraft, setReviewDraft] = useState({ rating: 0, body: "" });
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [imgError, setImgError] = useState({});
+
+  // ── Refs ──────────────────────────────────────────────────────────
+  const isMounted = useRef(true);
+  const hasFetched = useRef(false); // prevent double fetch on StrictMode
 
   useEffect(() => {
-    if (myReview) setReviewDraft({ rating: myReview.rating, body: myReview.body ?? "" });
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  /* ── Scroll to top on mount ───────────────────────────────────── */
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [id]);
+
+  /* ── Fetch clinic ─────────────────────────────────────────────── */
+  const fetchClinic = useCallback(async () => {
+    if (!id) {
+      setError("Invalid clinic ID.");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const { data, error: fetchError } = await supabase
+        .from("massage_clinics")
+        .select(CLINIC_SELECT)
+        .eq("id", id)
+        .single();
+
+      if (!isMounted.current) return;
+
+      if (fetchError || !data) {
+        setError("Clinic not found.");
+        setClinic(null);
+      } else {
+        setClinic(normaliseClinic(data));
+      }
+    } catch {
+      if (!isMounted.current) return;
+      setError("Failed to load clinic. Please try again.");
+    } finally {
+      if (isMounted.current) setLoading(false);
+    }
+  }, [id]);
+
+  /* ── Fetch reviews ────────────────────────────────────────────── */
+  const fetchReviews = useCallback(async () => {
+    if (!id) return;
+
+    setLoadingReviews(true);
+
+    try {
+      const { data } = await supabase
+        .from("clinic_reviews")
+        .select(
+          `id, rating, body, created_at, author_id,
+           profiles ( display_name, avatar_url )`
+        )
+        .eq("clinic_id", id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (!isMounted.current) return;
+
+      const list = data ?? [];
+      setReviews(list);
+      setMyReview(user ? (list.find((r) => r.author_id === user.id) ?? null) : null);
+    } catch {
+      // reviews are non-critical, fail silently
+    } finally {
+      if (isMounted.current) setLoadingReviews(false);
+    }
+  }, [id, user]);
+
+  /* ── Initial load — runs once when id changes ─────────────────── */
+  useEffect(() => {
+    hasFetched.current = false;
+    setClinic(null);
+    setReviews([]);
+    setMyReview(null);
+    setActivePhoto(0);
+    setImgError({});
+    setReviewMode(false);
+    setReviewError("");
+    setShowAllHours(false);
+
+    fetchClinic();
+    fetchReviews();
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // We intentionally only re-run when `id` changes.
+  // fetchClinic/fetchReviews are stable for a given id.
+
+  /* ── Sync review draft when myReview changes ──────────────────── */
+  useEffect(() => {
+    if (myReview) {
+      setReviewDraft({ rating: myReview.rating, body: myReview.body ?? "" });
+    }
   }, [myReview]);
 
-  // Reset active photo when clinic changes (e.g. back-nav)
-  useEffect(() => { setActivePhoto(0); }, [id]);
-
-  const hours      = clinic ? parseHours(clinic.opening_hours) : [];
+  /* ── Derived ──────────────────────────────────────────────────── */
+  const hours = clinic ? parseHours(clinic.opening_hours) : [];
   const openStatus = getOpenStatus(hours);
-  const isOwner    = !!(user && clinic && user.id === clinic.owner_id);
+  const isOwner = !!(user && clinic && user.id === clinic.owner_id);
 
   const photos = [
     ...(clinic?.cover_url ? [clinic.cover_url] : []),
     ...(clinic?.media ?? []),
   ].filter((_, i) => !imgError[i]);
 
-  /* ── handlers ──────────────────────────────────────────────── */
+  /* ── Patch helper (optimistic local update) ───────────────────── */
+  const patchClinic = useCallback((patch) => {
+    setClinic((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
 
+  /* ── Handlers ─────────────────────────────────────────────────── */
   const handleShare = useCallback(async () => {
     const url = window.location.href;
     try {
@@ -283,61 +243,124 @@ export default function MassageClinicDetail() {
       } else {
         await navigator.clipboard.writeText(url);
         setCopied(true);
-        setTimeout(() => setCopied(false), 2_000);
+        setTimeout(() => {
+          if (isMounted.current) setCopied(false);
+        }, 2000);
       }
-    } catch { /* user cancelled */ }
+    } catch {
+      /* user cancelled */
+    }
   }, [clinic?.name]);
 
-  const handleReviewSubmit = useCallback(async (e) => {
-    e.preventDefault();
-    if (isOwner) {
-      setReviewError("Owners cannot review their own clinic.");
-      return;
-    }
-    if (!reviewDraft.rating) {
-      setReviewError("Please select a star rating.");
-      return;
-    }
-    setReviewSubmitting(true);
-    setReviewError("");
-    try {
-      await submitReview(reviewDraft);
-      setReviewMode(false);
-      // Optimistically update the aggregate rating shown in the header card
-      patchClinic({
-        review_count: (clinic?.review_count ?? 0) + (myReview ? 0 : 1),
-      });
-    } catch (err) {
-      setReviewError(err.message || "Failed to submit. Please try again.");
-    } finally {
-      setReviewSubmitting(false);
-    }
-  }, [reviewDraft, submitReview, isOwner, myReview, clinic?.review_count, patchClinic]);
+  const handleReviewSubmit = useCallback(
+    async (e) => {
+      e.preventDefault();
+      if (isOwner) {
+        setReviewError("Owners cannot review their own clinic.");
+        return;
+      }
+      if (!reviewDraft.rating) {
+        setReviewError("Please select a star rating.");
+        return;
+      }
+      if (!user) {
+        setReviewError("You must be signed in to leave a review.");
+        return;
+      }
+
+      setReviewSubmitting(true);
+      setReviewError("");
+
+      try {
+        const payload = {
+          clinic_id: id,
+          author_id: user.id,
+          rating: reviewDraft.rating,
+          body: reviewDraft.body,
+        };
+
+        const { error: submitError } = myReview
+          ? await supabase
+              .from("clinic_reviews")
+              .update({ rating: reviewDraft.rating, body: reviewDraft.body })
+              .eq("id", myReview.id)
+          : await supabase.from("clinic_reviews").insert(payload);
+
+        if (submitError) throw new Error(submitError.message);
+
+        // Optimistic update
+        const now = new Date().toISOString();
+        const updated = {
+          id: myReview?.id ?? `temp-${Date.now()}`,
+          rating: reviewDraft.rating,
+          body: reviewDraft.body,
+          created_at: myReview?.created_at ?? now,
+          author_id: user.id,
+          profiles: {
+            display_name:
+              user.user_metadata?.display_name ?? user.email ?? "You",
+            avatar_url: null,
+          },
+        };
+
+        setReviews((prev) =>
+          myReview
+            ? prev.map((r) => (r.id === myReview.id ? updated : r))
+            : [updated, ...prev]
+        );
+        setMyReview(updated);
+
+        if (!myReview) {
+          patchClinic({ review_count: (clinic?.review_count ?? 0) + 1 });
+        }
+
+        setReviewMode(false);
+
+        // Reconcile in background
+        fetchReviews();
+      } catch (err) {
+        if (isMounted.current) {
+          setReviewError(err.message || "Failed to submit. Please try again.");
+        }
+      } finally {
+        if (isMounted.current) setReviewSubmitting(false);
+      }
+    },
+    [reviewDraft, myReview, user, id, isOwner, clinic?.review_count, patchClinic, fetchReviews]
+  );
 
   const handleDeleteReview = useCallback(async () => {
-    if (!confirm("Delete your review?")) return;
-    await deleteReview();
-    setReviewDraft({ rating: 0, body: "" });
-    patchClinic({ review_count: Math.max(0, (clinic?.review_count ?? 1) - 1) });
-  }, [deleteReview, patchClinic, clinic?.review_count]);
+    if (!myReview) return;
+    if (!window.confirm("Delete your review?")) return;
 
-  /* ── loading / error ────────────────────────────────────────── */
+    try {
+      await supabase.from("clinic_reviews").delete().eq("id", myReview.id);
 
-  if (loading && !clinic) return <DetailSkeleton onBack={() => navigate(-1)} />;
+      setReviews((prev) => prev.filter((r) => r.id !== myReview.id));
+      setMyReview(null);
+      setReviewDraft({ rating: 0, body: "" });
+      patchClinic({
+        review_count: Math.max(0, (clinic?.review_count ?? 1) - 1),
+      });
+
+      fetchReviews();
+    } catch {
+      /* fail silently — list will reconcile on next load */
+    }
+  }, [myReview, clinic?.review_count, patchClinic, fetchReviews]);
+
+  /* ── Loading / error screens ──────────────────────────────────── */
+  if (loading) return <DetailSkeleton onBack={() => navigate(-1)} />;
 
   if (error && !clinic) {
     return (
-      <div className="min-h-dvh bg-gray-50 flex flex-col items-center
-        justify-center gap-5 p-8 text-center">
-        <div className="h-20 w-20 rounded-full bg-red-50 flex items-center
-          justify-center">
+      <div className="min-h-dvh bg-gray-50 flex flex-col items-center justify-center gap-5 p-8 text-center">
+        <div className="h-20 w-20 rounded-full bg-red-50 flex items-center justify-center">
           <WarningIcon className="h-10 w-10 text-red-400" />
         </div>
         <div>
           <h2 className="text-lg font-bold text-gray-900">Clinic Not Found</h2>
-          <p className="mt-1.5 text-sm text-gray-500 max-w-xs">
-            {error}
-          </p>
+          <p className="mt-1.5 text-sm text-gray-500 max-w-xs">{error}</p>
         </div>
         <button
           onClick={() => navigate(-1)}
@@ -352,8 +375,7 @@ export default function MassageClinicDetail() {
     );
   }
 
-  /* ── render ─────────────────────────────────────────────────── */
-
+  /* ── Main render ──────────────────────────────────────────────── */
   return (
     <div className="min-h-dvh bg-gray-50 pb-32 antialiased">
 
@@ -365,19 +387,16 @@ export default function MassageClinicDetail() {
               key={photos[activePhoto]}
               src={photos[activePhoto]}
               alt={`${clinic.name} photo ${activePhoto + 1}`}
-              onError={() => setImgError((prev) => ({ ...prev, [activePhoto]: true }))}
+              onError={() =>
+                setImgError((prev) => ({ ...prev, [activePhoto]: true }))
+              }
               className="h-72 w-full object-cover"
               loading="eager"
             />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
 
-            {/* Gradient */}
-            <div className="absolute inset-0 bg-gradient-to-t
-              from-black/60 via-transparent to-black/20 pointer-events-none" />
-
-            {/* Dot indicators */}
             {photos.length > 1 && (
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2
-                flex items-center gap-1.5 z-10">
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 z-10">
                 {photos.map((_, i) => (
                   <button
                     key={i}
@@ -393,26 +412,20 @@ export default function MassageClinicDetail() {
               </div>
             )}
 
-            {/* Photo count badge */}
             {photos.length > 1 && (
-              <div className="absolute bottom-3 right-4 rounded-full
-                bg-black/50 backdrop-blur-sm px-2.5 py-1
-                text-[11px] font-semibold text-white z-10">
+              <div className="absolute bottom-3 right-4 rounded-full bg-black/50 backdrop-blur-sm px-2.5 py-1 text-[11px] font-semibold text-white z-10">
                 {activePhoto + 1} / {photos.length}
               </div>
             )}
           </>
         ) : (
-          <div className="h-72 w-full bg-gradient-to-br from-violet-500
-            to-purple-700 flex items-end pb-8 pl-6">
+          <div className="h-72 w-full bg-gradient-to-br from-violet-500 to-purple-700 flex items-end pb-8 pl-6">
             <span className="text-7xl opacity-30">💆</span>
           </div>
         )}
 
-        {/* ── Nav buttons overlay ── */}
-        <div className="absolute left-4 right-4 top-4 flex items-center
-          justify-between z-20">
-          {/* Back */}
+        {/* Nav overlay */}
+        <div className="absolute left-4 right-4 top-4 flex items-center justify-between z-20">
           <button
             onClick={() => navigate(-1)}
             className="flex h-10 w-10 items-center justify-center rounded-2xl
@@ -423,9 +436,7 @@ export default function MassageClinicDetail() {
             <ChevronLeftIcon className="h-5 w-5" />
           </button>
 
-          {/* Right actions */}
           <div className="flex items-center gap-2">
-            {/* Share */}
             <button
               onClick={handleShare}
               className="flex h-10 w-10 items-center justify-center rounded-2xl
@@ -433,20 +444,19 @@ export default function MassageClinicDetail() {
                 hover:bg-black/60 active:scale-90 transition-all"
               aria-label={copied ? "Copied!" : "Share"}
             >
-              {copied
-                ? <CheckIcon className="h-4 w-4 text-green-400" />
-                : <ShareIcon className="h-4 w-4" />
-              }
+              {copied ? (
+                <CheckIcon className="h-4 w-4 text-green-400" />
+              ) : (
+                <ShareIcon className="h-4 w-4" />
+              )}
             </button>
 
-            {/* Edit (owner) */}
             {isOwner && (
               <button
                 onClick={() => navigate(`/massage-clinics/${id}/edit`)}
                 className="flex h-10 w-10 items-center justify-center rounded-2xl
-                  bg-violet-600/90 backdrop-blur-md text-white border
-                  border-violet-400/30 hover:bg-violet-700 active:scale-90
-                  transition-all"
+                  bg-violet-600/90 backdrop-blur-md text-white border border-violet-400/30
+                  hover:bg-violet-700 active:scale-90 transition-all"
                 aria-label="Edit clinic"
               >
                 <PencilIcon className="h-4 w-4" />
@@ -455,19 +465,16 @@ export default function MassageClinicDetail() {
           </div>
         </div>
 
-        {/* ── Status badges (bottom-left of hero) ── */}
+        {/* Status badges */}
         <div className="absolute left-4 bottom-8 flex items-center gap-2 z-10">
           {clinic.is_featured && (
-            <span className="inline-flex items-center gap-1 rounded-full
-              bg-amber-500/90 backdrop-blur-sm px-3 py-1
-              text-[11px] font-bold text-white">
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/90 backdrop-blur-sm px-3 py-1 text-[11px] font-bold text-white">
               <StarIcon className="h-3 w-3" filled />
               Featured
             </span>
           )}
           {clinic.status === "pending" && (
-            <span className="rounded-full bg-amber-100/90 backdrop-blur-sm
-              px-3 py-1 text-[11px] font-bold text-amber-800">
+            <span className="rounded-full bg-amber-100/90 backdrop-blur-sm px-3 py-1 text-[11px] font-bold text-amber-800">
               Pending Approval
             </span>
           )}
@@ -477,16 +484,15 @@ export default function MassageClinicDetail() {
       {/* ══ CONTENT ══════════════════════════════════════════════ */}
       <div className="mx-auto max-w-lg px-4 space-y-4 pt-4">
 
-        {/* ── Stale data notice ── */}
+        {/* Stale / error notice */}
         {error && clinic && (
-          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3
-            flex items-center gap-3">
+          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3 flex items-center gap-3">
             <InfoIcon className="h-4 w-4 text-amber-500 shrink-0" />
             <p className="text-xs text-amber-700 flex-1">
               Showing cached data — {error}
             </p>
             <button
-              onClick={() => refetch()}
+              onClick={fetchClinic}
               className="text-xs font-bold text-amber-700 hover:text-amber-900"
             >
               Retry
@@ -499,7 +505,6 @@ export default function MassageClinicDetail() {
           <div className="p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                {/* Name + verified */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-xl font-extrabold text-gray-900 leading-tight">
                     {clinic.name}
@@ -509,7 +514,6 @@ export default function MassageClinicDetail() {
                   )}
                 </div>
 
-                {/* Address */}
                 {(clinic.address || clinic.city) && (
                   <div className="mt-1.5 flex items-start gap-1.5 text-sm text-gray-500">
                     <MapPinIcon className="h-4 w-4 shrink-0 text-violet-400 mt-0.5" />
@@ -521,7 +525,6 @@ export default function MassageClinicDetail() {
                   </div>
                 )}
 
-                {/* Rating */}
                 {clinic.rating > 0 && (
                   <div className="mt-2.5 flex items-center gap-2">
                     <StarRow rating={Number(clinic.rating)} size="sm" />
@@ -529,12 +532,12 @@ export default function MassageClinicDetail() {
                       {Number(clinic.rating).toFixed(1)}
                     </span>
                     <span className="text-sm text-gray-400">
-                      · {clinic.review_count ?? 0} review{(clinic.review_count ?? 0) !== 1 ? "s" : ""}
+                      · {clinic.review_count ?? 0} review
+                      {(clinic.review_count ?? 0) !== 1 ? "s" : ""}
                     </span>
                   </div>
                 )}
 
-                {/* Distance */}
                 {clinic.distance_km != null && (
                   <p className="mt-1.5 text-xs text-gray-400 flex items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
@@ -543,86 +546,79 @@ export default function MassageClinicDetail() {
                 )}
               </div>
 
-              {/* Open / Closed pill */}
               {openStatus !== "unknown" && (
-                <div className={`shrink-0 rounded-2xl px-3 py-1.5 text-xs font-bold
-                  flex items-center gap-1.5 ${
-                    openStatus === "open"
-                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      : "bg-red-50 text-red-600 border border-red-200"
-                  }`}>
-                  <span className={`h-2 w-2 rounded-full ${
-                    openStatus === "open" ? "bg-emerald-500" : "bg-red-500"
-                  }`} />
+                <div
+                  className={`shrink-0 rounded-2xl px-3 py-1.5 text-xs font-bold
+                    flex items-center gap-1.5 ${
+                      openStatus === "open"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-red-50 text-red-600 border border-red-200"
+                    }`}
+                >
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      openStatus === "open" ? "bg-emerald-500" : "bg-red-500"
+                    }`}
+                  />
                   {openStatus === "open" ? "Open Now" : "Closed"}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Divider */}
-          {/* ── Quick action strip ── */}
-          <div className={`grid border-t border-gray-100 ${
-            [clinic.phone, clinic.website, clinic.lat && clinic.lng, clinic.email]
-              .filter(Boolean).length === 4
-              ? "grid-cols-4"
-              : [clinic.phone, clinic.website, clinic.lat && clinic.lng, clinic.email]
-                  .filter(Boolean).length === 3
-                ? "grid-cols-3"
-                : "grid-cols-2"
-          }`}>
-            {clinic.phone && (
-              <QuickAction
-                href={`tel:${clinic.phone}`}
-                icon={<PhoneIcon className="h-5 w-5" />}
-                label="Call"
-                first
-              />
-            )}
-            {clinic.website && (
-              <QuickAction
-                href={clinic.website}
-                icon={<GlobeIcon className="h-5 w-5" />}
-                label="Website"
-                external
-              />
-            )}
-            {clinic.lat && clinic.lng && (
-              <QuickAction
-                href={`https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`}
-                icon={<DirectionsIcon className="h-5 w-5" />}
-                label="Directions"
-                external
-              />
-            )}
-            {clinic.email && (
-              <QuickAction
-                href={`mailto:${clinic.email}`}
-                icon={<MailIcon className="h-5 w-5" />}
-                label="Email"
-                last
-              />
-            )}
-          </div>
+          {/* Quick action strip */}
+          {(() => {
+            const actions = [
+              clinic.phone && { href: `tel:${clinic.phone}`, icon: <PhoneIcon className="h-5 w-5" />, label: "Call" },
+              clinic.website && { href: clinic.website, icon: <GlobeIcon className="h-5 w-5" />, label: "Website", external: true },
+              clinic.lat && clinic.lng && {
+                href: `https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`,
+                icon: <DirectionsIcon className="h-5 w-5" />,
+                label: "Directions",
+                external: true,
+              },
+              clinic.email && { href: `mailto:${clinic.email}`, icon: <MailIcon className="h-5 w-5" />, label: "Email" },
+            ].filter(Boolean);
+
+            if (actions.length === 0) return null;
+
+            return (
+              <div
+                className={`grid border-t border-gray-100`}
+                style={{ gridTemplateColumns: `repeat(${actions.length}, 1fr)` }}
+              >
+                {actions.map((action, i) => (
+                  <QuickAction
+                    key={action.label}
+                    href={action.href}
+                    icon={action.icon}
+                    label={action.label}
+                    external={action.external}
+                    first={i === 0}
+                    last={i === actions.length - 1}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
-        {/* ── About ── */}
+        {/* About */}
         {clinic.description && (
           <SectionCard title="About">
             <ExpandableText text={clinic.description} maxChars={250} />
           </SectionCard>
         )}
 
-        {/* ── Specialties ── */}
+        {/* Specialties */}
         {clinic.specialties?.length > 0 && (
           <SectionCard title="Services & Specialties">
             <div className="flex flex-wrap gap-2">
               {clinic.specialties.map((s) => (
                 <span
                   key={s}
-                  className="inline-flex items-center rounded-full border
-                    border-violet-200 bg-violet-50 px-3.5 py-1.5 text-sm
-                    font-medium text-violet-700"
+                  className="inline-flex items-center rounded-full border border-violet-200
+                    bg-violet-50 px-3.5 py-1.5 text-sm font-medium text-violet-700"
                 >
                   {s}
                 </span>
@@ -631,43 +627,32 @@ export default function MassageClinicDetail() {
           </SectionCard>
         )}
 
-        {/* ── Opening hours ── */}
+        {/* Opening hours */}
         {hours.length > 0 && (
           <SectionCard title="Opening Hours">
             <div className="space-y-0.5">
-              {(showAllHours ? DAYS_ORDER : DAYS_ORDER).map((day, i) => {
-                const slot    = hours.find((h) => h.day === day);
+              {DAYS_ORDER.map((day, i) => {
+                const slot = hours.find((h) => h.day === day);
                 const todayIdx = (new Date().getDay() + 6) % 7;
-                const isToday  = i === todayIdx;
-                if (!showAllHours && !isToday && i > todayIdx + 1) return null;
+                const isToday = i === todayIdx;
+                if (!showAllHours && !isToday && i > todayIdx + 2) return null;
                 return (
                   <div
                     key={day}
-                    className={`flex items-center justify-between rounded-xl
-                      px-3 py-2 text-sm transition-colors ${
-                        isToday
-                          ? "bg-violet-50 ring-1 ring-violet-100"
-                          : "hover:bg-gray-50"
-                      }`}
+                    className={`flex items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors ${
+                      isToday ? "bg-violet-50 ring-1 ring-violet-100" : "hover:bg-gray-50"
+                    }`}
                   >
-                    <span className={`font-medium ${
-                      isToday ? "text-violet-700" : "text-gray-700"
-                    }`}>
+                    <span className={`font-medium ${isToday ? "text-violet-700" : "text-gray-700"}`}>
                       {day}
                       {isToday && (
-                        <span className="ml-2 inline-block rounded-full
-                          bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold
-                          text-violet-600 uppercase tracking-wide">
+                        <span className="ml-2 inline-block rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-600 uppercase tracking-wide">
                           Today
                         </span>
                       )}
                     </span>
                     {slot ? (
-                      <span className={`tabular-nums ${
-                        isToday
-                          ? "font-bold text-violet-700"
-                          : "text-gray-500"
-                      }`}>
+                      <span className={`tabular-nums ${isToday ? "font-bold text-violet-700" : "text-gray-500"}`}>
                         {to12h(slot.from)}–{to12h(slot.to)}
                       </span>
                     ) : (
@@ -679,15 +664,14 @@ export default function MassageClinicDetail() {
             </div>
             <button
               onClick={() => setShowAllHours((v) => !v)}
-              className="mt-2 text-xs font-bold text-violet-600
-                hover:text-violet-800 transition-colors"
+              className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-800 transition-colors"
             >
               {showAllHours ? "Show less" : "Show all hours"}
             </button>
           </SectionCard>
         )}
 
-        {/* ── Contact ── */}
+        {/* Contact */}
         {(clinic.phone || clinic.email || clinic.website) && (
           <SectionCard title="Contact">
             <div className="space-y-1">
@@ -724,10 +708,8 @@ export default function MassageClinicDetail() {
         <SectionCard
           title={`Reviews${clinic.review_count ? ` · ${clinic.review_count}` : ""}`}
         >
-          {/* Owner notice */}
           {isOwner && (
-            <div className="mb-4 flex items-start gap-3 rounded-2xl
-              bg-blue-50 border border-blue-100 p-4">
+            <div className="mb-4 flex items-start gap-3 rounded-2xl bg-blue-50 border border-blue-100 p-4">
               <InfoIcon className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-bold text-blue-900">This is your clinic</p>
@@ -738,7 +720,6 @@ export default function MassageClinicDetail() {
             </div>
           )}
 
-          {/* Write / edit CTA */}
           {user && !isOwner && (
             <div className="mb-4">
               {!reviewMode ? (
@@ -770,39 +751,46 @@ export default function MassageClinicDetail() {
             </div>
           )}
 
-          {/* Sign-in prompt */}
           {!user && (
-            <div className="mb-4 rounded-2xl bg-gray-50 border border-gray-100
-              p-4 text-center">
+            <div className="mb-4 rounded-2xl bg-gray-50 border border-gray-100 p-4 text-center">
               <p className="text-sm text-gray-600">
                 <button
-                  onClick={() => navigate("/sign-in", {
-                    state: { returnTo: window.location.pathname },
-                  })}
+                  onClick={() =>
+                    navigate("/sign-in", {
+                      state: { returnTo: window.location.pathname },
+                    })
+                  }
                   className="font-bold text-violet-600 hover:underline"
                 >
                   Sign in
-                </button>
-                {" "}to leave a review
+                </button>{" "}
+                to leave a review
               </p>
             </div>
           )}
 
-          {/* List */}
           {loadingReviews ? (
             <div className="space-y-4">
-              {[1, 2].map((i) => <ReviewSkeleton key={i} />)}
+              {[1, 2].map((i) => (
+                <ReviewSkeleton key={i} />
+              ))}
             </div>
           ) : reviews.length === 0 ? (
             <div className="py-8 text-center">
               <p className="text-3xl mb-2">💬</p>
               <p className="text-sm font-semibold text-gray-700">No reviews yet</p>
-              <p className="text-xs text-gray-400 mt-1">Be the first to share your experience!</p>
+              <p className="text-xs text-gray-400 mt-1">
+                Be the first to share your experience!
+              </p>
             </div>
           ) : (
             <div className="space-y-5">
               {reviews.map((r) => (
-                <ReviewCard key={r.id} review={r} isMyReview={r.id === myReview?.id} />
+                <ReviewCard
+                  key={r.id}
+                  review={r}
+                  isMyReview={r.id === myReview?.id}
+                />
               ))}
             </div>
           )}
@@ -823,8 +811,8 @@ function QuickAction({ href, icon, label, external = false, first, last }) {
       {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       className={`flex flex-col items-center gap-1.5 py-4 text-violet-600
         hover:bg-violet-50 active:bg-violet-100 transition-colors
-        ${first  ? "rounded-bl-3xl" : ""}
-        ${last   ? "rounded-br-3xl" : ""}
+        ${first ? "rounded-bl-3xl" : ""}
+        ${last ? "rounded-br-3xl" : ""}
         border-r border-gray-100 last:border-r-0`}
     >
       {icon}
@@ -855,15 +843,15 @@ function SectionCard({ title, children }) {
 function ExpandableText({ text, maxChars = 200 }) {
   const [expanded, setExpanded] = useState(false);
   const needsTrunc = text.length > maxChars;
-  const shown = expanded || !needsTrunc ? text : `${text.slice(0, maxChars).trimEnd()}…`;
+  const shown =
+    expanded || !needsTrunc ? text : `${text.slice(0, maxChars).trimEnd()}…`;
   return (
     <div>
       <p className="text-sm text-gray-600 leading-relaxed">{shown}</p>
       {needsTrunc && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-800
-            transition-colors"
+          className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-800 transition-colors"
         >
           {expanded ? "Show less" : "Read more"}
         </button>
@@ -886,8 +874,14 @@ function StarRow({ rating, interactive = false, onRate, size = "md" }) {
           type={interactive ? "button" : undefined}
           onClick={interactive ? () => onRate(star) : undefined}
           disabled={!interactive}
-          className={interactive ? "cursor-pointer hover:scale-110 transition-transform" : "cursor-default"}
-          aria-label={interactive ? `Rate ${star} star${star !== 1 ? "s" : ""}` : undefined}
+          className={
+            interactive
+              ? "cursor-pointer hover:scale-110 transition-transform"
+              : "cursor-default"
+          }
+          aria-label={
+            interactive ? `Rate ${star} star${star !== 1 ? "s" : ""}` : undefined
+          }
         >
           <StarIcon
             className={`${sz} transition-colors ${
@@ -905,15 +899,22 @@ function StarRow({ rating, interactive = false, onRate, size = "md" }) {
    REVIEW FORM
    ================================================================ */
 
-function ReviewForm({ draft, onChange, onSubmit, onCancel,
-  submitting, error, isEdit, onDelete }) {
+function ReviewForm({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel,
+  submitting,
+  error,
+  isEdit,
+  onDelete,
+}) {
   return (
     <form
       onSubmit={onSubmit}
       className="rounded-2xl border border-violet-100 bg-gradient-to-br
         from-violet-50/60 to-fuchsia-50/30 p-4 space-y-4"
     >
-      {/* Star picker */}
       <div>
         <p className="text-xs font-bold text-gray-700 mb-2">Your Rating *</p>
         <div className="flex items-center gap-2">
@@ -931,10 +932,9 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
         </div>
       </div>
 
-      {/* Text area */}
       <div>
         <p className="text-xs font-bold text-gray-700 mb-1.5">
-          Your Review
+          Your Review{" "}
           <span className="ml-1 font-normal text-gray-400">(optional)</span>
         </p>
         <textarea
@@ -942,7 +942,7 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
           onChange={(e) => onChange((d) => ({ ...d, body: e.target.value }))}
           placeholder="Share your experience…"
           rows={3}
-          maxLength={1_000}
+          maxLength={1000}
           className="w-full resize-none rounded-2xl border border-gray-200
             bg-white px-4 py-3 text-sm text-gray-800 placeholder:text-gray-400
             focus:outline-none focus:border-violet-300 focus:ring-2
@@ -953,31 +953,31 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
         </p>
       </div>
 
-      {/* Error */}
       {error && (
-        <div className="flex items-start gap-2.5 rounded-xl bg-red-50
-          border border-red-200 px-4 py-3">
+        <div className="flex items-start gap-2.5 rounded-xl bg-red-50 border border-red-200 px-4 py-3">
           <WarningIcon className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
           <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
-      {/* Buttons */}
       <div className="flex items-center gap-2">
         <button
           type="submit"
           disabled={submitting}
           className="flex-1 rounded-2xl bg-violet-600 py-2.5 text-sm font-bold
             text-white hover:bg-violet-700 disabled:opacity-60
-            active:scale-[0.98] transition-all"
+            active:scale-[0.98] transition-all flex items-center justify-center gap-2"
         >
-          {submitting
-            ? <span className="inline-flex items-center gap-2">
-                <SpinnerIcon className="h-4 w-4" />
-                Saving…
-              </span>
-            : isEdit ? "Update Review" : "Submit Review"
-          }
+          {submitting ? (
+            <>
+              <SpinnerIcon className="h-4 w-4" />
+              Saving…
+            </>
+          ) : isEdit ? (
+            "Update Review"
+          ) : (
+            "Submit Review"
+          )}
         </button>
         <button
           type="button"
@@ -993,8 +993,7 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
             type="button"
             onClick={onDelete}
             className="flex h-10 w-10 items-center justify-center rounded-2xl
-              bg-red-50 text-red-500 hover:bg-red-100 active:scale-90
-              transition-all"
+              bg-red-50 text-red-500 hover:bg-red-100 active:scale-90 transition-all"
             aria-label="Delete review"
           >
             <TrashIcon className="h-4 w-4" />
@@ -1012,8 +1011,13 @@ function ReviewForm({ draft, onChange, onSubmit, onCancel,
 function ReviewCard({ review, isMyReview }) {
   const author = review.profiles;
   return (
-    <div className={`flex gap-3 ${isMyReview ? "p-3 rounded-2xl bg-violet-50/50 border border-violet-100" : ""}`}>
-      {/* Avatar */}
+    <div
+      className={`flex gap-3 ${
+        isMyReview
+          ? "p-3 rounded-2xl bg-violet-50/50 border border-violet-100"
+          : ""
+      }`}
+    >
       <div className="shrink-0">
         {author?.avatar_url ? (
           <img
@@ -1023,15 +1027,16 @@ function ReviewCard({ review, isMyReview }) {
             loading="lazy"
           />
         ) : (
-          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-400
+          <div
+            className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-400
             to-fuchsia-400 flex items-center justify-center text-sm font-bold text-white
-            ring-2 ring-white">
+            ring-2 ring-white"
+          >
             {(author?.display_name?.[0] ?? "?").toUpperCase()}
           </div>
         )}
       </div>
 
-      {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2 mb-1">
           <div className="flex items-center gap-1.5 min-w-0">
@@ -1039,8 +1044,7 @@ function ReviewCard({ review, isMyReview }) {
               {author?.display_name ?? "Anonymous"}
             </span>
             {isMyReview && (
-              <span className="shrink-0 rounded-full bg-violet-100 px-2 py-0.5
-                text-[10px] font-bold text-violet-700">
+              <span className="shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
                 You
               </span>
             )}
@@ -1074,9 +1078,11 @@ function ContactRow({ icon, label, value, href, external }) {
       className="flex items-center gap-3 rounded-2xl px-3 py-2.5
         hover:bg-gray-50 active:bg-gray-100 transition-colors group"
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center
         rounded-xl bg-violet-50 text-violet-600 group-hover:bg-violet-100
-        transition-colors">
+        transition-colors"
+      >
         {icon}
       </div>
       <div className="min-w-0 flex-1">
@@ -1085,8 +1091,7 @@ function ContactRow({ icon, label, value, href, external }) {
         </p>
         <p className="text-sm text-gray-800 truncate">{value}</p>
       </div>
-      <ChevronRightIcon className="h-4 w-4 text-gray-300 shrink-0
-        group-hover:text-gray-400 transition-colors" />
+      <ChevronRightIcon className="h-4 w-4 text-gray-300 shrink-0 group-hover:text-gray-400 transition-colors" />
     </a>
   );
 }
@@ -1101,8 +1106,7 @@ function DetailSkeleton({ onBack }) {
       <div className="relative h-72 bg-gray-200">
         <button
           onClick={onBack}
-          className="absolute left-4 top-4 flex h-10 w-10 items-center justify-center
-            rounded-2xl bg-black/30 text-white"
+          className="absolute left-4 top-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-black/30 text-white"
         >
           <ChevronLeftIcon className="h-5 w-5" />
         </button>
@@ -1112,18 +1116,21 @@ function DetailSkeleton({ onBack }) {
           <div className="h-6 bg-gray-200 rounded-full w-2/3" />
           <div className="h-4 bg-gray-100 rounded-full w-1/2" />
           <div className="flex gap-1">
-            {[1,2,3,4,5].map((i) => (
+            {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="h-4 w-4 rounded bg-gray-200" />
             ))}
           </div>
           <div className="border-t border-gray-100 pt-3 grid grid-cols-3 gap-2">
-            {[1,2,3].map((i) => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="h-16 rounded-2xl bg-gray-100" />
             ))}
           </div>
         </div>
         {[1, 2].map((i) => (
-          <div key={i} className="rounded-3xl bg-white border border-gray-100 p-5 space-y-2">
+          <div
+            key={i}
+            className="rounded-3xl bg-white border border-gray-100 p-5 space-y-2"
+          >
             <div className="h-4 bg-gray-200 rounded-full w-24" />
             <div className="h-3 bg-gray-100 rounded-full w-full" />
             <div className="h-3 bg-gray-100 rounded-full w-4/5" />
@@ -1182,10 +1189,11 @@ function ShareIcon({ className = "h-4 w-4" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
       <circle cx="18" cy="19" r="3" />
       <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-      <line x1="15.41" y1="6.51" x2="8.59"  y2="10.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
     </svg>
   );
 }
@@ -1271,7 +1279,8 @@ function WarningIcon({ className = "h-5 w-5" }) {
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-      <line x1="12" y1="9"  x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   );
 }
