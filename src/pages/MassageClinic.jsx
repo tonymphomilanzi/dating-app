@@ -20,6 +20,7 @@ const GEOCODE_TIMEOUT_MS = 5000;
 const GEO_TIMEOUT_MS = 12000;
 const GEO_MAX_AGE_MS = 60000;
 const SESSION_KEY = "massageClinic_filterState";
+const FREE_CLINIC_LIMIT = 1;
 
 const saveFilterState = (state) => {
   try {
@@ -62,13 +63,8 @@ const todayHours = (openingHours) => {
         : openingHours;
     if (!Array.isArray(parsed)) return null;
     const today = [
-      "Sunday",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
+      "Sunday","Monday","Tuesday","Wednesday",
+      "Thursday","Friday","Saturday",
     ][new Date().getDay()];
     const slot = parsed.find((s) => s.day === today);
     if (!slot?.from || !slot?.to) return null;
@@ -86,13 +82,134 @@ const todayHours = (openingHours) => {
 };
 
 /* ================================================================
+   useSubscription — checks if current user is premium/vip/basic
+   Reads from both profiles.is_premium AND user_subscriptions
+   (whichever grants the higher tier wins)
+   ================================================================ */
+function useSubscription(userId) {
+  const [isPremium, setIsPremium] = useState(false);
+  const [plan, setPlan] = useState("free");
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setIsPremium(false);
+      setPlan("free");
+      setIsLoadingSubscription(false);
+      return;
+    }
+
+    const check = async () => {
+      setIsLoadingSubscription(true);
+      try {
+        // Check profiles.is_premium flag
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("is_premium")
+          .eq("id", userId)
+          .single();
+
+        // Check active subscription row
+        const now = new Date().toISOString();
+        const { data: sub } = await supabase
+          .from("user_subscriptions")
+          .select("plan, status, expires_at")
+          .eq("user_id", userId)
+          .eq("status", "active")
+          .or(`expires_at.is.null,expires_at.gt.${now}`)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!mountedRef.current) return;
+
+        const activePlan = sub?.plan ?? "free";
+        const premiumPlans = ["basic", "premium", "vip"];
+        const hasPremiumSub = premiumPlans.includes(activePlan);
+        const hasPremiumFlag = profile?.is_premium === true;
+
+        setIsPremium(hasPremiumSub || hasPremiumFlag);
+        setPlan(hasPremiumSub ? activePlan : hasPremiumFlag ? "premium" : "free");
+      } catch (err) {
+        console.error("useSubscription:", err);
+        if (mountedRef.current) {
+          setIsPremium(false);
+          setPlan("free");
+        }
+      } finally {
+        if (mountedRef.current) setIsLoadingSubscription(false);
+      }
+    };
+
+    check();
+  }, [userId]);
+
+  return { isPremium, plan, isLoadingSubscription };
+}
+
+/* ================================================================
+   useOwnerClinicCount — counts how many clinics this user owns
+   ================================================================ */
+function useOwnerClinicCount(userId) {
+  const [ownedCount, setOwnedCount] = useState(0);
+  const [isLoadingCount, setIsLoadingCount] = useState(true);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setOwnedCount(0);
+      setIsLoadingCount(false);
+      return;
+    }
+    const fetch = async () => {
+      setIsLoadingCount(true);
+      try {
+        const { count } = await supabase
+          .from("massage_clinics")
+          .select("id", { count: "exact", head: true })
+          .eq("owner_id", userId);
+
+        if (mountedRef.current) setOwnedCount(count ?? 0);
+      } catch {
+        if (mountedRef.current) setOwnedCount(0);
+      } finally {
+        if (mountedRef.current) setIsLoadingCount(false);
+      }
+    };
+    fetch();
+  }, [userId]);
+
+  // Expose a refresh so we can call it after delete
+  const refreshCount = useCallback(async () => {
+    if (!userId) return;
+    const { count } = await supabase
+      .from("massage_clinics")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", userId);
+    if (mountedRef.current) setOwnedCount(count ?? 0);
+  }, [userId]);
+
+  return { ownedCount, isLoadingCount, refreshCount };
+}
+
+/* ================================================================
    useGeolocation
    ================================================================ */
 function useGeolocation() {
   const [userLocation, setUserLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState("idle");
   const [locationLabel, setLocationLabel] = useState("");
-
   const mountedRef = useRef(true);
   const geocodeAbortRef = useRef(null);
 
@@ -172,9 +289,7 @@ function useClinics() {
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+    return () => { mountedRef.current = false; };
   }, []);
 
   const refresh = useCallback(async () => {
@@ -219,253 +334,106 @@ function useClinics() {
    SVG ICONS
    ================================================================ */
 const MapPinIcon = ({ className = "w-5 h-5" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314-11.314z"
-    />
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314-11.314z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
   </svg>
 );
 const SearchIcon = ({ className = "w-5 h-5" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
     <circle cx="11" cy="11" r="8" />
     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35" />
   </svg>
 );
 const XIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M6 18L18 6M6 6l12 12"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
 const PlusIcon = ({ className = "w-5 h-5" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2.5}
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
   </svg>
 );
 const ChevronDownIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
   </svg>
 );
 const SpinnerIcon = ({ className = "w-4 h-4" }) => (
   <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
-    <circle
-      className="opacity-25"
-      cx="12"
-      cy="12"
-      r="10"
-      stroke="currentColor"
-      strokeWidth="4"
-    />
-    <path
-      className="opacity-75"
-      fill="currentColor"
-      d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"
-    />
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z" />
   </svg>
 );
 const TargetIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="6" />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" />
     <circle cx="12" cy="12" r="2" fill="currentColor" />
   </svg>
 );
 const ClockIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <circle cx="12" cy="12" r="10" />
-    <polyline points="12,6 12,12 16,14" />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" />
   </svg>
 );
 const StarIcon = ({ className = "w-4 h-4", filled = false }) => (
-  <svg
-    className={className}
-    fill={filled ? "currentColor" : "none"}
-    stroke="currentColor"
-    strokeWidth={1.5}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
-    />
+  <svg className={className} fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
   </svg>
 );
 const PhoneIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
   </svg>
 );
 const RefreshIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
   </svg>
 );
 const AlertIcon = ({ className = "w-6 h-6" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 );
 const HeartIcon = ({ className = "w-5 h-5", filled = false }) => (
-  <svg
-    className={className}
-    fill={filled ? "currentColor" : "none"}
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
-    />
+  <svg className={className} fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
   </svg>
 );
 const ArrowRightIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M13 7l5 5m0 0l-5 5m5-5H6"
-    />
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
   </svg>
 );
 const DotsVerticalIcon = ({ className = "w-5 h-5" }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-    <circle cx="12" cy="5" r="1.5" />
-    <circle cx="12" cy="12" r="1.5" />
-    <circle cx="12" cy="19" r="1.5" />
+    <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
   </svg>
 );
 const PencilIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
     <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
     <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
   </svg>
 );
 const TrashIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
     <polyline points="3 6 5 6 21 6" />
     <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
     <path d="M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
   </svg>
 );
 const CheckIcon = ({ className = "w-4 h-4" }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    viewBox="0 0 24 24"
-  >
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
     <path d="M20 6L9 17l-5-5" />
+  </svg>
+);
+const LockIcon = ({ className = "w-5 h-5" }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M7 11V7a5 5 0 0110 0v4" />
   </svg>
 );
 
@@ -476,19 +444,113 @@ function Toast({ message, type = "success" }) {
   const isError = type === "error";
   return (
     <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-      <div
-        className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
-          isError
-            ? "bg-red-500 border-red-400 text-white"
-            : "bg-white border-gray-200 text-gray-900"
-        }`}
-      >
-        {isError ? (
-          <AlertIcon className="w-4 h-4 shrink-0" />
-        ) : (
-          <CheckIcon className="w-4 h-4 shrink-0 text-green-500" />
-        )}
+      <div className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
+        isError
+          ? "bg-red-500 border-red-400 text-white"
+          : "bg-white border-gray-200 text-gray-900"
+      }`}>
+        {isError
+          ? <AlertIcon className="w-4 h-4 shrink-0" />
+          : <CheckIcon className="w-4 h-4 shrink-0 text-green-500" />}
         {message}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
+   PREMIUM CTA BANNER
+   Shown only to non-premium users who are logged in
+   ================================================================ */
+function PremiumCtaBanner({ onUpgrade }) {
+  return (
+    <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
+      {/* Fade mask */}
+      <div className="h-6 bg-gradient-to-t from-gray-50 to-transparent" />
+      <div
+        className="bg-white/95 backdrop-blur-xl border-t border-gray-100 px-4 pt-3 pointer-events-auto"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
+      >
+        <button
+          onClick={onUpgrade}
+          className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 py-4 text-base font-extrabold text-white shadow-lg shadow-orange-200 hover:shadow-xl hover:shadow-orange-300 active:scale-[0.98] transition-all"
+        >
+          {/* Shimmer */}
+          <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+          <span className="relative flex items-center justify-center gap-2.5">
+            <span className="text-xl">👑</span>
+            Get Premium — Unlock Everything
+            <span className="ml-1 rounded-full bg-white/25 px-2.5 py-0.5 text-xs font-bold">
+              50% OFF
+            </span>
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================
+   FREE LIMIT MODAL
+   Shown when a free user tries to add a second clinic
+   ================================================================ */
+function FreeLimitModal({ onUpgrade, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+        {/* Icon */}
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-amber-100 to-orange-100 mx-auto">
+          <LockIcon className="w-8 h-8 text-amber-500" />
+        </div>
+
+        <h3 className="text-center text-lg font-bold text-gray-900">
+          Free Limit Reached
+        </h3>
+        <p className="mt-2 text-center text-sm text-gray-500 leading-relaxed">
+          Free accounts can list{" "}
+          <span className="font-bold text-gray-700">
+            1 clinic
+          </span>{" "}
+          only. Upgrade to Premium to list unlimited clinics and unlock
+          all features.
+        </p>
+
+        {/* Perks */}
+        <ul className="mt-4 space-y-2">
+          {[
+            "Unlimited clinic listings",
+            "Featured placement in search",
+            "Priority support",
+            "Advanced analytics",
+          ].map((perk) => (
+            <li key={perk} className="flex items-center gap-2 text-sm text-gray-600">
+              <CheckIcon className="w-4 h-4 text-green-500 shrink-0" />
+              {perk}
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 rounded-2xl border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Maybe later
+          </button>
+          <button
+            onClick={onUpgrade}
+            className="flex-1 relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 py-3 text-sm font-bold text-white shadow-md hover:shadow-lg active:scale-95 transition-all"
+          >
+            <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+            <span className="relative flex items-center justify-center gap-1.5">
+              <span>👑</span> Upgrade Now
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -500,17 +562,12 @@ function Toast({ message, type = "success" }) {
 function ConfirmDeleteModal({ clinicName, onConfirm, onCancel, isDeleting }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50 mx-auto">
           <TrashIcon className="w-7 h-7 text-red-500" />
         </div>
-        <h3 className="text-center text-lg font-bold text-gray-900">
-          Delete Clinic?
-        </h3>
+        <h3 className="text-center text-lg font-bold text-gray-900">Delete Clinic?</h3>
         <p className="mt-2 text-center text-sm text-gray-500">
           <span className="font-semibold text-gray-700">"{clinicName}"</span>{" "}
           will be permanently deleted.
@@ -529,10 +586,7 @@ function ConfirmDeleteModal({ clinicName, onConfirm, onCancel, isDeleting }) {
             className="flex-1 rounded-2xl bg-red-500 py-3 text-sm font-bold text-white hover:bg-red-600 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {isDeleting ? (
-              <>
-                <SpinnerIcon className="w-4 h-4" />
-                Deleting…
-              </>
+              <><SpinnerIcon className="w-4 h-4" />Deleting…</>
             ) : (
               "Delete"
             )}
@@ -561,11 +615,7 @@ function OwnerActionMenu({ clinic, onEdit, onDelete }) {
   }, [open]);
 
   return (
-    <div
-      ref={menuRef}
-      className="relative"
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div ref={menuRef} className="relative" onClick={(e) => e.stopPropagation()}>
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow hover:bg-white hover:text-violet-700 transition-all border border-gray-100"
@@ -576,19 +626,13 @@ function OwnerActionMenu({ clinic, onEdit, onDelete }) {
       {open && (
         <div className="absolute right-0 top-10 z-30 min-w-[140px] rounded-2xl bg-white border border-gray-100 shadow-xl py-1 overflow-hidden">
           <button
-            onClick={() => {
-              setOpen(false);
-              onEdit(clinic);
-            }}
+            onClick={() => { setOpen(false); onEdit(clinic); }}
             className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors"
           >
             <PencilIcon className="w-4 h-4" /> Edit
           </button>
           <button
-            onClick={() => {
-              setOpen(false);
-              onDelete(clinic);
-            }}
+            onClick={() => { setOpen(false); onDelete(clinic); }}
             className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors"
           >
             <TrashIcon className="w-4 h-4" /> Delete
@@ -621,10 +665,7 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
   }, []);
 
   useEffect(() => {
-    if (!query.trim() || query.length < 3) {
-      setResults([]);
-      return;
-    }
+    if (!query.trim() || query.length < 3) { setResults([]); return; }
     const timer = setTimeout(async () => {
       abortRef.current?.abort();
       const ac = new AbortController();
@@ -633,9 +674,7 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
       setSearchError("");
       try {
         const res = await fetch(
-          `${NOMINATIM_BASE}/search?format=jsonv2&limit=5&q=${encodeURIComponent(
-            query
-          )}`,
+          `${NOMINATIM_BASE}/search?format=jsonv2&limit=5&q=${encodeURIComponent(query)}`,
           { headers: { "Accept-Language": "en" }, signal: ac.signal }
         );
         if (ac.signal.aborted) return;
@@ -650,9 +689,8 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
           );
         }
       } catch (err) {
-        if (err.name !== "AbortError" && mountedRef.current) {
+        if (err.name !== "AbortError" && mountedRef.current)
           setSearchError("Search failed. Try again.");
-        }
       } finally {
         if (!ac.signal.aborted && mountedRef.current) setIsSearching(false);
       }
@@ -663,11 +701,9 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
   return (
     <div className="p-3 border-b border-gray-100">
       <div className="relative mb-2">
-        {isSearching ? (
-          <SpinnerIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-500" />
-        ) : (
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-        )}
+        {isSearching
+          ? <SpinnerIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-500" />
+          : <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
         <input
           ref={inputRef}
           type="text"
@@ -678,10 +714,7 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
         />
         {query && (
           <button
-            onClick={() => {
-              setQuery("");
-              setResults([]);
-            }}
+            onClick={() => { setQuery(""); setResults([]); }}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
           >
             <XIcon className="w-3.5 h-3.5" />
@@ -694,13 +727,9 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
       >
         <TargetIcon className="w-3.5 h-3.5" /> Use my current location
       </button>
-      {searchError && (
-        <p className="text-xs text-red-500 px-3 py-1">{searchError}</p>
-      )}
+      {searchError && <p className="text-xs text-red-500 px-3 py-1">{searchError}</p>}
       {query.length >= 3 && !isSearching && !searchError && results.length === 0 && (
-        <p className="text-xs text-gray-400 text-center py-2">
-          No results found
-        </p>
+        <p className="text-xs text-gray-400 text-center py-2">No results found</p>
       )}
       {results.map((result, i) => (
         <button
@@ -728,30 +757,21 @@ export default function MassageClinic() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // ── Load persisted filter state once on mount ──
+  // ── Persisted filter state ──
   const savedState = useMemo(() => loadFilterState(), []);
 
-  /* ── UI state — restored from session if available ── */
+  /* ── UI state ── */
   const [viewMode, setViewMode] = useState(savedState?.viewMode ?? "nearby");
-  const [searchQuery, setSearchQuery] = useState(
-    savedState?.searchQuery ?? ""
-  );
-  const [radiusKm, setRadiusKm] = useState(
-    savedState?.radiusKm ?? DEFAULT_RADIUS_KM
-  );
+  const [searchQuery, setSearchQuery] = useState(savedState?.searchQuery ?? "");
+  const [radiusKm, setRadiusKm] = useState(savedState?.radiusKm ?? DEFAULT_RADIUS_KM);
   const [sortBy, setSortBy] = useState(savedState?.sortBy ?? "rating");
-  const [isSearchExpanded, setIsSearchExpanded] = useState(
-    !!(savedState?.searchQuery)
-  );
+  const [isSearchExpanded, setIsSearchExpanded] = useState(!!(savedState?.searchQuery));
   const [showLocationFilter, setShowLocationFilter] = useState(false);
+  const [showFreeLimitModal, setShowFreeLimitModal] = useState(false);
 
-  /* ── Manual location — restored from session ── */
-  const [manualLocation, setManualLocation] = useState(
-    savedState?.manualLocation ?? null
-  );
-  const [manualLabel, setManualLabel] = useState(
-    savedState?.manualLabel ?? ""
-  );
+  /* ── Manual location ── */
+  const [manualLocation, setManualLocation] = useState(savedState?.manualLocation ?? null);
+  const [manualLabel, setManualLabel] = useState(savedState?.manualLabel ?? "");
 
   /* ── Delete / toast ── */
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -765,74 +785,55 @@ export default function MassageClinic() {
   useEffect(() => {
     isMounted.current = true;
     window.scrollTo(0, 0);
-    return () => {
-      isMounted.current = false;
-    };
+    return () => { isMounted.current = false; };
   }, []);
 
-  /* ── Geolocation ── */
-  const { userLocation, locationStatus, locationLabel, requestLocation } =
-    useGeolocation();
-
-  /* ── Clinics ── */
+  /* ── Hooks ── */
+  const { userLocation, locationStatus, locationLabel, requestLocation } = useGeolocation();
   const { allClinics, isLoading, error, refresh } = useClinics();
+  const { isPremium, isLoadingSubscription } = useSubscription(user?.id);
+  const { ownedCount, isLoadingCount, refreshCount } = useOwnerClinicCount(user?.id);
 
-  /* ── On mount: fetch clinics + conditionally request location ── */
+  /* ── Derived: can this user add another clinic? ── */
+  const canAddClinic = isPremium || ownedCount < FREE_CLINIC_LIMIT;
+
+  /* ── On mount ── */
   useEffect(() => {
     refresh();
-    // Only trigger GPS if we have no saved manual location
-    // and we're in nearby mode — avoids overriding a saved location
-    if (!savedState?.manualLocation) {
-      requestLocation();
-    }
+    if (!savedState?.manualLocation) requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Persist filter state to sessionStorage on every relevant change ── */
+  /* ── Persist filter state ── */
   useEffect(() => {
-    saveFilterState({
-      viewMode,
-      searchQuery,
-      radiusKm,
-      sortBy,
-      manualLocation,
-      manualLabel,
-    });
+    saveFilterState({ viewMode, searchQuery, radiusKm, sortBy, manualLocation, manualLabel });
   }, [viewMode, searchQuery, radiusKm, sortBy, manualLocation, manualLabel]);
 
   /* ── Toast helper ── */
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
-    setTimeout(() => {
-      if (isMounted.current) setToast(null);
-    }, 3500);
+    setTimeout(() => { if (isMounted.current) setToast(null); }, 3500);
   }, []);
 
-  /* ── Outside click closes location filter dropdown ── */
+  /* ── Outside click closes location dropdown ── */
   useEffect(() => {
     if (!showLocationFilter) return;
     const handler = (e) => {
-      if (
-        locationFilterRef.current &&
-        !locationFilterRef.current.contains(e.target)
-      )
+      if (locationFilterRef.current && !locationFilterRef.current.contains(e.target))
         setShowLocationFilter(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showLocationFilter]);
 
-  /* ── Active location: manual override takes priority over GPS ── */
+  /* ── Active location ── */
   const activeLocation = manualLocation || userLocation;
   const activeLabel = manualLabel || locationLabel;
 
-  /* ================================================================
-     CLIENT-SIDE FILTERING & SORTING
-     ================================================================ */
+  /* ── Filtered + sorted clinics ── */
   const displayedClinics = useMemo(() => {
     let rows = allClinics.slice();
 
-    // Text search filter
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       rows = rows.filter(
@@ -846,51 +847,28 @@ export default function MassageClinic() {
     if (viewMode === "nearby") {
       if (!activeLocation) return [];
       rows = rows
-        .filter(
-          (c) =>
-            c.lat != null &&
-            c.lng != null &&
-            !isNaN(c.lat) &&
-            !isNaN(c.lng)
-        )
+        .filter((c) => c.lat != null && c.lng != null && !isNaN(c.lat) && !isNaN(c.lng))
         .map((c) => ({
           ...c,
-          distance_km: haversineKm(activeLocation, {
-            lat: c.lat,
-            lng: c.lng,
-          }),
+          distance_km: haversineKm(activeLocation, { lat: c.lat, lng: c.lng }),
         }))
-        .filter(
-          (c) =>
-            Number.isFinite(c.distance_km) && c.distance_km <= radiusKm
-        );
+        .filter((c) => Number.isFinite(c.distance_km) && c.distance_km <= radiusKm);
     } else {
-      // All mode — compute distance if we have location, otherwise null
       rows = rows.map((c) => ({
         ...c,
         distance_km:
-          activeLocation &&
-          c.lat != null &&
-          c.lng != null &&
-          !isNaN(c.lat) &&
-          !isNaN(c.lng)
+          activeLocation && c.lat != null && c.lng != null && !isNaN(c.lat) && !isNaN(c.lng)
             ? haversineKm(activeLocation, { lat: c.lat, lng: c.lng })
             : null,
       }));
     }
 
-    // Sort
     if (sortBy === "distance" && viewMode === "nearby") {
-      rows.sort(
-        (a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity)
-      );
+      rows.sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity));
     } else if (sortBy === "name") {
       rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     } else {
-      // Default: rating
-      rows.sort(
-        (a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0)
-      );
+      rows.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
     }
 
     return rows;
@@ -898,10 +876,7 @@ export default function MassageClinic() {
 
   /* ── Handlers ── */
   const toggleViewMode = useCallback(
-    (mode) => {
-      if (mode === viewMode) return;
-      setViewMode(mode);
-    },
+    (mode) => { if (mode !== viewMode) setViewMode(mode); },
     [viewMode]
   );
 
@@ -913,7 +888,6 @@ export default function MassageClinic() {
   }, []);
 
   const handleUseMyLocation = useCallback(() => {
-    // Clear manual location so GPS takes over
     setManualLocation(null);
     setManualLabel("");
     setShowLocationFilter(false);
@@ -921,9 +895,7 @@ export default function MassageClinic() {
   }, [userLocation, requestLocation]);
 
   const handleEdit = useCallback(
-    (clinic) => {
-      navigate(`/massage-clinics/${clinic.id}/edit`, { state: { clinic } });
-    },
+    (clinic) => navigate(`/massage-clinics/${clinic.id}/edit`, { state: { clinic } }),
     [navigate]
   );
 
@@ -943,7 +915,8 @@ export default function MassageClinic() {
         .eq("id", deleteTarget.id)
         .eq("owner_id", user.id);
       if (delErr) throw delErr;
-      refresh();
+      // Refresh both the list and the owned count
+      await Promise.all([refresh(), refreshCount()]);
       setDeleteTarget(null);
       showToast("Clinic deleted successfully");
     } catch (err) {
@@ -951,26 +924,41 @@ export default function MassageClinic() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteTarget, user?.id, showToast, refresh]);
+  }, [deleteTarget, user?.id, showToast, refresh, refreshCount]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleteTarget(null);
     setDeleteError("");
   }, []);
 
-  /* ── Effective label for location button ── */
+  /* ── FAB click: gate behind limit check ── */
+  const handleAddClinic = useCallback(() => {
+    if (isLoadingSubscription || isLoadingCount) return;
+    if (!canAddClinic) {
+      setShowFreeLimitModal(true);
+      return;
+    }
+    navigate("/massage-clinics/new");
+  }, [canAddClinic, isLoadingSubscription, isLoadingCount, navigate]);
+
+  const handleUpgrade = useCallback(() => {
+    setShowFreeLimitModal(false);
+    navigate("/subscription");
+  }, [navigate]);
+
+  /* ── Location button label ── */
   const effectiveLabel =
-    locationStatus === "loading"
-      ? "Locating…"
-      : activeLabel
-      ? activeLabel
-      : locationStatus === "denied"
-      ? "Location denied"
-      : "Set location";
+    locationStatus === "loading" ? "Locating…"
+    : activeLabel ? activeLabel
+    : locationStatus === "denied" ? "Location denied"
+    : "Set location";
 
   /* ── Render ── */
   return (
-    <div className="min-h-dvh bg-gradient-to-br from-slate-50 via-white to-slate-50/50 pb-32">
+    <div className={`min-h-dvh bg-gradient-to-br from-slate-50 via-white to-slate-50/50 ${
+      // Extra bottom padding when banner is visible so content isn't hidden behind it
+      !isPremium && user ? "pb-40" : "pb-32"
+    }`}>
       {toast && <Toast message={toast.message} type={toast.type} />}
 
       {deleteTarget && (
@@ -979,6 +967,13 @@ export default function MassageClinic() {
           onConfirm={handleDeleteConfirm}
           onCancel={handleDeleteCancel}
           isDeleting={isDeleting}
+        />
+      )}
+
+      {showFreeLimitModal && (
+        <FreeLimitModal
+          onUpgrade={handleUpgrade}
+          onClose={() => setShowFreeLimitModal(false)}
         />
       )}
 
@@ -1012,11 +1007,7 @@ export default function MassageClinic() {
                   onClick={() => setIsSearchExpanded((v) => !v)}
                   className="p-2.5 rounded-full hover:bg-gray-100 transition-colors text-gray-600 hover:text-gray-900"
                 >
-                  {isSearchExpanded ? (
-                    <XIcon className="w-5 h-5" />
-                  ) : (
-                    <SearchIcon className="w-5 h-5" />
-                  )}
+                  {isSearchExpanded ? <XIcon className="w-5 h-5" /> : <SearchIcon className="w-5 h-5" />}
                 </button>
                 <select
                   value={sortBy}
@@ -1024,9 +1015,7 @@ export default function MassageClinic() {
                   className="hidden sm:block bg-white border border-gray-200 rounded-full px-4 py-2 text-xs font-bold focus:outline-none focus:border-violet-300 text-gray-700 hover:bg-gray-50 transition-all cursor-pointer"
                 >
                   <option value="rating">Top Rated</option>
-                  {viewMode === "nearby" && (
-                    <option value="distance">Nearest</option>
-                  )}
+                  {viewMode === "nearby" && <option value="distance">Nearest</option>}
                   <option value="name">A–Z</option>
                 </select>
                 <div className="flex bg-gray-100 rounded-full p-1">
@@ -1054,7 +1043,7 @@ export default function MassageClinic() {
               </div>
             </div>
 
-            {/* Expandable search bar */}
+            {/* Search bar */}
             {isSearchExpanded && (
               <div className="mb-3">
                 <div className="relative">
@@ -1079,7 +1068,7 @@ export default function MassageClinic() {
               </div>
             )}
 
-            {/* Location row — nearby mode only */}
+            {/* Location row */}
             {viewMode === "nearby" && (
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative" ref={locationFilterRef}>
@@ -1087,14 +1076,10 @@ export default function MassageClinic() {
                     onClick={() => setShowLocationFilter((v) => !v)}
                     className="flex items-center gap-2 bg-white border border-gray-200 hover:border-violet-300 rounded-full px-3.5 py-2 text-xs font-bold text-gray-700 transition-all shadow-sm hover:shadow-md whitespace-nowrap"
                   >
-                    {locationStatus === "loading" && !manualLocation ? (
-                      <SpinnerIcon className="w-3.5 h-3.5 text-violet-500" />
-                    ) : (
-                      <MapPinIcon className="w-3.5 h-3.5 text-violet-600 shrink-0" />
-                    )}
-                    <span className="truncate max-w-[140px]">
-                      {effectiveLabel}
-                    </span>
+                    {locationStatus === "loading" && !manualLocation
+                      ? <SpinnerIcon className="w-3.5 h-3.5 text-violet-500" />
+                      : <MapPinIcon className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
+                    <span className="truncate max-w-[140px]">{effectiveLabel}</span>
                     <ChevronDownIcon className="w-3 h-3 text-gray-400 shrink-0" />
                   </button>
                   {showLocationFilter && (
@@ -1108,23 +1093,18 @@ export default function MassageClinic() {
                 </div>
 
                 <div className="flex items-center bg-white border border-gray-200 rounded-full px-3.5 py-2 shadow-sm text-xs font-bold">
-                  <span className="text-gray-500 mr-1.5 hidden sm:inline">
-                    Within
-                  </span>
+                  <span className="text-gray-500 mr-1.5 hidden sm:inline">Within</span>
                   <select
                     value={radiusKm}
                     onChange={(e) => setRadiusKm(Number(e.target.value))}
                     className="bg-transparent text-violet-700 focus:outline-none cursor-pointer"
                   >
                     {[5, 10, 25, 50, 100].map((r) => (
-                      <option key={r} value={r}>
-                        {r}km
-                      </option>
+                      <option key={r} value={r}>{r}km</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Mobile-only sort select */}
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
@@ -1137,8 +1117,7 @@ export default function MassageClinic() {
 
                 {!isLoading && displayedClinics.length > 0 && (
                   <span className="ml-auto text-xs text-gray-400 font-medium hidden sm:block">
-                    {displayedClinics.length} clinic
-                    {displayedClinics.length !== 1 ? "s" : ""}
+                    {displayedClinics.length} clinic{displayedClinics.length !== 1 ? "s" : ""}
                   </span>
                 )}
               </div>
@@ -1148,16 +1127,12 @@ export default function MassageClinic() {
 
         {/* ── CONTENT ── */}
         <div className="px-4 md:px-6 pt-6">
-          {viewMode === "nearby" &&
-          locationStatus === "denied" &&
-          !activeLocation ? (
+          {viewMode === "nearby" && locationStatus === "denied" && !activeLocation ? (
             <LocationDeniedState
               onRequestLocation={requestLocation}
               onViewAll={() => toggleViewMode("all")}
             />
-          ) : viewMode === "nearby" &&
-            locationStatus === "loading" &&
-            !activeLocation ? (
+          ) : viewMode === "nearby" && locationStatus === "loading" && !activeLocation ? (
             <LocationLoadingState />
           ) : isLoading ? (
             <LoadingState />
@@ -1174,7 +1149,7 @@ export default function MassageClinic() {
               searchQuery={searchQuery}
               locationLabel={effectiveLabel}
               radiusKm={radiusKm}
-              onCreateClinic={() => navigate("/massage-clinics/new")}
+              onCreateClinic={handleAddClinic}
             />
           ) : (
             <ClinicsList
@@ -1188,14 +1163,31 @@ export default function MassageClinic() {
         </div>
       </div>
 
-      {/* ── FAB ── */}
+      {/* ── FAB ──
+          Shows a lock badge when the user has hit the free limit  */}
       <button
-        onClick={() => navigate("/massage-clinics/new")}
-        className="fixed bottom-24 right-6 z-20 w-16 h-16 bg-gradient-to-br from-violet-600 to-violet-800 text-white rounded-full shadow-2xl shadow-violet-300/50 hover:shadow-violet-400/60 hover:scale-110 active:scale-95 transition-all flex items-center justify-center group"
-        aria-label="Add new clinic"
+        onClick={handleAddClinic}
+        disabled={isLoadingSubscription || isLoadingCount}
+        className="fixed bottom-24 right-6 z-20 w-16 h-16 bg-gradient-to-br from-violet-600 to-violet-800 text-white rounded-full shadow-2xl shadow-violet-300/50 hover:shadow-violet-400/60 hover:scale-110 active:scale-95 transition-all flex items-center justify-center group disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+        aria-label={canAddClinic ? "Add new clinic" : "Upgrade to add more clinics"}
       >
-        <PlusIcon className="w-7 h-7 group-hover:rotate-90 transition-transform duration-300" />
+        {isLoadingSubscription || isLoadingCount ? (
+          <SpinnerIcon className="w-6 h-6" />
+        ) : canAddClinic ? (
+          <PlusIcon className="w-7 h-7 group-hover:rotate-90 transition-transform duration-300" />
+        ) : (
+          /* Lock icon with crown badge when limit reached */
+          <span className="relative">
+            <LockIcon className="w-6 h-6" />
+            <span className="absolute -top-2 -right-2 text-xs">👑</span>
+          </span>
+        )}
       </button>
+
+      {/* ── PREMIUM BANNER — only for logged-in non-premium users ── */}
+      {user && !isPremium && !isLoadingSubscription && (
+        <PremiumCtaBanner onUpgrade={() => navigate("/subscription")} />
+      )}
     </div>
   );
 }
@@ -1223,12 +1215,9 @@ function LocationDeniedState({ onRequestLocation, onViewAll }) {
       <div className="w-20 h-20 bg-gradient-to-br from-violet-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
         <MapPinIcon className="w-10 h-10 text-violet-600" />
       </div>
-      <h3 className="text-2xl font-bold text-gray-900 mb-3">
-        Location Access Needed
-      </h3>
+      <h3 className="text-2xl font-bold text-gray-900 mb-3">Location Access Needed</h3>
       <p className="text-sm text-gray-500 mb-8 max-w-xs mx-auto leading-relaxed">
-        Enable location to discover massage clinics near you, or browse all
-        available clinics.
+        Enable location to discover massage clinics near you, or browse all available clinics.
       </p>
       <div className="flex flex-col items-center gap-3">
         <button
@@ -1252,10 +1241,7 @@ function LoadingState() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
       {Array.from({ length: 6 }).map((_, i) => (
-        <div
-          key={i}
-          className="bg-white rounded-2xl overflow-hidden animate-pulse shadow-sm border border-gray-100"
-        >
+        <div key={i} className="bg-white rounded-2xl overflow-hidden animate-pulse shadow-sm border border-gray-100">
           <div className="h-48 bg-gradient-to-br from-gray-200 to-gray-100" />
           <div className="p-4 space-y-3">
             <div className="h-4 bg-gray-200 rounded-full w-3/4" />
@@ -1278,9 +1264,7 @@ function ErrorState({ error, onRetry }) {
       <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
         <AlertIcon className="w-10 h-10 text-red-500" />
       </div>
-      <h3 className="text-xl font-bold text-gray-900 mb-2">
-        Something went wrong
-      </h3>
+      <h3 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h3>
       <p className="text-sm text-red-500 mb-8 max-w-xs mx-auto">{error}</p>
       <button
         onClick={onRetry}
@@ -1292,21 +1276,13 @@ function ErrorState({ error, onRetry }) {
   );
 }
 
-function EmptyState({
-  viewMode,
-  searchQuery,
-  locationLabel,
-  radiusKm,
-  onCreateClinic,
-}) {
+function EmptyState({ viewMode, searchQuery, locationLabel, radiusKm, onCreateClinic }) {
   return (
     <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-200">
       <div className="w-24 h-24 bg-gradient-to-br from-violet-50 to-purple-50 rounded-full flex items-center justify-center mx-auto mb-6">
         <span className="text-5xl">💆</span>
       </div>
-      <h3 className="text-xl font-bold text-gray-900 mb-3">
-        No Clinics Found
-      </h3>
+      <h3 className="text-xl font-bold text-gray-900 mb-3">No Clinics Found</h3>
       <p className="text-sm text-gray-500 mb-8 max-w-xs mx-auto leading-relaxed">
         {searchQuery
           ? `No clinics match "${searchQuery}".`
@@ -1349,11 +1325,7 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
   const [isFavorited, setIsFavorited] = useState(false);
   const [imageError, setImageError] = useState(false);
 
-  const isOwner = !!(
-    currentUserId &&
-    clinic.owner_id &&
-    currentUserId === clinic.owner_id
-  );
+  const isOwner = !!(currentUserId && clinic.owner_id && currentUserId === clinic.owner_id);
   const hours = todayHours(clinic.opening_hours);
   const rating = Number(clinic.rating) || 0;
   const reviewCount = Number(clinic.review_count) || 0;
@@ -1363,7 +1335,7 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
       onClick={() => navigate(`/massage-clinics/${clinic.id}`)}
       className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden border border-gray-100 hover:border-violet-200 flex flex-col"
     >
-      {/* Image area */}
+      {/* Image */}
       <div className="relative h-48 sm:h-44 lg:h-48 overflow-hidden bg-gradient-to-br from-violet-100 to-fuchsia-100 shrink-0">
         {clinic.cover_url && !imageError ? (
           <img
@@ -1379,25 +1351,15 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
             <span className="text-xs text-gray-400">No image</span>
           </div>
         )}
-
-        {/* Gradient overlay */}
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/65 via-black/20 to-transparent pointer-events-none" />
 
-        {/* Favourite button */}
+        {/* Favourite */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsFavorited((v) => !v);
-          }}
+          onClick={(e) => { e.stopPropagation(); setIsFavorited((v) => !v); }}
           className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-white/90 backdrop-blur-sm shadow flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
           aria-label={isFavorited ? "Remove favourite" : "Add favourite"}
         >
-          <HeartIcon
-            className={`w-4 h-4 ${
-              isFavorited ? "text-red-500" : "text-gray-400"
-            }`}
-            filled={isFavorited}
-          />
+          <HeartIcon className={`w-4 h-4 ${isFavorited ? "text-red-500" : "text-gray-400"}`} filled={isFavorited} />
         </button>
 
         {/* Top-right badges */}
@@ -1420,7 +1382,7 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
           )}
         </div>
 
-        {/* Name + rating overlay */}
+        {/* Name + rating */}
         <div className="absolute bottom-0 left-0 right-0 p-3 z-10">
           <h3 className="font-bold text-base text-white leading-snug line-clamp-1 mb-0.5">
             {clinic.name || "Unnamed Clinic"}
@@ -1431,29 +1393,21 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
                 {Array.from({ length: 5 }).map((_, i) => (
                   <StarIcon
                     key={i}
-                    className={`w-3 h-3 ${
-                      i < Math.round(rating)
-                        ? "text-amber-300"
-                        : "text-white/30"
-                    }`}
+                    className={`w-3 h-3 ${i < Math.round(rating) ? "text-amber-300" : "text-white/30"}`}
                     filled={i < Math.round(rating)}
                   />
                 ))}
               </div>
-              <span className="text-[11px] text-white font-bold">
-                {rating.toFixed(1)}
-              </span>
+              <span className="text-[11px] text-white font-bold">{rating.toFixed(1)}</span>
               {reviewCount > 0 && (
-                <span className="text-[11px] text-white/70">
-                  ({reviewCount})
-                </span>
+                <span className="text-[11px] text-white/70">({reviewCount})</span>
               )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Card body */}
+      {/* Body */}
       <div className="p-4 flex flex-col flex-1">
         {(clinic.address || clinic.city) && (
           <div className="flex items-start gap-2 mb-2.5">
@@ -1480,10 +1434,7 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
         {clinic.specialties?.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-3">
             {clinic.specialties.slice(0, 3).map((s, i) => (
-              <span
-                key={i}
-                className="text-[10px] font-semibold bg-violet-50 text-violet-600 border border-violet-100 px-2 py-0.5 rounded-full"
-              >
+              <span key={i} className="text-[10px] font-semibold bg-violet-50 text-violet-600 border border-violet-100 px-2 py-0.5 rounded-full">
                 {s}
               </span>
             ))}
@@ -1494,17 +1445,11 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
             )}
           </div>
         )}
-
         <div className="flex-1" />
-
-        {/* Action buttons */}
         <div className="flex gap-2 pt-3 border-t border-gray-100">
           {isOwner && (
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(clinic);
-              }}
+              onClick={(e) => { e.stopPropagation(); onEdit(clinic); }}
               className="flex items-center justify-center gap-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 py-2.5 px-3 rounded-xl text-xs font-bold transition-colors border border-violet-100"
             >
               <PencilIcon className="w-3.5 h-3.5" /> Edit
@@ -1520,10 +1465,7 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
             </a>
           )}
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/massage-clinics/${clinic.id}`);
-            }}
+            onClick={(e) => { e.stopPropagation(); navigate(`/massage-clinics/${clinic.id}`); }}
             className={`flex items-center justify-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white py-2.5 rounded-xl text-xs font-bold transition-colors shadow-sm ${
               clinic.phone || isOwner ? "flex-1" : "w-full"
             }`}
@@ -1533,31 +1475,5 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
         </div>
       </div>
     </article>
-
-    
   );
-
-   <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
-        {/* Fade-out mask so content beneath feels natural */}
-        <div className="h-6 bg-gradient-to-t from-gray-50 to-transparent" />
-
-        <div className="bg-white/95 backdrop-blur-xl border-t border-gray-100 px-4 pt-3 pb-safe pointer-events-auto"
-          style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
-        >
-          <button
-            onClick={() => navigate("/subscription")}
-            className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 py-4 text-base font-extrabold text-white shadow-lg shadow-orange-200 hover:shadow-xl hover:shadow-orange-300 active:scale-[0.98] transition-all"
-          >
-            {/* Shimmer effect */}
-            <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-            <span className="relative flex items-center justify-center gap-2.5">
-              <span className="text-xl">👑</span>
-              Get Premium — Unlock Everything
-              <span className="ml-1 rounded-full bg-white/25 px-2.5 py-0.5 text-xs font-bold">
-                50% OFF
-              </span>
-            </span>
-          </button>
-        </div>
-      </div>
 }
