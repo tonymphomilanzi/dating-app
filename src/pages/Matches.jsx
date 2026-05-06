@@ -4,21 +4,19 @@ import {
   useMemo,
   useState,
   useCallback,
-  useRef,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { matchesService } from "../services/matches.service.js";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const REFETCH_COOLDOWN_MS = 2_000;
-const REQUEST_TIMEOUT_MS = 10_000;
-const ACTION_TIMEOUT_MS = 8_000;
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
 const DAY_LABEL_ORDER = ["Today", "Yesterday", "Earlier"];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
+/* ================================================================
+   HELPERS
+   ================================================================ */
 function timeAgo(ts) {
   if (!ts) return "";
   const diff = Math.max(0, Date.now() - new Date(ts).getTime());
@@ -33,23 +31,19 @@ function timeAgo(ts) {
 
 function getTimestamp(item) {
   const raw =
-    item?.created_at ||
-    item?.matched_at ||
-    item?.liked_at ||
+    item?.created_at  ||
+    item?.matched_at  ||
+    item?.liked_at    ||
     item?.other?.created_at;
   return raw ? new Date(raw).getTime() : 0;
 }
 
 function getLabelForTimestamp(timestamp) {
   if (timestamp === 0) return "Earlier";
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate()
-  ).getTime();
+  const now            = new Date();
+  const startOfToday   = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-  if (timestamp >= startOfToday) return "Today";
+  if (timestamp >= startOfToday)     return "Today";
   if (timestamp >= startOfYesterday) return "Yesterday";
   return "Earlier";
 }
@@ -61,48 +55,28 @@ function groupByDay(items) {
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label).push(item);
   }
-  return DAY_LABEL_ORDER.filter((label) => groups.has(label)).map(
-    (label) => ({ label, items: groups.get(label) })
-  );
+  return DAY_LABEL_ORDER
+    .filter((label) => groups.has(label))
+    .map((label) => ({ label, items: groups.get(label) }));
 }
 
-/**
- * Always returns the OTHER USER's profile ID.
- * item.other.id  → preferred (explicit nested user object)
- * item.user_id   → some APIs put the target user ID at top level
- * item.id        → last resort (only safe if API guarantees item.id === user id)
- */
 function getOtherUserId(item) {
   return item?.other?.id ?? item?.user_id ?? item?.id ?? null;
 }
 
-/**
- * Returns the unique record ID for this match/like entry (used as React key
- * and for optimistic removal — NOT for navigation).
- */
 function getRecordId(item) {
-  // Prefer an explicit record/match id that is NOT the user id
   return item?.match_id ?? item?.record_id ?? item?.id ?? getOtherUserId(item);
 }
 
-/**
- * Returns the conversation ID to navigate to.
- * For matches: use conversation_id if present, otherwise use the other user's
- * ID (the chat route accepts either and resolves on the backend).
- * NEVER use the match record ID as a conversation destination.
- */
 function getConversationDest(item) {
-  // Explicit conversation id — most reliable
-  if (item?.conversation_id) return item.conversation_id;
-  // Some APIs nest it
-  if (item?.conversation?.id) return item.conversation.id;
-  // Fall back to the other user's profile ID so the chat page can
-  // create/find a conversation with that user
+  if (item?.conversation_id)   return item.conversation_id;
+  if (item?.conversation?.id)  return item.conversation.id;
   return getOtherUserId(item);
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
+/* ================================================================
+   MAIN COMPONENT
+   ================================================================ */
 export default function Matches() {
   const navigate = useNavigate();
 
@@ -113,107 +87,85 @@ export default function Matches() {
     matches: { items: [], limited: false, total: 0 },
   });
 
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState("");
-  const [actionLoading, setActionLoading] = useState(null); // otherId string | null
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState("");
+  const [actionLoading, setActionLoading] = useState(null);
 
-  const abortRef         = useRef(null);
-  const lastRefetchTsRef = useRef(0);
-  // Keep a ref to the current mode so async callbacks always see the latest value
-  const modeRef          = useRef(mode);
-  useEffect(() => { modeRef.current = mode; }, [mode]);
-
-  // ── Fetch ────────────────────────────────────────────────────────────────
-
-  const fetchItems = useCallback(async (nextMode) => {
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    setLoading(true);
-    setError("");
-
+  /* ──────────────────────────────────────────────────────────────
+     FETCH — no abort controller, no cooldown ref, no modeRef.
+     Plain async function. Navigation works instantly because
+     there's nothing to cancel or revalidate mid-transition.
+  ────────────────────────────────────────────────────────────── */
+  async function fetchItems(targetMode, silent = false) {
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
     try {
-      const response = await matchesService.list(nextMode, {
-        signal:    ac.signal,
-        timeoutMs: REQUEST_TIMEOUT_MS,
-      });
-
-      if (ac.signal.aborted) return;
-
+      const response = await matchesService.list(targetMode);
       setTabState((prev) => ({
         ...prev,
-        [nextMode]: {
+        [targetMode]: {
           items:   response.items   ?? [],
           limited: Boolean(response.limited),
           total:   Number(response.total ?? 0),
         },
       }));
     } catch (err) {
-      if (ac.signal.aborted) return;
-      setError(err?.message || "Failed to load");
+      if (!silent) {
+        setError(err?.message || "Failed to load");
+      }
     } finally {
-      if (!ac.signal.aborted) setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, []);
+  }
 
+  /* ──────────────────────────────────────────────────────────────
+     EFFECTS
+  ────────────────────────────────────────────────────────────── */
+
+  // Load on mount and when mode changes
   useEffect(() => {
     fetchItems(mode);
-    return () => abortRef.current?.abort();
-  }, [mode, fetchItems]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
-  // ── Background Revalidation ───────────────────────────────────────────────
-
+  // Silent refresh when tab becomes visible again
   useEffect(() => {
-    const maybeRefetch = () => {
-      const now = Date.now();
-      if (now - lastRefetchTsRef.current < REFETCH_COOLDOWN_MS) return;
-      lastRefetchTsRef.current = now;
-      fetchItems(modeRef.current);
+    const handle = () => {
+      if (document.visibilityState === "visible") {
+        fetchItems(mode, true);
+      }
     };
+    document.addEventListener("visibilitychange", handle);
+    return () => document.removeEventListener("visibilitychange", handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") maybeRefetch();
-    };
-
-    window.addEventListener("focus", maybeRefetch);
-    window.addEventListener("online", maybeRefetch);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      window.removeEventListener("focus", maybeRefetch);
-      window.removeEventListener("online", maybeRefetch);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [fetchItems]);
-
-  // ── Derived state ─────────────────────────────────────────────────────────
-
+  /* ──────────────────────────────────────────────────────────────
+     DERIVED STATE
+  ────────────────────────────────────────────────────────────── */
   const { items, limited, total } = tabState[mode];
   const groups = useMemo(() => groupByDay(items), [items]);
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-
-  const handleRetry = useCallback(() => fetchItems(mode), [fetchItems, mode]);
-
-  /**
-   * Optimistically remove a record from whichever tab is currently active.
-   * Uses the functional updater + modeRef so it never closes over a stale mode.
-   */
-  const removeItemOptimistically = useCallback((recordId) => {
-    const activeMode = modeRef.current;
+  /* ──────────────────────────────────────────────────────────────
+     ACTIONS
+  ────────────────────────────────────────────────────────────── */
+  function removeItemOptimistically(recordId) {
     setTabState((prev) => {
-      const tab = prev[activeMode];
+      const tab = prev[mode];
       return {
         ...prev,
-        [activeMode]: {
+        [mode]: {
           ...tab,
           items: tab.items.filter((i) => getRecordId(i) !== recordId),
           total: Math.max(0, tab.total - 1),
         },
       };
     });
-  }, []); // modeRef is a ref — safe to omit from deps
+  }
+
+  const handleRetry = () => fetchItems(mode);
 
   const handleLikeBack = useCallback(
     async (item) => {
@@ -223,9 +175,7 @@ export default function Matches() {
 
       setActionLoading(otherId);
       try {
-        const result = await matchesService.likeBack(otherId, {
-          timeoutMs: ACTION_TIMEOUT_MS,
-        });
+        const result = await matchesService.likeBack(otherId);
         removeItemOptimistically(recordId);
         if (result?.matched) {
           console.info("🎉 It's a match with", otherId);
@@ -237,7 +187,8 @@ export default function Matches() {
         setActionLoading(null);
       }
     },
-    [actionLoading, removeItemOptimistically]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actionLoading, mode]
   );
 
   const handlePass = useCallback(
@@ -248,7 +199,7 @@ export default function Matches() {
 
       setActionLoading(otherId);
       try {
-        await matchesService.pass(otherId, { timeoutMs: ACTION_TIMEOUT_MS });
+        await matchesService.pass(otherId);
         removeItemOptimistically(recordId);
       } catch (err) {
         console.error("Pass failed:", err);
@@ -257,16 +208,10 @@ export default function Matches() {
         setActionLoading(null);
       }
     },
-    [actionLoading, removeItemOptimistically]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [actionLoading, mode]
   );
 
-  /**
-   * FIX: Navigate to a conversation with the correct destination.
-   * - Uses conversation_id when the API provides it (avoids conflating
-   *   match record IDs with conversation IDs).
-   * - Falls back to the OTHER USER's ID (not the record ID).
-   * - Message action is never blocked by like/pass loading state.
-   */
   const handleMessage = useCallback(
     (item) => {
       const dest = getConversationDest(item);
@@ -279,11 +224,13 @@ export default function Matches() {
     [navigate]
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
+  /* ──────────────────────────────────────────────────────────────
+     RENDER
+  ────────────────────────────────────────────────────────────── */
   return (
     <div className="flex min-h-dvh flex-col bg-white text-gray-900">
-      {/* ── Header ── */}
+
+      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-gray-100 bg-white/95 px-4 py-4 backdrop-blur-sm">
         <div className="mx-auto max-w-md">
           <div className="flex items-center justify-between">
@@ -303,7 +250,7 @@ export default function Matches() {
         </div>
       </header>
 
-      {/* ── Main ── */}
+      {/* Main */}
       <main className="mx-auto w-full max-w-md flex-1 px-4 pb-24 pt-4">
         {loading ? (
           <SkeletonGrid mode={mode} />
@@ -323,7 +270,6 @@ export default function Matches() {
                   <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
                     {group.label}
                   </h2>
-
                   <div className="grid grid-cols-2 gap-3">
                     <AnimatePresence mode="popLayout">
                       {group.items.map((item) => {
@@ -342,11 +288,7 @@ export default function Matches() {
                             transition={{ duration: 0.2 }}
                           >
                             <MatchCard
-                              name={
-                                other.display_name ||
-                                other.name ||
-                                "Member"
-                              }
+                              name={other.display_name || other.name || "Member"}
                               age={other.age}
                               city={other.city}
                               img={other.avatar_url || other.photo}
@@ -354,8 +296,6 @@ export default function Matches() {
                               to={`/profile/${otherId}`}
                               mode={mode}
                               isActing={isActing}
-                              // BUG FIX: Only disable like/pass buttons during
-                              // actions — never disable the Message button.
                               likePassDisabled={Boolean(actionLoading)}
                               onPass={() => handlePass(item)}
                               onLike={() => handleLikeBack(item)}
@@ -376,14 +316,14 @@ export default function Matches() {
   );
 }
 
-// ─── Tab Toggle ───────────────────────────────────────────────────────────────
-
+/* ================================================================
+   TAB TOGGLE
+   ================================================================ */
 function TabToggle({ mode, onSelect, likesCount, matchesCount }) {
   const tabs = [
-    { key: "likes",   label: "Likes",   count: likesCount },
+    { key: "likes",   label: "Likes",   count: likesCount   },
     { key: "matches", label: "Matches", count: matchesCount },
   ];
-
   return (
     <div className="inline-flex items-center rounded-full border border-violet-600 bg-white p-1">
       {tabs.map((tab) => (
@@ -408,8 +348,9 @@ function TabToggle({ mode, onSelect, likesCount, matchesCount }) {
   );
 }
 
-// ─── Premium Banner ───────────────────────────────────────────────────────────
-
+/* ================================================================
+   PREMIUM BANNER
+   ================================================================ */
 function PremiumBanner({ total, mode }) {
   return (
     <motion.div
@@ -426,9 +367,7 @@ function PremiumBanner({ total, mode }) {
           <p className="text-sm font-medium text-amber-800">
             You have {total} {mode}!
           </p>
-          <p className="text-xs text-amber-600">
-            Upgrade to Premium to see all.
-          </p>
+          <p className="text-xs text-amber-600">Upgrade to Premium to see all.</p>
         </div>
         <Link
           to="/premium"
@@ -441,22 +380,9 @@ function PremiumBanner({ total, mode }) {
   );
 }
 
-// ─── Match Card ───────────────────────────────────────────────────────────────
-
-/**
- * @param {string}          name
- * @param {number}          [age]
- * @param {string}          [city]
- * @param {string}          [img]
- * @param {boolean}         isSuper
- * @param {string}          to               - Profile link href
- * @param {"likes"|"matches"} mode
- * @param {boolean}         isActing         - This card's action is in-flight
- * @param {boolean}         likePassDisabled - Any like/pass is in-flight (block like+pass only)
- * @param {Function}        onPass
- * @param {Function}        onLike
- * @param {Function}        onMessage        - Never disabled
- */
+/* ================================================================
+   MATCH CARD
+   ================================================================ */
 function MatchCard({
   name,
   age,
@@ -481,7 +407,7 @@ function MatchCard({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-      {/* ── Photo ── */}
+      {/* Photo */}
       <Link to={to} className="block">
         <div className="relative aspect-[3/4] w-full">
           <img
@@ -492,16 +418,13 @@ function MatchCard({
             draggable={false}
             loading="lazy"
           />
-
           {isSuper && (
             <div className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg">
               <StarIcon className="h-4 w-4 text-white" />
             </div>
           )}
-
           <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/20 to-transparent" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/60 via-black/30 to-transparent" />
-
           <div className="absolute bottom-14 left-3 right-3 text-white">
             <div className="truncate text-base font-semibold drop-shadow">
               {name}{age != null ? `, ${age}` : ""}
@@ -516,47 +439,29 @@ function MatchCard({
         </div>
       </Link>
 
-      {/* ── Actions ── */}
+      {/* Actions */}
       <div className="flex items-center justify-between bg-gray-50 px-3 py-2.5">
         {mode === "likes" ? (
           <>
-            {/* Pass */}
             <button
               onClick={onPass}
               disabled={likePassDisabled}
               className="grid h-10 w-10 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Pass"
             >
-              {isActing ? (
-                <Spinner className="h-5 w-5 text-gray-400" />
-              ) : (
-                <XIcon className="h-5 w-5" />
-              )}
+              {isActing ? <Spinner className="h-5 w-5 text-gray-400" /> : <XIcon className="h-5 w-5" />}
             </button>
-
             <div className="h-6 w-px bg-gray-200" />
-
-            {/* Like back */}
             <button
               onClick={onLike}
               disabled={likePassDisabled}
               className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-green-400 to-green-600 text-white shadow-sm transition-shadow hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Like back"
             >
-              {isActing ? (
-                <Spinner className="h-5 w-5" />
-              ) : (
-                <HeartIcon className="h-5 w-5" />
-              )}
+              {isActing ? <Spinner className="h-5 w-5" /> : <HeartIcon className="h-5 w-5" />}
             </button>
           </>
         ) : (
-          /*
-           * FIX: Message button is NEVER disabled.
-           * Navigating to chat does not conflict with like/pass actions,
-           * and blocking it caused the "opens wrong user" confusion because
-           * users would click repeatedly and land on a queued navigation.
-           */
           <button
             onClick={onMessage}
             className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 active:bg-violet-800"
@@ -570,18 +475,16 @@ function MatchCard({
   );
 }
 
-// ─── Skeleton Grid ────────────────────────────────────────────────────────────
-
+/* ================================================================
+   SKELETON GRID
+   ================================================================ */
 function SkeletonGrid({ count = 6, mode = "likes" }) {
   return (
     <div className="animate-pulse">
       <div className="mb-3 h-4 w-20 rounded bg-gray-200" />
       <div className="grid grid-cols-2 gap-3">
         {Array.from({ length: count }).map((_, i) => (
-          <div
-            key={i}
-            className="overflow-hidden rounded-2xl border border-gray-100 bg-white"
-          >
+          <div key={i} className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
             <div className="aspect-[3/4] w-full bg-gray-200" />
             <div className="flex items-center justify-between bg-gray-50 px-3 py-2.5">
               {mode === "likes" ? (
@@ -601,17 +504,16 @@ function SkeletonGrid({ count = 6, mode = "likes" }) {
   );
 }
 
-// ─── Empty State ──────────────────────────────────────────────────────────────
-
+/* ================================================================
+   EMPTY STATE
+   ================================================================ */
 function EmptyState({ mode }) {
   return (
     <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-violet-50 to-pink-50 p-8 text-center">
       <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-        {mode === "likes" ? (
-          <HeartIcon className="h-8 w-8 text-violet-400" filled />
-        ) : (
-          <PeopleIcon className="h-8 w-8 text-violet-400" />
-        )}
+        {mode === "likes"
+          ? <HeartIcon className="h-8 w-8 text-violet-400" filled />
+          : <PeopleIcon className="h-8 w-8 text-violet-400" />}
       </div>
       <h3 className="text-lg font-semibold text-gray-800">
         {mode === "likes" ? "No likes yet" : "No matches yet"}
@@ -632,8 +534,9 @@ function EmptyState({ mode }) {
   );
 }
 
-// ─── Error State ──────────────────────────────────────────────────────────────
-
+/* ================================================================
+   ERROR STATE
+   ================================================================ */
 function ErrorState({ error, onRetry }) {
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm">
@@ -652,8 +555,9 @@ function ErrorState({ error, onRetry }) {
   );
 }
 
-// ─── Icons ────────────────────────────────────────────────────────────────────
-
+/* ================================================================
+   ICONS
+   ================================================================ */
 function Spinner({ className = "h-5 w-5" }) {
   return (
     <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
@@ -662,7 +566,6 @@ function Spinner({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function StarIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24">
@@ -670,23 +573,17 @@ function StarIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function HeartIcon({ className = "h-5 w-5", filled = false }) {
   return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24">
       {filled ? (
         <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
       ) : (
-        <path
-          fillRule="evenodd"
-          clipRule="evenodd"
-          d="M12 5.72C10.81 4.05 8.98 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.31C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3c-1.48 0-3.31 1.05-4.5 2.72z"
-        />
+        <path fillRule="evenodd" clipRule="evenodd" d="M12 5.72C10.81 4.05 8.98 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.31C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3c-1.48 0-3.31 1.05-4.5 2.72z" />
       )}
     </svg>
   );
 }
-
 function XIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -694,7 +591,6 @@ function XIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function ChatIcon({ className = "h-4 w-4" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -702,7 +598,6 @@ function ChatIcon({ className = "h-4 w-4" }) {
     </svg>
   );
 }
-
 function LocationIcon({ className = "h-3 w-3" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -711,7 +606,6 @@ function LocationIcon({ className = "h-3 w-3" }) {
     </svg>
   );
 }
-
 function SearchIcon({ className = "h-4 w-4" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -719,7 +613,6 @@ function SearchIcon({ className = "h-4 w-4" }) {
     </svg>
   );
 }
-
 function WarningIcon({ className = "h-8 w-8" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -727,7 +620,6 @@ function WarningIcon({ className = "h-8 w-8" }) {
     </svg>
   );
 }
-
 function PeopleIcon({ className = "h-8 w-8" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

@@ -17,36 +17,20 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 /* ================================================================
    CONSTANTS
    ================================================================ */
-
-const MAX_BIO_LENGTH = 500;
-const MAX_PHOTOS = 9;
-const PHOTO_MAX_SIZE = 5 * 1024 * 1024;
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const REQUEST_TIMEOUT = 10_000;
+const MAX_BIO_LENGTH  = 500;
+const MAX_PHOTOS      = 9;
+const PHOTO_MAX_SIZE  = 5 * 1024 * 1024;
+const ALLOWED_TYPES   = ["image/jpeg", "image/png", "image/webp"];
 
 /* ================================================================
    UTILITIES
    ================================================================ */
-
 const sanitizeName = (name) =>
   String(name).replace(/[^A-Za-z0-9._-]+/g, "-");
 
-function withTimeout(promise, ms, label = "request") {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${label} timed out after ${ms}ms`)),
-        ms
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
 function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024)           return `${bytes} B`;
+  if (bytes < 1024 * 1024)    return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
@@ -58,19 +42,12 @@ function getPublicUrl(path) {
 /* ================================================================
    SKELETON
    ================================================================ */
-
 function SkeletonBlock({ className = "" }) {
-  return (
-    <div className={`animate-pulse rounded-2xl bg-gray-200 ${className}`} />
-  );
+  return <div className={`animate-pulse rounded-2xl bg-gray-200 ${className}`} />;
 }
-
 function SkeletonLine({ className = "" }) {
-  return (
-    <div className={`animate-pulse rounded-full bg-gray-200 ${className}`} />
-  );
+  return <div className={`animate-pulse rounded-full bg-gray-200 ${className}`} />;
 }
-
 function SkeletonChip() {
   return <div className="h-8 w-20 animate-pulse rounded-full bg-gray-200" />;
 }
@@ -78,24 +55,21 @@ function SkeletonChip() {
 /* ================================================================
    TOAST
    ================================================================ */
-
 function Toast({ toast }) {
   if (!toast) return null;
   const isError = toast.type === "error";
   return (
     <div className="fixed left-1/2 top-20 z-50 -translate-x-1/2 animate-in slide-in-from-top duration-300 pointer-events-none">
-      <div
-        className={`flex items-center gap-2.5 rounded-2xl px-5 py-3
-          shadow-2xl backdrop-blur-xl border text-sm font-semibold
-          ${isError
-            ? "bg-red-500/95 border-red-400/50 text-white"
-            : "bg-white/97 border-gray-200 text-gray-900 shadow-gray-200/80"
-          }`}
+      <div className={`flex items-center gap-2.5 rounded-2xl px-5 py-3
+        shadow-2xl backdrop-blur-xl border text-sm font-semibold
+        ${isError
+          ? "bg-red-500/95 border-red-400/50 text-white"
+          : "bg-white/97 border-gray-200 text-gray-900 shadow-gray-200/80"
+        }`}
       >
         {isError
           ? <XCircleIcon className="h-5 w-5 shrink-0" />
-          : <CheckCircleIcon className="h-5 w-5 shrink-0 text-green-500" />
-        }
+          : <CheckCircleIcon className="h-5 w-5 shrink-0 text-green-500" />}
         {toast.message}
       </div>
     </div>
@@ -105,31 +79,29 @@ function Toast({ toast }) {
 /* ================================================================
    COMPLETENESS BAR
    ================================================================ */
-
 function CompletenessBar({ score, hints }) {
   const color =
     score >= 80 ? "from-green-400 to-emerald-500" :
-      score >= 50 ? "from-amber-400 to-orange-400" :
-        "from-violet-500 to-fuchsia-500";
+    score >= 50 ? "from-amber-400 to-orange-400" :
+                  "from-violet-500 to-fuchsia-500";
 
   return (
     <div className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-4">
       <div className="flex items-center justify-between mb-2.5">
         <span className="text-sm font-bold text-white">Profile Strength</span>
-        <span className={`text-sm font-extrabold ${score >= 80 ? "text-green-300" :
-            score >= 50 ? "text-amber-300" : "text-violet-300"
-          }`}>
+        <span className={`text-sm font-extrabold ${
+          score >= 80 ? "text-green-300" :
+          score >= 50 ? "text-amber-300" : "text-violet-300"
+        }`}>
           {score}%
         </span>
       </div>
-
       <div className="h-2 w-full overflow-hidden rounded-full bg-white/20">
         <div
           className={`h-full rounded-full bg-gradient-to-r ${color} transition-all duration-700`}
           style={{ width: `${score}%` }}
         />
       </div>
-
       {hints.length > 0 && (
         <div className="mt-3 space-y-1.5">
           {hints.slice(0, 3).map((hint, i) => (
@@ -147,16 +119,9 @@ function CompletenessBar({ score, hints }) {
 /* ================================================================
    HERO SECTION
    ================================================================ */
-
 function HeroSection({
-  heroUrl,
-  heroPath,
-  displayName,
-  completeness,
-  loading,
-  onPreview,
-  onAddPhotos,
-  onDeleteHero,
+  heroUrl, heroPath, displayName, completeness,
+  loading, onPreview, onAddPhotos, onDeleteHero,
 }) {
   return (
     <div className="relative h-[48vh] w-full overflow-hidden bg-gradient-to-br from-violet-100 via-fuchsia-50 to-pink-100">
@@ -185,11 +150,8 @@ function HeroSection({
       {/* Top actions */}
       <div className="absolute inset-x-0 top-0 p-4 flex items-start justify-between gap-3">
         <div className="rounded-full bg-black/40 backdrop-blur-md border border-white/20 px-3.5 py-2">
-          <span className="text-xs font-bold text-white tracking-wide">
-            Edit Profile
-          </span>
+          <span className="text-xs font-bold text-white tracking-wide">Edit Profile</span>
         </div>
-
         <div className="flex items-center gap-2">
           <button
             onClick={onPreview}
@@ -198,7 +160,6 @@ function HeroSection({
             <EyeIcon className="h-3.5 w-3.5" />
             Preview
           </button>
-
           <button
             onClick={onAddPhotos}
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-bold text-gray-900 shadow-lg hover:bg-white/90 active:scale-95 transition-all"
@@ -206,7 +167,6 @@ function HeroSection({
             <CameraIcon className="h-3.5 w-3.5" />
             Add Photos
           </button>
-
           {heroUrl && heroPath && (
             <button
               onClick={onDeleteHero}
@@ -221,18 +181,14 @@ function HeroSection({
 
       {/* Bottom info */}
       <div className="absolute inset-x-0 bottom-0 p-5 space-y-3">
-        {displayName || loading ? (
-          loading ? (
-            <SkeletonLine className="h-9 w-48" />
-          ) : (
-            <h1 className="text-3xl font-extrabold text-white tracking-tight leading-tight drop-shadow-lg">
-              {displayName}
-            </h1>
-          )
-        ) : (
-          <h1 className="text-2xl font-bold text-white/50 italic">
-            Your Name
+        {loading ? (
+          <SkeletonLine className="h-9 w-48" />
+        ) : displayName ? (
+          <h1 className="text-3xl font-extrabold text-white tracking-tight leading-tight drop-shadow-lg">
+            {displayName}
           </h1>
+        ) : (
+          <h1 className="text-2xl font-bold text-white/50 italic">Your Name</h1>
         )}
         <CompletenessBar score={completeness.score} hints={completeness.hints} />
       </div>
@@ -243,17 +199,16 @@ function HeroSection({
 /* ================================================================
    PHOTO TILE
    ================================================================ */
-
 function PhotoTile({ src, index, isPrimary, onMakePrimary, onDelete }) {
-  const [imgError, setImgError] = useState(false);
+  const [imgError,   setImgError]   = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleDelete = async () => {
     if (!confirm("Delete this photo?")) return;
     setIsDeleting(true);
-    try { await onDelete(); }
+    try   { await onDelete(); }
     catch (err) { console.error("Delete failed:", err); }
-    finally { setIsDeleting(false); }
+    finally     { setIsDeleting(false); }
   };
 
   if (imgError) {
@@ -275,14 +230,12 @@ function PhotoTile({ src, index, isPrimary, onMakePrimary, onDelete }) {
         onError={() => setImgError(true)}
         loading="lazy"
       />
-
       {isPrimary && (
         <div className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-violet-600 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg">
           <StarIcon className="h-2.5 w-2.5" />
           Primary
         </div>
       )}
-
       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
         <div className="absolute inset-x-2 bottom-2 flex gap-1.5">
           {!isPrimary && (
@@ -302,7 +255,6 @@ function PhotoTile({ src, index, isPrimary, onMakePrimary, onDelete }) {
           </button>
         </div>
       </div>
-
       {isDeleting && (
         <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
           <SpinnerIcon className="h-6 w-6 text-white" />
@@ -313,9 +265,8 @@ function PhotoTile({ src, index, isPrimary, onMakePrimary, onDelete }) {
 }
 
 /* ================================================================
-   SECTION CARD WRAPPER
+   SECTION CARD
    ================================================================ */
-
 function SectionCard({ children, className = "" }) {
   return (
     <section className={`rounded-3xl bg-white border border-gray-100 shadow-sm overflow-hidden ${className}`}>
@@ -323,15 +274,12 @@ function SectionCard({ children, className = "" }) {
     </section>
   );
 }
-
 function SectionHeader({ title, subtitle, action }) {
   return (
     <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-gray-50">
       <div>
         <h2 className="text-base font-bold text-gray-900">{title}</h2>
-        {subtitle && (
-          <p className="mt-0.5 text-xs text-gray-400">{subtitle}</p>
-        )}
+        {subtitle && <p className="mt-0.5 text-xs text-gray-400">{subtitle}</p>}
       </div>
       {action}
     </div>
@@ -339,31 +287,26 @@ function SectionHeader({ title, subtitle, action }) {
 }
 
 /* ================================================================
-   ALERT BANNERS
+   ALERT BANNER
    ================================================================ */
-
 function AlertBanner({ type = "error", title, body, onDismiss }) {
   const styles = {
-    error: "bg-red-50 border-red-200 text-red-900",
+    error:   "bg-red-50 border-red-200 text-red-900",
     warning: "bg-amber-50 border-amber-200 text-amber-900",
-    info: "bg-violet-50 border-violet-200 text-violet-900",
-    upload: "bg-violet-50 border-violet-200 text-violet-900",
+    info:    "bg-violet-50 border-violet-200 text-violet-900",
   };
   const iconColor = {
-    error: "text-red-500",
+    error:   "text-red-500",
     warning: "text-amber-500",
-    info: "text-violet-500",
-    upload: "text-violet-500",
+    info:    "text-violet-500",
   };
-
   return (
-    <div className={`rounded-2xl border p-4 shadow-sm ${styles[type]}`}>
+    <div className={`rounded-2xl border p-4 shadow-sm ${styles[type] ?? styles.info}`}>
       <div className="flex items-start gap-3">
-        <div className={`mt-0.5 shrink-0 ${iconColor[type]}`}>
-          {type === "error" && <XCircleIcon className="h-5 w-5" />}
-          {type === "warning" && <WarningIcon className="h-5 w-5" />}
-          {type === "info" && <InfoIcon className="h-5 w-5" />}
-          {type === "upload" && <SpinnerIcon className="h-5 w-5" />}
+        <div className={`mt-0.5 shrink-0 ${iconColor[type] ?? iconColor.info}`}>
+          {type === "error"   && <XCircleIcon  className="h-5 w-5" />}
+          {type === "warning" && <WarningIcon  className="h-5 w-5" />}
+          {type === "info"    && <InfoIcon     className="h-5 w-5" />}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold">{title}</p>
@@ -383,30 +326,24 @@ function AlertBanner({ type = "error", title, body, onDismiss }) {
 }
 
 /* ================================================================
-   PREMIUM BANNER (inline teaser)
+   PREMIUM TEASER
    ================================================================ */
-
 function PremiumTeaser({ onUpgrade }) {
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-orange-400 to-pink-500 p-5 shadow-lg shadow-orange-200">
-      {/* Decorative circles */}
       <div className="pointer-events-none absolute -right-6 -top-6 h-32 w-32 rounded-full bg-white/10" />
       <div className="pointer-events-none absolute -bottom-4 -left-4 h-24 w-24 rounded-full bg-white/10" />
-
       <div className="relative flex items-center gap-4">
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-3xl">
           👑
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-extrabold text-white text-base leading-tight">
-            Upgrade to Premium
-          </p>
+          <p className="font-extrabold text-white text-base leading-tight">Upgrade to Premium</p>
           <p className="mt-0.5 text-xs text-white/85 leading-relaxed">
             Unlimited likes · See who liked you · Boost visibility
           </p>
         </div>
       </div>
-
       <button
         onClick={onUpgrade}
         className="mt-4 w-full rounded-2xl bg-white py-3 text-sm font-extrabold text-orange-600 shadow-md hover:bg-orange-50 active:scale-[0.98] transition-all"
@@ -420,52 +357,49 @@ function PremiumTeaser({ onUpgrade }) {
 /* ================================================================
    MAIN COMPONENT
    ================================================================ */
-
 export default function ProfileYou() {
   const navigate = useNavigate();
   const { profile: me, user, signOut, reloadProfile } = useAuth();
 
-  /* ── UI state ─────────────────────────────────────────────── */
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [toast, setToast] = useState(null);
+  /* ── UI state ── */
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+  const [toast,    setToast]    = useState(null);
   const [hasUnsaved, setHasUnsaved] = useState(false);
 
-  /* ── Form fields ──────────────────────────────────────────── */
+  /* ── Form fields ── */
   const [displayName, setDisplayName] = useState("");
-  const [profession, setProfession] = useState("");
-  const [city, setCity] = useState("");
-  const [bio, setBio] = useState("");
+  const [profession,  setProfession]  = useState("");
+  const [city,        setCity]        = useState("");
+  const [bio,         setBio]         = useState("");
   const originalRef = useRef({});
 
-  /* ── Interests ────────────────────────────────────────────── */
-  const [allInterests, setAllInterests] = useState([]);
+  /* ── Interests ── */
+  const [allInterests,      setAllInterests]      = useState([]);
   const [selectedInterests, setSelectedInterests] = useState([]);
-  const [savingInterests, setSavingInterests] = useState(false);
+  const [savingInterests,   setSavingInterests]   = useState(false);
 
-  /* ── Photos ───────────────────────────────────────────────── */
-  const [heroUrl, setHeroUrl] = useState(null);
-  const [heroPath, setHeroPath] = useState(null);
-  const [gallery, setGallery] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
+  /* ── Photos ── */
+  const [heroUrl,    setHeroUrl]    = useState(null);
+  const [heroPath,   setHeroPath]   = useState(null);
+  const [gallery,    setGallery]    = useState([]);
+  const [uploading,  setUploading]  = useState(false);
+  const [uploadPct,  setUploadPct]  = useState(0);
   const fileInputRef = useRef(null);
 
-  /* ── Location / logout ────────────────────────────────────── */
-  const [locating, setLocating] = useState(false);
+  /* ── Location / logout ── */
+  const [locating,   setLocating]   = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  /* ── Abort / mount guards ─────────────────────────────────── */
+  /* ── Mount guard ── */
   const mountedRef = useRef(true);
-  const requestIdRef = useRef(0);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  /* ── Toast helper ─────────────────────────────────────────── */
+  /* ── Toast helper ── */
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
     const id = setTimeout(() => {
@@ -474,14 +408,14 @@ export default function ProfileYou() {
     return () => clearTimeout(id);
   }, []);
 
-  /* ── Unsaved-changes detection ────────────────────────────── */
+  /* ── Unsaved-changes detection ── */
   useEffect(() => {
     const orig = originalRef.current;
     setHasUnsaved(
       displayName !== orig.displayName ||
-      profession !== orig.profession ||
-      city !== orig.city ||
-      bio !== orig.bio
+      profession  !== orig.profession  ||
+      city        !== orig.city        ||
+      bio         !== orig.bio
     );
   }, [displayName, profession, city, bio]);
 
@@ -493,12 +427,11 @@ export default function ProfileYou() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [hasUnsaved]);
 
-  /* ── Load all profile data ────────────────────────────────── */
+  /* ── Load profile data ── */
   useEffect(() => {
     if (!me?.id) { setLoading(false); return; }
 
     let cancelled = false;
-    const reqId = ++requestIdRef.current;
 
     (async () => {
       try {
@@ -510,44 +443,32 @@ export default function ProfileYou() {
           { data: userInterests },
           { data: photos },
         ] = await Promise.all([
-          withTimeout(
-            supabase
-              .from("profiles")
-              .select("id,display_name,profession,bio,city,avatar_url,lat,lng")
-              .eq("id", me.id)
-              .maybeSingle(),
-            REQUEST_TIMEOUT, "profile"
-          ),
-          withTimeout(
-            supabase.from("interests").select("id,label").order("label"),
-            REQUEST_TIMEOUT, "interests"
-          ),
-          withTimeout(
-            supabase
-              .from("user_interests")
-              .select("interests:interests(label)")
-              .eq("user_id", me.id),
-            REQUEST_TIMEOUT, "user_interests"
-          ),
-          withTimeout(
-            supabase
-              .from("photos")
-              .select("path,is_primary,sort,created_at")
-              .eq("user_id", me.id)
-              .order("is_primary", { ascending: false })
-              .order("sort", { ascending: true })
-              .order("created_at", { ascending: true }),
-            REQUEST_TIMEOUT, "photos"
-          ),
+          supabase
+            .from("profiles")
+            .select("id,display_name,profession,bio,city,avatar_url,lat,lng")
+            .eq("id", me.id)
+            .maybeSingle(),
+          supabase.from("interests").select("id,label").order("label"),
+          supabase
+            .from("user_interests")
+            .select("interests:interests(label)")
+            .eq("user_id", me.id),
+          supabase
+            .from("photos")
+            .select("path,is_primary,sort,created_at")
+            .eq("user_id", me.id)
+            .order("is_primary", { ascending: false })
+            .order("sort",       { ascending: true  })
+            .order("created_at", { ascending: true  }),
         ]);
 
-        if (profErr) throw profErr;
-        if (cancelled || requestIdRef.current !== reqId) return;
+        if (profErr)   throw profErr;
+        if (cancelled) return;
 
         const name = profile?.display_name || "";
-        const prof = profile?.profession || "";
-        const cty = profile?.city || "";
-        const bio_ = profile?.bio || "";
+        const prof = profile?.profession   || "";
+        const cty  = profile?.city         || "";
+        const bio_ = profile?.bio          || "";
 
         setDisplayName(name);
         setProfession(prof);
@@ -560,10 +481,11 @@ export default function ProfileYou() {
           (userInterests || []).map((r) => r.interests?.label).filter(Boolean)
         );
 
+        // De-duplicate photos by path
         const unique = Array.from(
           new Map((photos || []).map((p) => [p.path, p])).values()
         );
-        const primary = unique.find((p) => p.is_primary) || unique[0] || null;
+        const primary    = unique.find((p) => p.is_primary) || unique[0] || null;
         const heroPublicUrl = primary?.path
           ? getPublicUrl(primary.path)
           : profile?.avatar_url || null;
@@ -573,44 +495,45 @@ export default function ProfileYou() {
         setGallery(
           unique
             .filter((p) => p.path !== primary?.path)
-            .map((p) => ({ url: getPublicUrl(p.path), path: p.path }))
+            .map((p)    => ({ url: getPublicUrl(p.path), path: p.path }))
             .filter((p) => p.url)
         );
       } catch (err) {
         console.error("[ProfileYou] load:", err);
-        if (!cancelled && requestIdRef.current === reqId)
-          setError(err.message || "Failed to load profile");
+        if (!cancelled) setError(err.message || "Failed to load profile");
       } finally {
-        if (!cancelled && requestIdRef.current === reqId && mountedRef.current)
-          setLoading(false);
+        if (!cancelled && mountedRef.current) setLoading(false);
       }
     })();
 
     return () => { cancelled = true; };
   }, [me?.id]);
 
-  /* ── Profile completeness ─────────────────────────────────── */
+  /* ── Profile completeness ── */
   const completeness = useMemo(() => {
     let score = 0;
     const hints = [];
 
-    if (displayName?.trim()) score += 20; else hints.push("Add your name");
-    if (heroUrl) score += 25; else hints.push("Add a primary photo");
-    if (selectedInterests.length >= 3) score += 20;
-    else hints.push(`Pick ${Math.max(0, 3 - selectedInterests.length)} more interest${3 - selectedInterests.length !== 1 ? "s" : ""}`);
-    if (bio?.trim()?.length >= 50) score += 15;
-    else if (bio?.trim()) { score += 8; hints.push("Extend your bio to 50+ chars"); }
-    else hints.push("Write a bio about yourself");
-    if (city?.trim()) score += 10; else hints.push("Add your city");
-    if (profession?.trim()) score += 5; else hints.push("Add your profession");
-    if (gallery.length >= 3) score += 5;
+    if (displayName?.trim())             score += 20; else hints.push("Add your name");
+    if (heroUrl)                          score += 25; else hints.push("Add a primary photo");
+    if (selectedInterests.length >= 3) {
+      score += 20;
+    } else {
+      hints.push(`Pick ${Math.max(0, 3 - selectedInterests.length)} more interest${3 - selectedInterests.length !== 1 ? "s" : ""}`);
+    }
+    if (bio?.trim()?.length >= 50)       score += 15;
+    else if (bio?.trim())              { score += 8; hints.push("Extend your bio to 50+ chars"); }
+    else                                 hints.push("Write a bio about yourself");
+    if (city?.trim())                    score += 10; else hints.push("Add your city");
+    if (profession?.trim())              score += 5;  else hints.push("Add your profession");
+    if (gallery.length >= 3)             score += 5;
     else hints.push(`Add ${Math.max(0, 3 - gallery.length)} more photo${3 - gallery.length !== 1 ? "s" : ""}`);
 
     return { score: Math.min(score, 100), hints };
   }, [displayName, heroUrl, selectedInterests.length, bio, city, profession, gallery.length]);
 
-  /* ── Save profile ─────────────────────────────────────────── */
-  const saveProfile = async () => {
+  /* ── Save profile ── */
+  async function saveProfile() {
     if (!me?.id) return;
     if (!displayName.trim()) { setError("Name is required"); return; }
 
@@ -621,10 +544,10 @@ export default function ProfileYou() {
         .from("profiles")
         .update({
           display_name: displayName.trim(),
-          profession: profession.trim() || null,
-          city: city.trim() || null,
-          bio: bio.trim() || null,
-          updated_at: new Date().toISOString(),
+          profession:   profession.trim() || null,
+          city:         city.trim()       || null,
+          bio:          bio.trim()        || null,
+          updated_at:   new Date().toISOString(),
         })
         .eq("id", me.id);
       if (err) throw err;
@@ -639,16 +562,19 @@ export default function ProfileYou() {
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  /* ── Location ─────────────────────────────────────────────── */
-  const setMyLocation = async () => {
+  /* ── Location ── */
+  async function setMyLocation() {
     if (!me?.id) return;
     setLocating(true);
     setError("");
     try {
       const pos = await new Promise((resolve, reject) => {
-        if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation not supported"));
+          return;
+        }
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000,
         });
@@ -668,9 +594,9 @@ export default function ProfileYou() {
     } finally {
       setLocating(false);
     }
-  };
+  }
 
-  /* ── Interests ────────────────────────────────────────────── */
+  /* ── Interests ── */
   const toggleInterest = useCallback(
     (label) =>
       setSelectedInterests((prev) =>
@@ -679,7 +605,7 @@ export default function ProfileYou() {
     []
   );
 
-  const saveInterests = async () => {
+  async function saveInterests() {
     if (!me?.id) return;
     setSavingInterests(true);
     setError("");
@@ -710,10 +636,10 @@ export default function ProfileYou() {
     } finally {
       setSavingInterests(false);
     }
-  };
+  }
 
-  /* ── Photo upload ─────────────────────────────────────────── */
-  const handlePhotoUpload = async (files) => {
+  /* ── Photo upload ── */
+  async function handlePhotoUpload(files) {
     if (!files?.length || !user?.id) return;
 
     const totalNow = (heroUrl ? 1 : 0) + gallery.length;
@@ -736,20 +662,28 @@ export default function ProfileYou() {
     try {
       const uploaded = [];
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+        const file     = files[i];
         const fileName = `${user.id}/${Date.now()}-${sanitizeName(file.name)}`;
         setUploadPct(Math.round(((i + 0.5) / files.length) * 100));
-        const { error: upErr } = await supabase.storage.from("profiles").upload(fileName, file, { upsert: false });
+
+        const { error: upErr } = await supabase.storage
+          .from("profiles").upload(fileName, file, { upsert: false });
         if (upErr) throw upErr;
-        const { error: insErr } = await supabase.from("photos").insert({ user_id: user.id, path: fileName, is_primary: false });
+
+        const { error: insErr } = await supabase.from("photos").insert({
+          user_id: user.id, path: fileName, is_primary: false,
+        });
         if (insErr) throw insErr;
+
         const url = getPublicUrl(fileName);
         if (url) uploaded.push({ url, path: fileName });
         setUploadPct(Math.round(((i + 1) / files.length) * 100));
       }
+
       if (!heroUrl && uploaded.length > 0) {
         await makePrimaryPhoto(uploaded[0].path, true);
-        if (uploaded.length > 1) setGallery((prev) => [...prev, ...uploaded.slice(1)]);
+        if (uploaded.length > 1)
+          setGallery((prev) => [...prev, ...uploaded.slice(1)]);
       } else {
         setGallery((prev) => [...prev, ...uploaded]);
       }
@@ -762,47 +696,57 @@ export default function ProfileYou() {
       setUploading(false); setUploadPct(0);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  };
+  }
 
-  /* ── Make primary ─────────────────────────────────────────── */
-  const makePrimaryPhoto = async (path, silent = false) => {
+  /* ── Make primary ── */
+  async function makePrimaryPhoto(path, silent = false) {
     if (!user?.id) return;
     try {
       await supabase.from("photos").update({ is_primary: false }).eq("user_id", user.id);
-      const { error: err } = await supabase.from("photos").update({ is_primary: true }).eq("user_id", user.id).eq("path", path);
+      const { error: err } = await supabase
+        .from("photos").update({ is_primary: true })
+        .eq("user_id", user.id).eq("path", path);
       if (err) throw err;
+
       const url = getPublicUrl(path);
       await supabase.from("profiles").update({ avatar_url: url }).eq("id", user.id);
-      const oldHeroUrl = heroUrl;
+
+      const oldHeroUrl  = heroUrl;
       const oldHeroPath = heroPath;
       setHeroUrl(url);
       setHeroPath(path);
       setGallery((prev) => {
         const without = prev.filter((p) => p.path !== path);
-        if (oldHeroUrl && oldHeroPath) return [{ url: oldHeroUrl, path: oldHeroPath }, ...without];
+        if (oldHeroUrl && oldHeroPath)
+          return [{ url: oldHeroUrl, path: oldHeroPath }, ...without];
         return without;
       });
       if (!silent) showToast("Primary photo updated!");
     } catch (err) {
       console.error("[ProfileYou] makePrimary:", err);
-      if (!silent) { setError(err.message || "Failed to set primary photo"); showToast("Failed to set primary photo", "error"); }
+      if (!silent) {
+        setError(err.message || "Failed to set primary photo");
+        showToast("Failed to set primary photo", "error");
+      }
     }
-  };
+  }
 
-  /* ── Delete photo ─────────────────────────────────────────── */
-  const deletePhoto = async (path) => {
+  /* ── Delete photo ── */
+  async function deletePhoto(path) {
     if (!me?.id) return;
     try {
       const { error: stErr } = await supabase.storage.from("profiles").remove([path]);
       if (stErr) throw stErr;
-      const { error: dbErr } = await supabase.from("photos").delete().eq("path", path).eq("user_id", me.id);
+      const { error: dbErr } = await supabase
+        .from("photos").delete().eq("path", path).eq("user_id", me.id);
       if (dbErr) throw dbErr;
 
       const deletingHero = path === heroPath;
       if (deletingHero) {
         const next = gallery[0] ?? null;
-        if (next) { await makePrimaryPhoto(next.path, true); }
-        else {
+        if (next) {
+          await makePrimaryPhoto(next.path, true);
+        } else {
           setHeroUrl(null); setHeroPath(null);
           await supabase.from("profiles").update({ avatar_url: null }).eq("id", me.id);
         }
@@ -815,20 +759,26 @@ export default function ProfileYou() {
       setError(err.message || "Failed to delete photo");
       showToast("Failed to delete photo", "error");
     }
-  };
+  }
 
-  /* ── Logout ───────────────────────────────────────────────── */
-  const handleLogout = async () => {
-    const msg = hasUnsaved ? "You have unsaved changes. Log out anyway?" : "Are you sure you want to log out?";
+  /* ── Logout ── */
+  async function handleLogout() {
+    const msg = hasUnsaved
+      ? "You have unsaved changes. Log out anyway?"
+      : "Are you sure you want to log out?";
     if (!confirm(msg)) return;
     setLoggingOut(true);
-    try { await signOut(); navigate("/auth", { replace: true }); }
-    catch (err) {
+    try {
+      await signOut();
+      navigate("/auth", { replace: true });
+    } catch (err) {
       console.error("[ProfileYou] logout:", err);
       setError(err.message || "Failed to log out");
       showToast("Failed to log out", "error");
-    } finally { setLoggingOut(false); }
-  };
+    } finally {
+      setLoggingOut(false);
+    }
+  }
 
   const previewProfile = useCallback(() => {
     if (me?.id) navigate(`/profile/${me.id}`);
@@ -836,13 +786,12 @@ export default function ProfileYou() {
 
   const totalPhotos = (heroUrl ? 1 : 0) + gallery.length;
 
-  /* ── Render ───────────────────────────────────────────────── */
+  /* ── Render ── */
   return (
     <div className="min-h-screen bg-gray-50 pb-36 antialiased">
       <TopBar title="" />
       <Toast toast={toast} />
 
-      {/* Hero */}
       <HeroSection
         heroUrl={heroUrl}
         heroPath={heroPath}
@@ -868,10 +817,19 @@ export default function ProfileYou() {
       <div className="-mt-4 space-y-4 px-4 relative z-10">
 
         {error && (
-          <AlertBanner type="error" title="Something went wrong" body={error} onDismiss={() => setError("")} />
+          <AlertBanner
+            type="error"
+            title="Something went wrong"
+            body={error}
+            onDismiss={() => setError("")}
+          />
         )}
         {hasUnsaved && !saving && (
-          <AlertBanner type="warning" title="Unsaved changes" body="Don't forget to save your profile below." />
+          <AlertBanner
+            type="warning"
+            title="Unsaved changes"
+            body="Don't forget to save your profile below."
+          />
         )}
         {uploading && (
           <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
@@ -888,10 +846,10 @@ export default function ProfileYou() {
           </div>
         )}
 
-        {/* ── Premium Teaser ── */}
+        {/* Premium teaser */}
         <PremiumTeaser onUpgrade={() => navigate("/subscription")} />
 
-        {/* ── Basic Information ── */}
+        {/* Basic Information */}
         <SectionCard>
           <SectionHeader
             title="Basic Information"
@@ -943,7 +901,9 @@ export default function ProfileYou() {
                     title="Use my current location"
                     className="mb-0.5 flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-2xl border border-gray-200 text-violet-600 hover:bg-violet-50 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {locating ? <SpinnerIcon className="h-5 w-5" /> : <MapPinIcon className="h-5 w-5" />}
+                    {locating
+                      ? <SpinnerIcon className="h-5 w-5" />
+                      : <MapPinIcon  className="h-5 w-5" />}
                   </button>
                 </div>
 
@@ -989,11 +949,15 @@ export default function ProfileYou() {
           </div>
         </SectionCard>
 
-        {/* ── Interests ── */}
+        {/* Interests */}
         <SectionCard>
           <SectionHeader
             title="Interests"
-            subtitle={selectedInterests.length === 0 ? "Pick at least 3 to get better matches" : `${selectedInterests.length} selected`}
+            subtitle={
+              selectedInterests.length === 0
+                ? "Pick at least 3 to get better matches"
+                : `${selectedInterests.length} selected`
+            }
           />
           <div className="p-5 space-y-4">
             {loading ? (
@@ -1035,7 +999,7 @@ export default function ProfileYou() {
           </div>
         </SectionCard>
 
-        {/* ── Photo Gallery ── */}
+        {/* Photo Gallery */}
         <SectionCard>
           <SectionHeader
             title="Photo Gallery"
@@ -1054,7 +1018,9 @@ export default function ProfileYou() {
           <div className="p-5">
             {loading ? (
               <div className="grid grid-cols-3 gap-3">
-                {Array.from({ length: 6 }).map((_, i) => <SkeletonBlock key={i} className="aspect-square" />)}
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <SkeletonBlock key={i} className="aspect-square" />
+                ))}
               </div>
             ) : gallery.length === 0 && !heroUrl ? (
               <div className="rounded-2xl border-2 border-dashed border-gray-200 p-10 text-center space-y-3">
@@ -1063,7 +1029,9 @@ export default function ProfileYou() {
                 </div>
                 <div>
                   <p className="text-sm font-bold text-gray-700">No photos yet</p>
-                  <p className="text-xs text-gray-400 mt-1">Profiles with 5+ photos get 3× more matches</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Profiles with 5+ photos get 3× more matches
+                  </p>
                 </div>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -1076,8 +1044,10 @@ export default function ProfileYou() {
               <div className="grid grid-cols-3 gap-3">
                 {heroUrl && (
                   <PhotoTile
-                    src={heroUrl} index={0} isPrimary
-                    onMakePrimary={() => { }}
+                    src={heroUrl}
+                    index={0}
+                    isPrimary
+                    onMakePrimary={() => {}}
                     onDelete={() => deletePhoto(heroPath)}
                   />
                 )}
@@ -1117,7 +1087,7 @@ export default function ProfileYou() {
           </div>
         </SectionCard>
 
-        {/* ── Account ── */}
+        {/* Account */}
         <SectionCard>
           <SectionHeader title="Account" subtitle={user?.email} />
           <div className="p-5 space-y-3">
@@ -1134,13 +1104,12 @@ export default function ProfileYou() {
             >
               {loggingOut
                 ? <><SpinnerIcon className="h-4 w-4" /> Logging out…</>
-                : <><LogOutIcon className="h-4 w-4" /> Log Out</>
-              }
+                : <><LogOutIcon  className="h-4 w-4" /> Log Out</>}
             </button>
           </div>
         </SectionCard>
 
-        {/* ── Motivational footer ── */}
+        {/* Motivational footer */}
         <div className="rounded-3xl bg-gradient-to-br from-violet-600 to-fuchsia-600 p-6 text-white shadow-lg shadow-violet-200">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0 text-2xl">
@@ -1160,21 +1129,17 @@ export default function ProfileYou() {
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════
-          STICKY PREMIUM CTA BAR  (like Tinder / Bumble)
-          ════════════════════════════════════════════════════════ */}
+      {/* Sticky premium CTA bar */}
       <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
-        {/* Fade-out mask so content beneath feels natural */}
         <div className="h-6 bg-gradient-to-t from-gray-50 to-transparent" />
-
-        <div className="bg-white/95 backdrop-blur-xl border-t border-gray-100 px-4 pt-3 pb-safe pointer-events-auto"
+        <div
+          className="bg-white/95 backdrop-blur-xl border-t border-gray-100 px-4 pt-3 pointer-events-auto"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
         >
           <button
             onClick={() => navigate("/subscription")}
             className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 py-4 text-base font-extrabold text-white shadow-lg shadow-orange-200 hover:shadow-xl hover:shadow-orange-300 active:scale-[0.98] transition-all"
           >
-            {/* Shimmer effect */}
             <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             <span className="relative flex items-center justify-center gap-2.5">
               <span className="text-xl">👑</span>
@@ -1191,9 +1156,8 @@ export default function ProfileYou() {
 }
 
 /* ================================================================
-   INLINE SVG ICONS
+   ICONS
    ================================================================ */
-
 function SpinnerIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
@@ -1274,7 +1238,8 @@ function TrashIcon({ className = "h-5 w-5" }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <polyline points="3 6 5 6 21 6" />
       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-      <path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
     </svg>
   );
 }

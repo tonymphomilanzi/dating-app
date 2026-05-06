@@ -16,16 +16,13 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 /* ================================================================
    CONSTANTS
    ================================================================ */
-
-const EARTH_RADIUS_KM          = 6_371;
-const GEOCODE_TIMEOUT_MS       = 5_000;
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
-const GEO_TIMEOUT_MS           = 12_000;
-const GEO_MAX_AGE_MS           = 60_000;
-const DEFAULT_RADIUS_KM        = 50;
-const POPULAR_EVENTS_LIMIT     = 12;
-const UPCOMING_EVENTS_LIMIT    = 10;
-const STALE_AFTER_HIDDEN_MS    = 30_000;
+const EARTH_RADIUS_KM    = 6_371;
+const GEOCODE_TIMEOUT_MS = 5_000;
+const GEO_TIMEOUT_MS     = 12_000;
+const GEO_MAX_AGE_MS     = 60_000;
+const DEFAULT_RADIUS_KM  = 50;
+const POPULAR_EVENTS_LIMIT  = 12;
+const UPCOMING_EVENTS_LIMIT = 10;
 
 export const TABS = {
   EXPLORE: "explore",
@@ -50,7 +47,6 @@ const SEARCH_PLACEHOLDERS = {
 /* ================================================================
    PURE HELPERS
    ================================================================ */
-
 const toRadians = (deg) => (deg * Math.PI) / 180;
 
 function calculateKmBetween(a, b) {
@@ -91,7 +87,6 @@ const isValidLatLng = (lat, lng) =>
   lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
   !(Number(lat) === 0 && Number(lng) === 0);
 
-// ── KEY FIX: map creator_id (schema column) not user_id ──────────
 function mapRow(ev) {
   return {
     id:          ev.id,
@@ -108,14 +103,13 @@ function mapRow(ev) {
     price:       ev.price != null ? Number(ev.price) : 0,
     created_at:  ev.created_at,
     attendees:   ev.attendees   || 0,
-    creator_id:  ev.creator_id  || null, // ← correct schema column
+    creator_id:  ev.creator_id  || null,
   };
 }
 
 /* ================================================================
    MAP PIN ICON
    ================================================================ */
-
 const pinIcon = L.divIcon({
   className:   "",
   iconSize:    [44, 44],
@@ -138,112 +132,22 @@ const pinIcon = L.divIcon({
 });
 
 /* ================================================================
-   useRevalidate
-   ================================================================ */
-
-function useRevalidate({
-  refetch,
-  intervalMs   = 0,
-  onFocus      = true,
-  onVisibility = true,
-  onOnline     = true,
-  cooldownMs   = 2_000,
-} = {}) {
-  const refetchRef    = useRef(refetch);
-  const intervalMsRef = useRef(intervalMs);
-  const onFocusRef    = useRef(onFocus);
-  const onVisRef      = useRef(onVisibility);
-  const onOnlineRef   = useRef(onOnline);
-  const cooldownMsRef = useRef(cooldownMs);
-
-  useEffect(() => { refetchRef.current    = refetch;      }, [refetch]);
-  useEffect(() => { intervalMsRef.current = intervalMs;   }, [intervalMs]);
-  useEffect(() => { onFocusRef.current    = onFocus;      }, [onFocus]);
-  useEffect(() => { onVisRef.current      = onVisibility; }, [onVisibility]);
-  useEffect(() => { onOnlineRef.current   = onOnline;     }, [onOnline]);
-  useEffect(() => { cooldownMsRef.current = cooldownMs;   }, [cooldownMs]);
-
-  const lastFiredAt = useRef(0);
-  const timerRef    = useRef(null);
-  const inFlight    = useRef(false);
-  const pendingRef  = useRef(false);
-  const mountedRef  = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; clearTimeout(timerRef.current); };
-  }, []);
-
-  const fire = useRef(() => {
-    const attempt = () => {
-      if (!mountedRef.current) return;
-      const elapsed = Date.now() - lastFiredAt.current;
-      const cd      = cooldownMsRef.current;
-      if (elapsed < cd) {
-        clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(attempt, cd - elapsed);
-        return;
-      }
-      if (inFlight.current) { pendingRef.current = true; return; }
-      inFlight.current    = true;
-      lastFiredAt.current = Date.now();
-      Promise.resolve()
-        .then(() => refetchRef.current?.())
-        .catch(() => {})
-        .finally(() => {
-          if (!mountedRef.current) return;
-          inFlight.current = false;
-          if (pendingRef.current) { pendingRef.current = false; attempt(); }
-        });
-    };
-    attempt();
-  }).current;
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && onVisRef.current) fire();
-    };
-    const handleFocus  = () => { if (onFocusRef.current)  fire(); };
-    const handleOnline = () => { if (onOnlineRef.current) fire(); };
-
-    window.addEventListener("focus",              handleFocus,      { passive: true });
-    document.addEventListener("visibilitychange", handleVisibility, { passive: true });
-    window.addEventListener("online",             handleOnline,     { passive: true });
-
-    const id = intervalMsRef.current > 0
-      ? setInterval(fire, intervalMsRef.current) : null;
-
-    return () => {
-      window.removeEventListener("focus",              handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("online",             handleOnline);
-      if (id) clearInterval(id);
-      clearTimeout(timerRef.current);
-    };
-  }, []);
-}
-
-/* ================================================================
    useGeolocation
    ================================================================ */
-
 function useGeolocation() {
   const [userLocation,   setUserLocation]   = useState(null);
   const [locationStatus, setLocationStatus] = useState("idle");
   const [locationLabel,  setLocationLabel]  = useState("");
 
-  const mountedRef        = useRef(true);
-  const geocodeAbortRef   = useRef(null);
-  const locationStatusRef = useRef("idle");
-
-  const setStatusBoth = useCallback((s) => {
-    locationStatusRef.current = s;
-    setLocationStatus(s);
-  }, []);
+  const mountedRef      = useRef(true);
+  const geocodeAbortRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; geocodeAbortRef.current?.abort(); };
+    return () => {
+      mountedRef.current = false;
+      geocodeAbortRef.current?.abort();
+    };
   }, []);
 
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
@@ -252,7 +156,7 @@ function useGeolocation() {
     geocodeAbortRef.current = ac;
     const timerId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
     try {
-      const res  = await fetch(
+      const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
         { headers: { "Accept-Language": "en" }, signal: ac.signal }
       );
@@ -264,92 +168,73 @@ function useGeolocation() {
         data?.address?.village || data?.address?.county  ||
         data?.address?.state   || "";
       if (mountedRef.current) setLocationLabel(city || "Your area");
-    } catch { clearTimeout(timerId); }
+    } catch {
+      clearTimeout(timerId);
+    }
   }, []);
 
   const requestLocation = useCallback(() => {
-    if (!("geolocation" in navigator)) { setStatusBoth("unsupported"); return; }
-    setStatusBoth("loading");
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("unsupported");
+      return;
+    }
+    setLocationStatus("loading");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         if (!mountedRef.current) return;
         const pos = { lat: Number(coords.latitude), lng: Number(coords.longitude) };
-        if (!isValidLatLng(pos.lat, pos.lng)) { setStatusBoth("denied"); return; }
+        if (!isValidLatLng(pos.lat, pos.lng)) { setLocationStatus("denied"); return; }
         setUserLocation(pos);
-        setStatusBoth("granted");
+        setLocationStatus("granted");
         reverseGeocode(pos);
       },
-      () => { if (mountedRef.current) setStatusBoth("denied"); },
+      () => { if (mountedRef.current) setLocationStatus("denied"); },
       { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS }
     );
-  }, []);
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" &&
-          locationStatusRef.current === "granted") requestLocation();
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, []);
+  }, [reverseGeocode]);
 
   return { userLocation, locationStatus, locationLabel, requestLocation };
 }
 
 /* ================================================================
-   useEvents — fetch creator_id from DB
+   useEvents
    ================================================================ */
-
 function useEvents() {
   const [events,    setEvents]    = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error,     setError]     = useState("");
-
-  const mountedRef    = useRef(true);
-  const abortRef      = useRef(null);
-  const generationRef = useRef(0);
-  const hasDataRef    = useRef(false);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; abortRef.current?.abort(); };
+    return () => { mountedRef.current = false; };
   }, []);
 
-  const refresh = useCallback(async ({ foreground = false } = {}) => {
-    abortRef.current?.abort();
-    const ac    = new AbortController();
-    abortRef.current = ac;
-    const myGen = ++generationRef.current;
-
-    if (foreground && !hasDataRef.current) {
-      if (mountedRef.current) setIsLoading(true);
-    }
-
-    try {
-      // eventsService.list must include creator_id in the select
-      const rows = await eventsService.list({ signal: ac.signal });
-      if (!mountedRef.current)            return;
-      if (generationRef.current !== myGen) return;
-      if (ac.signal.aborted)              return;
-      hasDataRef.current = true;
-      setEvents((rows ?? []).map(mapRow));
+  async function refresh(silent = false) {
+    if (!silent) {
+      setIsLoading(true);
       setError("");
-    } catch (err) {
-      if (!mountedRef.current)            return;
-      if (generationRef.current !== myGen) return;
-      if (err?.name === "AbortError" || ac.signal.aborted) return;
-      const status = err?.status || err?.response?.status;
-      if (status === 401 || /session expired/i.test(err?.message ?? "")) {
-        setError("Session expired. Please sign in again."); return;
-      }
-      setError(
-        err?.message || err?.error ||
-        err?.response?.data?.message || "Failed to load events"
-      );
-    } finally {
-      if (mountedRef.current && generationRef.current === myGen) setIsLoading(false);
     }
-  }, []);
+    try {
+      const rows = await eventsService.list();
+      if (!mountedRef.current) return;
+      setEvents((rows ?? []).map(mapRow));
+      if (!silent) setError("");
+    } catch (err) {
+      if (!mountedRef.current) return;
+      if (err?.name === "AbortError") return;
+      if (!silent) {
+        const status = err?.status || err?.response?.status;
+        if (status === 401 || /session expired/i.test(err?.message ?? "")) {
+          setError("Session expired. Please sign in again.");
+          return;
+        }
+        setError(err?.message || "Failed to load events");
+      }
+    } finally {
+      if (mountedRef.current && !silent) setIsLoading(false);
+    }
+  }
 
   return { events, setEvents, isLoading, error, refresh };
 }
@@ -357,7 +242,6 @@ function useEvents() {
 /* ================================================================
    CONFIRM DELETE MODAL
    ================================================================ */
-
 function ConfirmDeleteModal({ eventTitle, onConfirm, onCancel, isDeleting }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -387,7 +271,9 @@ function ConfirmDeleteModal({ eventTitle, onConfirm, onCancel, isDeleting }) {
               hover:bg-red-600 active:scale-95 transition-all disabled:opacity-50
               flex items-center justify-center gap-2"
           >
-            {isDeleting ? <><SpinnerIcon className="h-4 w-4" />Deleting…</> : "Delete"}
+            {isDeleting
+              ? <><SpinnerIcon className="h-4 w-4" />Deleting…</>
+              : "Delete"}
           </button>
         </div>
       </div>
@@ -398,7 +284,6 @@ function ConfirmDeleteModal({ eventTitle, onConfirm, onCancel, isDeleting }) {
 /* ================================================================
    OWNER ACTION MENU
    ================================================================ */
-
 function OwnerActionMenu({ event, onEdit, onDelete }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
@@ -449,7 +334,6 @@ function OwnerActionMenu({ event, onEdit, onDelete }) {
 /* ================================================================
    TOAST
    ================================================================ */
-
 function Toast({ message, type = "success" }) {
   const isError = type === "error";
   return (
@@ -470,40 +354,57 @@ function Toast({ message, type = "success" }) {
 /* ================================================================
    MAIN PAGE
    ================================================================ */
-
 export default function Events() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
 
-  const [activeTab,        setActiveTab]       = useState(TABS.EXPLORE);
-  const [searchQuery,      setSearchQuery]      = useState("");
-  const [radius,           setRadius]           = useState(DEFAULT_RADIUS_KM);
-  const [viewType,         setViewType]         = useState(VIEW_TYPES.LIST);
-  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [activeTab,        setActiveTab]        = useState(TABS.EXPLORE);
+  const [searchQuery,      setSearchQuery]       = useState("");
+  const [radius,           setRadius]            = useState(DEFAULT_RADIUS_KM);
+  const [viewType,         setViewType]          = useState(VIEW_TYPES.LIST);
+  const [selectedCategory, setSelectedCategory]  = useState("All");
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting,   setIsDeleting]   = useState(false);
   const [deleteError,  setDeleteError]  = useState("");
   const [toast,        setToast]        = useState(null);
 
+  const isMounted = useRef(true);
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
+
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
-    const id = setTimeout(() => setToast(null), 3_500);
+    const id = setTimeout(() => {
+      if (isMounted.current) setToast(null);
+    }, 3_500);
     return () => clearTimeout(id);
   }, []);
 
   const { userLocation, locationStatus, locationLabel, requestLocation } = useGeolocation();
   const { events, setEvents, isLoading, error, refresh } = useEvents();
 
-  const hiddenAtRef = useRef(null);
-
+  /* ── Initial load ── */
   useEffect(() => {
-    refresh({ foreground: true });
+    refresh(false); // foreground — show spinner
     requestLocation();
-  }, []); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Inject created / updated event from nav state
+  /* ── Visibility refresh — silent, no spinner ── */
+  useEffect(() => {
+    const handle = () => {
+      if (document.visibilityState === "visible") refresh(true);
+    };
+    document.addEventListener("visibilitychange", handle);
+    return () => document.removeEventListener("visibilitychange", handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── Inject created / updated event from nav state ── */
   useEffect(() => {
     const created = location.state?.created;
     const updated = location.state?.updated;
@@ -519,62 +420,38 @@ export default function Events() {
     }
   }, [location.state, navigate, setEvents]);
 
-  useRevalidate({
-    refetch:      useCallback(() => refresh({ foreground: false }), [refresh]),
-    intervalMs:   AUTO_REFRESH_INTERVAL_MS,
-    cooldownMs:   2_000,
-    onVisibility: false,
-  });
+  /* ── Handlers ── */
+  const handleEdit = useCallback((event) => {
+    navigate(`/events/${event.id}/edit`, { state: { event } });
+  }, [navigate]);
 
-  useEffect(() => {
-    const handleHide = () => {
-      if (document.visibilityState === "hidden") hiddenAtRef.current = Date.now();
-    };
-    const handleShow = () => {
-      if (document.visibilityState !== "visible") return;
-      const hiddenMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
-      hiddenAtRef.current = null;
-      if (hiddenMs >= STALE_AFTER_HIDDEN_MS) refresh({ foreground: false });
-    };
-    document.addEventListener("visibilitychange", handleHide,  { passive: true });
-    document.addEventListener("visibilitychange", handleShow, { passive: true });
-    return () => {
-      document.removeEventListener("visibilitychange", handleHide);
-      document.removeEventListener("visibilitychange", handleShow);
-    };
-  }, [refresh]);
-
-  // ── Edit ─────────────────────────────────────────────────────────
-const handleEdit = useCallback((event) => {
-  navigate(`/events/${event.id}/edit`, { state: { event } });
-}, [navigate]);
-
-  // ── Delete ───────────────────────────────────────────────────────
   const handleDeleteRequest = useCallback((event) => {
-    setDeleteError(""); setDeleteTarget(event);
+    setDeleteError("");
+    setDeleteTarget(event);
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return;
-    setIsDeleting(true); setDeleteError("");
+    setIsDeleting(true);
+    setDeleteError("");
     try {
-      // eventsService.delete must call supabase with creator_id guard
       await eventsService.delete(deleteTarget.id);
       setEvents((prev) => prev.filter((e) => e.id !== deleteTarget.id));
       setDeleteTarget(null);
       showToast("Event deleted successfully");
     } catch (err) {
-      setDeleteError(err?.message || err?.error || "Failed to delete event.");
+      setDeleteError(err?.message || "Failed to delete event.");
     } finally {
       setIsDeleting(false);
     }
   }, [deleteTarget, setEvents, showToast]);
 
   const handleDeleteCancel = useCallback(() => {
-    setDeleteTarget(null); setDeleteError("");
+    setDeleteTarget(null);
+    setDeleteError("");
   }, []);
 
-  // ── Derived ───────────────────────────────────────────────────────
+  /* ── Derived ── */
   const categories = useMemo(() => {
     const set = new Set(events.map((e) => e.category).filter(Boolean));
     return ["All", ...Array.from(set).sort()];
@@ -621,14 +498,17 @@ const handleEdit = useCallback((event) => {
   }, [events, userLocation, radius, searchQuery]);
 
   const openEventDetail = useCallback(
-    (event) => navigate(`/events/${event.id}`, { state: { event } }), [navigate]
+    (event) => navigate(`/events/${event.id}`, { state: { event } }),
+    [navigate]
   );
 
   const handleTabChange = useCallback((tab) => {
-    setActiveTab(tab); setSearchQuery("");
+    setActiveTab(tab);
+    setSearchQuery("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  /* ── Render ── */
   return (
     <div className="min-h-dvh bg-gray-50 text-gray-900 pb-28">
       {toast && <Toast message={toast.message} type={toast.type} />}
@@ -648,7 +528,10 @@ const handleEdit = useCallback((event) => {
             text-white text-sm font-semibold shadow-xl">
             <WarningIcon className="h-4 w-4 shrink-0" />
             {deleteError}
-            <button onClick={() => setDeleteError("")} className="ml-auto text-white/70 hover:text-white">
+            <button
+              onClick={() => setDeleteError("")}
+              className="ml-auto text-white/70 hover:text-white"
+            >
               <XSmallIcon className="h-4 w-4" />
             </button>
           </div>
@@ -674,7 +557,7 @@ const handleEdit = useCallback((event) => {
           ) : error ? (
             <ErrorState
               error={error}
-              onRetry={() => refresh({ foreground: true })}
+              onRetry={() => refresh(false)}
               onSignIn={() => navigate("/auth/signin/email", { state: { from: "/events" } })}
             />
           ) : events.length === 0 ? (
@@ -732,7 +615,6 @@ const handleEdit = useCallback((event) => {
 /* ================================================================
    PAGE HEADER
    ================================================================ */
-
 function PageHeader({
   activeTab, onTabChange, searchQuery, onSearchChange,
   locationStatus, locationLabel, onUpdateLocation, nearbyCount, radius,
@@ -756,7 +638,11 @@ function PageHeader({
             {activeTab === TABS.EXPLORE ? "Discover what's happening" : "Find events near you"}
           </p>
         </div>
-        <LocationBadge status={locationStatus} label={locationLabel} onRefresh={onUpdateLocation} />
+        <LocationBadge
+          status={locationStatus}
+          label={locationLabel}
+          onRefresh={onUpdateLocation}
+        />
       </div>
 
       <div className="flex gap-1 px-4 pb-3">
@@ -856,7 +742,6 @@ function LocationBadge({ status, label, onRefresh }) {
 /* ================================================================
    EXPLORE SECTION
    ================================================================ */
-
 function ExploreSection({
   categories, selectedCategory, setSelectedCategory,
   popularEvents, upcomingEvents, openEventDetail,
@@ -945,7 +830,6 @@ function ExploreSection({
 /* ================================================================
    NEAR YOU SECTION
    ================================================================ */
-
 function NearYouSection({
   userLocation, locationStatus, radius, setRadius,
   viewType, setViewType, events, openEventDetail,
@@ -1020,7 +904,11 @@ function NearYouSection({
       {viewType === VIEW_TYPES.MAP ? (
         <div className="overflow-hidden rounded-2xl border border-gray-200 shadow-sm">
           {userLocation ? (
-            <NearbyEventsMap center={userLocation} events={events} onOpenEvent={openEventDetail} />
+            <NearbyEventsMap
+              center={userLocation}
+              events={events}
+              onOpenEvent={openEventDetail}
+            />
           ) : (
             <div className="aspect-video grid place-items-center bg-gray-50">
               <div className="flex flex-col items-center gap-2 text-gray-400">
@@ -1053,13 +941,10 @@ function NearYouSection({
 }
 
 /* ================================================================
-   CARD COMPONENTS — ownership via creator_id
+   CARD COMPONENTS
    ================================================================ */
-
 function FeaturedEventBanner({ event, onClick, currentUserId, onEdit, onDelete }) {
-  // ── KEY FIX: compare against creator_id ──────────────────────────
   const isOwner = !!(currentUserId && event.creator_id && currentUserId === event.creator_id);
-
   return (
     <div className="relative w-full overflow-hidden rounded-3xl shadow-xl">
       <button
@@ -1107,7 +992,6 @@ function FeaturedEventBanner({ event, onClick, currentUserId, onEdit, onDelete }
           </div>
         </div>
       </button>
-
       {isOwner && (
         <div className="absolute top-3 right-3 z-10">
           <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
@@ -1119,7 +1003,6 @@ function FeaturedEventBanner({ event, onClick, currentUserId, onEdit, onDelete }
 
 function EventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
   const isOwner = !!(currentUserId && event.creator_id && currentUserId === event.creator_id);
-
   return (
     <div className="group relative w-[220px] shrink-0 overflow-hidden rounded-2xl bg-white
       border border-gray-100 text-left shadow-sm hover:shadow-lg hover:-translate-y-0.5
@@ -1169,7 +1052,6 @@ function EventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
           </div>
         </div>
       </button>
-
       {isOwner && (
         <div className="absolute top-2 right-2 z-10">
           <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
@@ -1181,7 +1063,6 @@ function EventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
 
 function NearbyEventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
   const isOwner = !!(currentUserId && event.creator_id && currentUserId === event.creator_id);
-
   return (
     <div className="relative flex w-full items-stretch gap-3 rounded-2xl bg-white
       border border-gray-100 p-3 shadow-sm hover:shadow-md hover:border-violet-100
@@ -1224,7 +1105,6 @@ function NearbyEventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
           </div>
         </div>
       </button>
-
       {isOwner && (
         <div className="absolute right-3 top-3 z-10">
           <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
@@ -1236,7 +1116,6 @@ function NearbyEventCard({ event, onClick, currentUserId, onEdit, onDelete }) {
 
 function UpcomingEventRow({ event, onOpen, currentUserId, onEdit, onDelete }) {
   const isOwner = !!(currentUserId && event.creator_id && currentUserId === event.creator_id);
-
   return (
     <div className="relative flex w-full items-stretch gap-3 rounded-2xl bg-white
       border border-gray-100 p-3 shadow-sm hover:shadow-md hover:border-violet-100
@@ -1282,7 +1161,6 @@ function UpcomingEventRow({ event, onOpen, currentUserId, onEdit, onDelete }) {
           </div>
         </div>
       </button>
-
       {isOwner && (
         <div className="absolute right-3 top-3 z-10">
           <OwnerActionMenu event={event} onEdit={onEdit} onDelete={onDelete} />
@@ -1295,7 +1173,6 @@ function UpcomingEventRow({ event, onOpen, currentUserId, onEdit, onDelete }) {
 /* ================================================================
    SHARED UI
    ================================================================ */
-
 function SectionHeader({ title, subtitle, className = "" }) {
   return (
     <div className={className}>
@@ -1424,15 +1301,19 @@ function ErrorState({ error, onRetry, onSignIn }) {
       <p className="mt-2 text-sm text-gray-500 max-w-xs mx-auto">{text}</p>
       <div className="mt-5 flex justify-center gap-2">
         {isAuth ? (
-          <button onClick={onSignIn}
+          <button
+            onClick={onSignIn}
             className="inline-flex items-center gap-2 rounded-full bg-violet-600
-              px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 transition-colors">
+              px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 transition-colors"
+          >
             Sign In
           </button>
         ) : (
-          <button onClick={onRetry}
+          <button
+            onClick={onRetry}
             className="inline-flex items-center gap-2 rounded-full border border-gray-200
-              bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+              bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          >
             Try Again
           </button>
         )}
@@ -1444,7 +1325,6 @@ function ErrorState({ error, onRetry, onSignIn }) {
 /* ================================================================
    MAP
    ================================================================ */
-
 function NearbyEventsMap({ center, events, onOpenEvent }) {
   const position = useMemo(() => [center.lat, center.lng], [center.lat, center.lng]);
   return (
@@ -1455,8 +1335,12 @@ function NearbyEventsMap({ center, events, onOpenEvent }) {
       />
       <RecenterMap position={position} />
       {events.map((event) => (
-        <Marker key={event.id} position={[event.lat, event.lng]} icon={pinIcon}
-          eventHandlers={{ click: () => onOpenEvent(event) }}>
+        <Marker
+          key={event.id}
+          position={[event.lat, event.lng]}
+          icon={pinIcon}
+          eventHandlers={{ click: () => onOpenEvent(event) }}
+        >
           <Popup>
             <div className="min-w-[140px] text-sm">
               <p className="font-bold text-gray-900">{event.title}</p>
@@ -1491,9 +1375,8 @@ function RecenterMap({ position }) {
 }
 
 /* ================================================================
-   SVG ICONS
+   ICONS
    ================================================================ */
-
 function CompassIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -1537,8 +1420,8 @@ function CalendarIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" strokeLinecap="round" />
-      <line x1="8"  y1="2" x2="8"  y2="6" strokeLinecap="round" />
+      <line x1="16" y1="2"  x2="16" y2="6"  strokeLinecap="round" />
+      <line x1="8"  y1="2"  x2="8"  y2="6"  strokeLinecap="round" />
       <line x1="3"  y1="10" x2="21" y2="10" />
     </svg>
   );
