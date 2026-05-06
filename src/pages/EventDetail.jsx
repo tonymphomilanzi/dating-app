@@ -15,21 +15,19 @@ import "leaflet/dist/leaflet.css";
 /* ================================================================
    CONSTANTS & FORMATTERS
    ================================================================ */
-
 const priceFmt = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
+  style:                "currency",
+  currency:             "USD",
   maximumFractionDigits: 0,
 });
 
 /* ================================================================
-   LEAFLET PIN  (created once — never inside render)
+   LEAFLET PIN — created once at module level, never inside render
    ================================================================ */
-
 const customPin = L.divIcon({
-  className: "",
-  iconSize:  [48, 48],
-  iconAnchor:[24, 44],
+  className:  "",
+  iconSize:   [48, 48],
+  iconAnchor: [24, 44],
   popupAnchor:[0, -44],
   html: `
     <div style="
@@ -70,28 +68,24 @@ const customPin = L.divIcon({
 function normaliseEvent(raw) {
   if (!raw) return null;
   return {
-    id:             raw.id,
-    title:          raw.title          || "Untitled Event",
-    description:    raw.description   || "",
-    cover_url:      raw.cover_url      || raw.img          || raw.image_url || "",
-    category:       raw.category       || "Event",
-    // Location
-    city:           raw.city           || raw.place        || raw.location  || "",
-    address:        raw.address        || raw.venue        || "",
-    lat:            raw.lat  != null   ? Number(raw.lat)   : null,
-    lng:            raw.lng  != null   ? Number(raw.lng)   : null,
-    // Time — accept starts_at OR start_date OR date
-    starts_at:      raw.starts_at      || raw.start_date   || raw.date      || null,
-    ends_at:        raw.ends_at        || raw.end_date      || null,
-    // Tickets
-    price:          raw.price  != null ? Number(raw.price) : 0,
-    capacity:       raw.capacity != null ? Number(raw.capacity) : null,
-    attendees_count:raw.attendees_count != null
-                      ? Number(raw.attendees_count)
-                      : raw.attendees   != null
-                        ? Number(raw.attendees)
-                        : 0,
-    // Organiser — accept host OR organizer OR organiser
+    id:              raw.id,
+    title:           raw.title          || "Untitled Event",
+    description:     raw.description    || "",
+    cover_url:       raw.cover_url      || raw.img        || raw.image_url || "",
+    category:        raw.category       || "Event",
+    city:            raw.city           || raw.place      || raw.location  || "",
+    address:         raw.address        || raw.venue      || "",
+    lat:             raw.lat  != null   ? Number(raw.lat)  : null,
+    lng:             raw.lng  != null   ? Number(raw.lng)  : null,
+    starts_at:       raw.starts_at      || raw.start_date || raw.date     || null,
+    ends_at:         raw.ends_at        || raw.end_date   || null,
+    price:           raw.price  != null ? Number(raw.price) : 0,
+    capacity:        raw.capacity != null ? Number(raw.capacity) : null,
+    attendees_count: raw.attendees_count != null
+                       ? Number(raw.attendees_count)
+                       : raw.attendees != null
+                         ? Number(raw.attendees)
+                         : 0,
     host: {
       name:   raw.host?.name   || raw.organizer?.name   || raw.organiser?.name   || "Event Organiser",
       avatar: raw.host?.avatar || raw.organizer?.avatar || raw.organiser?.avatar || "",
@@ -101,7 +95,6 @@ function normaliseEvent(raw) {
   };
 }
 
-/** Format an ISO string → readable date + time. Returns {} when falsy. */
 function formatDateTime(isoString) {
   if (!isoString) return { date: "Date TBA", time: "" };
   const d = new Date(isoString);
@@ -118,7 +111,7 @@ function formatDateTime(isoString) {
       minute: "2-digit",
     }),
     relative: relativeDay(d),
-    iso: d.toISOString(),
+    iso:      d.toISOString(),
   };
 }
 
@@ -127,10 +120,10 @@ function relativeDay(date) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const tgt   = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const diff  = Math.round((tgt - today) / 86_400_000);
-  if (diff === 0)  return "Today";
-  if (diff === 1)  return "Tomorrow";
+  if (diff === 0)           return "Today";
+  if (diff === 1)           return "Tomorrow";
   if (diff > 0 && diff < 7) return `In ${diff} days`;
-  if (diff < 0)   return "Past event";
+  if (diff < 0)             return "Past event";
   return "";
 }
 
@@ -161,7 +154,6 @@ function shareEvent(event) {
 /* ================================================================
    MAP SUB-COMPONENTS
    ================================================================ */
-
 function MapAutoCenter({ position }) {
   const map = useMap();
   const prev = useRef(null);
@@ -176,10 +168,11 @@ function MapAutoCenter({ position }) {
 
 const EventMap = memo(function EventMap({ lat, lng, title, address }) {
   const position = useMemo(() => [Number(lat), Number(lng)], [lat, lng]);
-
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-gray-100 shadow-lg"
-      style={{ height: 280 }}>
+    <div
+      className="relative overflow-hidden rounded-3xl border border-gray-100 shadow-lg"
+      style={{ height: 280 }}
+    >
       <MapContainer
         center={position}
         zoom={15}
@@ -196,16 +189,15 @@ const EventMap = memo(function EventMap({ lat, lng, title, address }) {
           <Popup>
             <div className="text-sm font-semibold text-gray-800 min-w-[120px]">
               {title}
-              {address && <p className="text-xs text-gray-500 mt-0.5 font-normal">{address}</p>}
+              {address && (
+                <p className="text-xs text-gray-500 mt-0.5 font-normal">{address}</p>
+              )}
             </div>
           </Popup>
         </Marker>
         <MapAutoCenter position={position} />
       </MapContainer>
-
-      {/* Overlay ring */}
-      <div className="pointer-events-none absolute inset-0 rounded-3xl
-        ring-1 ring-inset ring-black/5" />
+      <div className="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-inset ring-black/5" />
     </div>
   );
 });
@@ -213,36 +205,28 @@ const EventMap = memo(function EventMap({ lat, lng, title, address }) {
 /* ================================================================
    SKELETON
    ================================================================ */
-
 function DetailSkeleton() {
   return (
     <div className="min-h-screen bg-gray-50 animate-pulse">
-      {/* Hero */}
       <div className="h-[55vh] bg-gray-200" />
       <div className="px-5 -mt-8 relative z-10 space-y-5 max-w-lg mx-auto">
         <div className="h-7 bg-gray-200 rounded-2xl w-1/3" />
         <div className="h-10 bg-gray-200 rounded-2xl w-full" />
         <div className="h-5 bg-gray-200 rounded-xl w-2/3" />
-        {/* Host card */}
         <div className="h-24 bg-white rounded-3xl shadow-sm border border-gray-100" />
-        {/* Detail cards */}
         <div className="grid grid-cols-2 gap-3">
           <div className="h-28 bg-white rounded-3xl shadow-sm border border-gray-100" />
           <div className="h-28 bg-white rounded-3xl shadow-sm border border-gray-100" />
         </div>
-        {/* Description */}
         <div className="space-y-2.5">
           <div className="h-4 bg-gray-200 rounded-xl w-full" />
           <div className="h-4 bg-gray-200 rounded-xl w-full" />
           <div className="h-4 bg-gray-200 rounded-xl w-4/5" />
           <div className="h-4 bg-gray-200 rounded-xl w-3/4" />
         </div>
-        {/* Map */}
         <div className="h-64 bg-gray-200 rounded-3xl" />
       </div>
-      {/* Bottom bar */}
-      <div className="fixed bottom-0 inset-x-0 h-28 bg-white/80 backdrop-blur-xl
-        border-t border-gray-100" />
+      <div className="fixed bottom-0 inset-x-0 h-28 bg-white/80 backdrop-blur-xl border-t border-gray-100" />
     </div>
   );
 }
@@ -250,13 +234,11 @@ function DetailSkeleton() {
 /* ================================================================
    ERROR STATE
    ================================================================ */
-
 function ErrorState({ message, onBack, onRetry }) {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center
       justify-center gap-5 px-6 text-center">
-      <div className="h-20 w-20 rounded-full bg-red-50 flex items-center
-        justify-center text-4xl">
+      <div className="h-20 w-20 rounded-full bg-red-50 flex items-center justify-center text-4xl">
         🎪
       </div>
       <div>
@@ -284,9 +266,8 @@ function ErrorState({ message, onBack, onRetry }) {
 }
 
 /* ================================================================
-   DETAIL CARD
+   INFO CARD
    ================================================================ */
-
 function InfoCard({ icon, label, children, className = "" }) {
   return (
     <div className={`bg-white rounded-3xl p-5 border border-gray-100 shadow-sm ${className}`}>
@@ -306,13 +287,13 @@ function InfoCard({ icon, label, children, className = "" }) {
 /* ================================================================
    MAIN COMPONENT
    ================================================================ */
-
 export default function EventDetail() {
   const navigate  = useNavigate();
   const { id }    = useParams();
   const { state } = useLocation();
 
-  // Seed from nav state — normalise immediately so shape is consistent
+  // Seed from nav state immediately — avoids a flash of skeleton
+  // when navigating from the events list which passes event data
   const [event,    setEvent]    = useState(() => normaliseEvent(state?.event ?? null));
   const [loading,  setLoading]  = useState(!state?.event);
   const [error,    setError]    = useState("");
@@ -326,18 +307,27 @@ export default function EventDetail() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // ── Fetch ────────────────────────────────────────────────────────────────
+  /* ──────────────────────────────────────────────────────────────
+     FETCH
+     - If nav state had the event, show it immediately and skip
+       the initial fetch (no AbortController needed on mount).
+     - Only fetch when: no nav state data, or user explicitly retries.
+     - `cancelled` flag guards setState after unmount — no abort
+       controller so nothing interferes with router transitions.
+  ────────────────────────────────────────────────────────────── */
   useEffect(() => {
-    // Skip fetch if we already have the data from navigation state
-    if (event && !retryKey) return;
+    // If we already have event data from nav state and this isn't
+    // a manual retry, skip the fetch entirely
+    if (event && retryKey === 0) return;
 
-    const ac = new AbortController();
+    let cancelled = false;
+
     setLoading(true);
     setError("");
 
     (async () => {
       try {
-        const res = await fetch(`/api/events/${id}`, { signal: ac.signal });
+        const res = await fetch(`/api/events/${id}`);
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -348,22 +338,24 @@ export default function EventDetail() {
         // Accept: { item: {...} } | { event: {...} } | raw object
         const raw  = data?.item ?? data?.event ?? data;
 
-        if (!mountedRef.current || ac.signal.aborted) return;
+        if (cancelled) return;
         setEvent(normaliseEvent(raw));
         setError("");
       } catch (err) {
-        if (err.name === "AbortError" || !mountedRef.current) return;
+        if (cancelled) return;
         setError(err.message || "Could not load this event.");
       } finally {
-        if (mountedRef.current && !ac.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
 
-    return () => ac.abort();
-  }, [id, retryKey]); // `event` intentionally excluded — we only re-fetch on retry
+    return () => { cancelled = true; };
+  }, [id, retryKey]);
+  // `event` intentionally excluded — we only re-fetch on id change or retry
 
-  // ── Derived data ─────────────────────────────────────────────────────────
-
+  /* ──────────────────────────────────────────────────────────────
+     DERIVED DATA
+  ────────────────────────────────────────────────────────────── */
   const dt = useMemo(() => formatDateTime(event?.starts_at), [event?.starts_at]);
 
   const capacityPct = useMemo(() => {
@@ -382,13 +374,15 @@ export default function EventDetail() {
   }, [hasMap, event]);
 
   const handleShare = useCallback(() => shareEvent(event), [event]);
+
   const handleRetry = useCallback(() => {
     setEvent(null);
     setRetryKey((k) => k + 1);
   }, []);
 
-  // ── Guards ────────────────────────────────────────────────────────────────
-
+  /* ──────────────────────────────────────────────────────────────
+     GUARDS
+  ────────────────────────────────────────────────────────────── */
   if (loading && !event) return <DetailSkeleton />;
 
   if (error && !event) {
@@ -403,15 +397,15 @@ export default function EventDetail() {
 
   if (!event) return <DetailSkeleton />;
 
-  /* ── Render ─────────────────────────────────────────────────────────────── */
-
+  /* ──────────────────────────────────────────────────────────────
+     RENDER
+  ────────────────────────────────────────────────────────────── */
   return (
     <div className="min-h-screen bg-gray-50 pb-36 antialiased">
 
-      {/* ── Floating Nav ──────────────────────────────────────────────── */}
+      {/* Floating Nav */}
       <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between
         p-4 pointer-events-none">
-
         <button
           onClick={() => navigate(-1)}
           className="pointer-events-auto h-11 w-11 rounded-2xl bg-white/90
@@ -434,12 +428,8 @@ export default function EventDetail() {
                 : "bg-white/90 backdrop-blur-lg border-white/60 text-gray-700 hover:bg-white"
               }`}
           >
-            <BookmarkIcon
-              className="h-5 w-5"
-              filled={isSaved}
-            />
+            <BookmarkIcon className="h-5 w-5" filled={isSaved} />
           </button>
-
           <button
             onClick={handleShare}
             aria-label="Share event"
@@ -452,7 +442,7 @@ export default function EventDetail() {
         </div>
       </nav>
 
-      {/* ── Hero Image ───────────────────────────────────────────────── */}
+      {/* Hero Image */}
       <div className="relative h-[58vh] w-full overflow-hidden bg-gray-900">
         {event.cover_url && !imgError ? (
           <img
@@ -463,18 +453,13 @@ export default function EventDetail() {
             style={{ objectPosition: "center top" }}
           />
         ) : (
-          /* Gradient placeholder when no image */
           <div className="h-full w-full bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-700
             flex items-end pb-16 pl-6">
             <span className="text-8xl opacity-40"></span>
           </div>
         )}
-
-        {/* Gradient fade to page background */}
         <div className="absolute inset-0 bg-gradient-to-t
           from-gray-50 via-gray-50/10 to-transparent" />
-
-        {/* Category pill — bottom-left of hero */}
         <div className="absolute left-5 bottom-20">
           <span className="inline-flex items-center gap-1.5 rounded-full
             bg-violet-600/90 backdrop-blur-sm border border-white/20
@@ -485,15 +470,14 @@ export default function EventDetail() {
         </div>
       </div>
 
-      {/* ── Content ──────────────────────────────────────────────────── */}
+      {/* Content */}
       <main className="relative z-10 -mt-10 px-5 max-w-lg mx-auto space-y-5">
 
-        {/* ── Title block ── */}
+        {/* Title block */}
         <div className="space-y-2">
           <h1 className="text-3xl font-extrabold text-gray-900 leading-tight tracking-tight">
             {event.title}
           </h1>
-
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             {event.city && (
               <div className="flex items-center gap-1.5 text-sm text-gray-500">
@@ -515,8 +499,6 @@ export default function EventDetail() {
               </span>
             )}
           </div>
-
-          {/* Tags */}
           {event.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {event.tags.map((tag) => (
@@ -532,7 +514,7 @@ export default function EventDetail() {
           )}
         </div>
 
-        {/* ── Organiser card ── */}
+        {/* Organiser card */}
         <div className="flex items-center justify-between gap-4 bg-white
           rounded-3xl p-4 border border-gray-100 shadow-sm">
           <div className="flex items-center gap-3 min-w-0">
@@ -543,7 +525,6 @@ export default function EventDetail() {
                 alt={event.host.name}
                 className="h-12 w-12 rounded-2xl object-cover border-2 border-violet-100"
               />
-              {/* Verified badge */}
               <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full
                 bg-green-500 border-2 border-white flex items-center justify-center">
                 <CheckIcon className="h-2.5 w-2.5 text-white" />
@@ -559,27 +540,29 @@ export default function EventDetail() {
               )}
             </div>
           </div>
-          <button
-            className="shrink-0 rounded-2xl bg-violet-50 px-4 py-2 text-sm
-              font-bold text-violet-700 hover:bg-violet-100 active:scale-95
-              transition-all duration-150"
-          >
+          <button className="shrink-0 rounded-2xl bg-violet-50 px-4 py-2 text-sm
+            font-bold text-violet-700 hover:bg-violet-100 active:scale-95
+            transition-all duration-150">
             Contact
           </button>
         </div>
 
-        {/* ── Date + Capacity grid ── */}
+        {/* Date + Capacity grid */}
         <div className="grid grid-cols-2 gap-3">
-          {/* Date */}
-          <InfoCard label="Date & Time" icon={<CalendarIcon className="h-4 w-4 text-violet-600" />}>
+          <InfoCard
+            label="Date & Time"
+            icon={<CalendarIcon className="h-4 w-4 text-violet-600" />}
+          >
             <p className="text-sm font-bold text-gray-900 leading-snug">{dt.date}</p>
             {dt.time && (
               <p className="mt-1 text-xs font-medium text-gray-500">{dt.time}</p>
             )}
           </InfoCard>
 
-          {/* Capacity */}
-          <InfoCard label="Availability" icon={<TicketIcon className="h-4 w-4 text-violet-600" />}>
+          <InfoCard
+            label="Availability"
+            icon={<TicketIcon className="h-4 w-4 text-violet-600" />}
+          >
             {event.capacity ? (
               <>
                 <p className="text-sm font-bold text-gray-900">
@@ -606,7 +589,7 @@ export default function EventDetail() {
           </InfoCard>
         </div>
 
-        {/* ── About ── */}
+        {/* About */}
         {event.description && (
           <InfoCard
             label="About This Event"
@@ -617,7 +600,7 @@ export default function EventDetail() {
           </InfoCard>
         )}
 
-        {/* ── Location ── */}
+        {/* Location */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold text-gray-900">Location</h3>
@@ -659,7 +642,7 @@ export default function EventDetail() {
           )}
         </div>
 
-        {/* ── Error banner (non-fatal — stale nav-state data shown, fetch failed) ── */}
+        {/* Non-fatal error banner — nav state data shown, background fetch failed */}
         {error && event && (
           <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4
             flex items-start gap-3">
@@ -679,17 +662,13 @@ export default function EventDetail() {
         )}
       </main>
 
-      {/* ── Bottom CTA ───────────────────────────────────────────────── */}
+      {/* Bottom CTA */}
       <footer className="fixed bottom-0 inset-x-0 z-50">
-        {/* Blur backdrop */}
         <div className="absolute inset-0 bg-gray-50/80 backdrop-blur-xl
           border-t border-gray-200/60" />
-
         <div className="relative px-5 pt-3 pb-8 max-w-lg mx-auto">
           <div className="flex items-center gap-4 bg-gray-900 rounded-3xl p-3
             shadow-2xl shadow-gray-900/30">
-
-            {/* Price */}
             <div className="flex-1 pl-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
                 {event.price === 0 ? "Admission" : "Starting from"}
@@ -698,8 +677,6 @@ export default function EventDetail() {
                 {event.price === 0 ? "Free" : priceFmt.format(event.price)}
               </p>
             </div>
-
-            {/* CTA */}
             <button
               className="flex-shrink-0 h-14 px-8 rounded-2xl font-extrabold text-base
                 bg-gradient-to-r from-violet-600 to-violet-500 text-white
@@ -720,11 +697,12 @@ export default function EventDetail() {
 /* ================================================================
    EXPANDABLE TEXT
    ================================================================ */
-
 function ExpandableText({ text, maxChars = 200 }) {
   const [expanded, setExpanded] = useState(false);
   const needsTruncation = text.length > maxChars;
-  const displayed = expanded || !needsTruncation ? text : `${text.slice(0, maxChars).trimEnd()}…`;
+  const displayed = expanded || !needsTruncation
+    ? text
+    : `${text.slice(0, maxChars).trimEnd()}…`;
 
   return (
     <div>
@@ -742,9 +720,8 @@ function ExpandableText({ text, maxChars = 200 }) {
 }
 
 /* ================================================================
-   INLINE SVG ICONS  (no external dep needed)
+   ICONS
    ================================================================ */
-
 function ChevronLeftIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
@@ -753,7 +730,6 @@ function ChevronLeftIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function BookmarkIcon({ className = "h-5 w-5", filled = false }) {
   return (
     <svg className={className} fill={filled ? "currentColor" : "none"}
@@ -763,20 +739,18 @@ function BookmarkIcon({ className = "h-5 w-5", filled = false }) {
     </svg>
   );
 }
-
 function ShareIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="18" cy="5" r="3" />
+      <circle cx="18" cy="5"  r="3" />
       <circle cx="6"  cy="12" r="3" />
       <circle cx="18" cy="19" r="3" />
-      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-      <line x1="15.41" y1="6.51" x2="8.59"  y2="10.49" />
+      <line x1="8.59"  y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51"  x2="8.59"  y2="10.49" />
     </svg>
   );
 }
-
 function MapPinIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
@@ -786,42 +760,38 @@ function MapPinIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function CalendarIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2"  x2="16" y2="6" />
-      <line x1="8"  y1="2"  x2="8"  y2="6" />
+      <line x1="16" y1="2"  x2="16" y2="6"  />
+      <line x1="8"  y1="2"  x2="8"  y2="6"  />
       <line x1="3"  y1="10" x2="21" y2="10" />
     </svg>
   );
 }
-
 function TicketIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 9a3 3 0 010-6h20a3 3 0 010 6" />
       <path d="M2 15a3 3 0 000 6h20a3 3 0 000-6" />
-      <line x1="2" y1="9"  x2="2"  y2="15" />
-      <line x1="22" y1="9" x2="22" y2="15" />
+      <line x1="2"  y1="9"  x2="2"  y2="15" />
+      <line x1="22" y1="9"  x2="22" y2="15" />
     </svg>
   );
 }
-
 function InfoIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
       stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8"  x2="12" y2="8" strokeWidth={2.5} strokeLinecap="round" />
+      <line x1="12" y1="8"  x2="12" y2="8"  strokeWidth={2.5} strokeLinecap="round" />
       <line x1="12" y1="12" x2="12" y2="16" />
     </svg>
   );
 }
-
 function CheckIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
@@ -830,7 +800,6 @@ function CheckIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function ExternalLinkIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
@@ -841,7 +810,6 @@ function ExternalLinkIcon({ className = "h-5 w-5" }) {
     </svg>
   );
 }
-
 function WarningIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24"
