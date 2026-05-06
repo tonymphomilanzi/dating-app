@@ -18,10 +18,10 @@ import { useAuth } from "../contexts/AuthContext.jsx";
    CONSTANTS
    ================================================================ */
 
-const MAX_BIO_LENGTH  = 500;
-const MAX_PHOTOS      = 9;
-const PHOTO_MAX_SIZE  = 5 * 1024 * 1024;
-const ALLOWED_TYPES   = ["image/jpeg", "image/png", "image/webp"];
+const MAX_BIO_LENGTH = 500;
+const MAX_PHOTOS = 9;
+const PHOTO_MAX_SIZE = 5 * 1024 * 1024;
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const REQUEST_TIMEOUT = 10_000;
 
 /* ================================================================
@@ -109,17 +109,16 @@ function Toast({ toast }) {
 function CompletenessBar({ score, hints }) {
   const color =
     score >= 80 ? "from-green-400 to-emerald-500" :
-    score >= 50 ? "from-amber-400 to-orange-400" :
-                  "from-violet-500 to-fuchsia-500";
+      score >= 50 ? "from-amber-400 to-orange-400" :
+        "from-violet-500 to-fuchsia-500";
 
   return (
     <div className="rounded-2xl bg-black/40 backdrop-blur-md border border-white/20 p-4">
       <div className="flex items-center justify-between mb-2.5">
         <span className="text-sm font-bold text-white">Profile Strength</span>
-        <span className={`text-sm font-extrabold ${
-          score >= 80 ? "text-green-300" :
-          score >= 50 ? "text-amber-300" : "text-violet-300"
-        }`}>
+        <span className={`text-sm font-extrabold ${score >= 80 ? "text-green-300" :
+            score >= 50 ? "text-amber-300" : "text-violet-300"
+          }`}>
           {score}%
         </span>
       </div>
@@ -246,15 +245,15 @@ function HeroSection({
    ================================================================ */
 
 function PhotoTile({ src, index, isPrimary, onMakePrimary, onDelete }) {
-  const [imgError,   setImgError]   = useState(false);
+  const [imgError, setImgError] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleDelete = async () => {
     if (!confirm("Delete this photo?")) return;
     setIsDeleting(true);
-    try      { await onDelete(); }
-    catch    (err) { console.error("Delete failed:", err); }
-    finally  { setIsDeleting(false); }
+    try { await onDelete(); }
+    catch (err) { console.error("Delete failed:", err); }
+    finally { setIsDeleting(false); }
   };
 
   if (imgError) {
@@ -345,26 +344,26 @@ function SectionHeader({ title, subtitle, action }) {
 
 function AlertBanner({ type = "error", title, body, onDismiss }) {
   const styles = {
-    error:   "bg-red-50 border-red-200 text-red-900",
+    error: "bg-red-50 border-red-200 text-red-900",
     warning: "bg-amber-50 border-amber-200 text-amber-900",
-    info:    "bg-violet-50 border-violet-200 text-violet-900",
-    upload:  "bg-violet-50 border-violet-200 text-violet-900",
+    info: "bg-violet-50 border-violet-200 text-violet-900",
+    upload: "bg-violet-50 border-violet-200 text-violet-900",
   };
   const iconColor = {
-    error:   "text-red-500",
+    error: "text-red-500",
     warning: "text-amber-500",
-    info:    "text-violet-500",
-    upload:  "text-violet-500",
+    info: "text-violet-500",
+    upload: "text-violet-500",
   };
 
   return (
     <div className={`rounded-2xl border p-4 shadow-sm ${styles[type]}`}>
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 shrink-0 ${iconColor[type]}`}>
-          {type === "error"   && <XCircleIcon  className="h-5 w-5" />}
-          {type === "warning" && <WarningIcon  className="h-5 w-5" />}
-          {type === "info"    && <InfoIcon     className="h-5 w-5" />}
-          {type === "upload"  && <SpinnerIcon  className="h-5 w-5" />}
+          {type === "error" && <XCircleIcon className="h-5 w-5" />}
+          {type === "warning" && <WarningIcon className="h-5 w-5" />}
+          {type === "info" && <InfoIcon className="h-5 w-5" />}
+          {type === "upload" && <SpinnerIcon className="h-5 w-5" />}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold">{title}</p>
@@ -427,38 +426,38 @@ export default function ProfileYou() {
   const { profile: me, user, signOut, reloadProfile } = useAuth();
 
   /* ── UI state ─────────────────────────────────────────────── */
-  const [loading,    setLoading]    = useState(true);
-  const [saving,     setSaving]     = useState(false);
-  const [error,      setError]      = useState("");
-  const [toast,      setToast]      = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState(null);
   const [hasUnsaved, setHasUnsaved] = useState(false);
 
   /* ── Form fields ──────────────────────────────────────────── */
   const [displayName, setDisplayName] = useState("");
-  const [profession,  setProfession]  = useState("");
-  const [city,        setCity]        = useState("");
-  const [bio,         setBio]         = useState("");
+  const [profession, setProfession] = useState("");
+  const [city, setCity] = useState("");
+  const [bio, setBio] = useState("");
   const originalRef = useRef({});
 
   /* ── Interests ────────────────────────────────────────────── */
-  const [allInterests,      setAllInterests]      = useState([]);
+  const [allInterests, setAllInterests] = useState([]);
   const [selectedInterests, setSelectedInterests] = useState([]);
-  const [savingInterests,   setSavingInterests]   = useState(false);
+  const [savingInterests, setSavingInterests] = useState(false);
 
   /* ── Photos ───────────────────────────────────────────────── */
-  const [heroUrl,   setHeroUrl]   = useState(null);
-  const [heroPath,  setHeroPath]  = useState(null);
-  const [gallery,   setGallery]   = useState([]);
+  const [heroUrl, setHeroUrl] = useState(null);
+  const [heroPath, setHeroPath] = useState(null);
+  const [gallery, setGallery] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const fileInputRef = useRef(null);
 
   /* ── Location / logout ────────────────────────────────────── */
-  const [locating,   setLocating]   = useState(false);
+  const [locating, setLocating] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
   /* ── Abort / mount guards ─────────────────────────────────── */
-  const mountedRef   = useRef(true);
+  const mountedRef = useRef(true);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -480,9 +479,9 @@ export default function ProfileYou() {
     const orig = originalRef.current;
     setHasUnsaved(
       displayName !== orig.displayName ||
-      profession  !== orig.profession  ||
-      city        !== orig.city        ||
-      bio         !== orig.bio
+      profession !== orig.profession ||
+      city !== orig.city ||
+      bio !== orig.bio
     );
   }, [displayName, profession, city, bio]);
 
@@ -499,17 +498,17 @@ export default function ProfileYou() {
     if (!me?.id) { setLoading(false); return; }
 
     let cancelled = false;
-    const reqId   = ++requestIdRef.current;
+    const reqId = ++requestIdRef.current;
 
     (async () => {
       try {
         setError("");
 
         const [
-          { data: profile,      error: profErr },
-          { data: interests                    },
-          { data: userInterests                },
-          { data: photos                       },
+          { data: profile, error: profErr },
+          { data: interests },
+          { data: userInterests },
+          { data: photos },
         ] = await Promise.all([
           withTimeout(
             supabase
@@ -536,19 +535,19 @@ export default function ProfileYou() {
               .select("path,is_primary,sort,created_at")
               .eq("user_id", me.id)
               .order("is_primary", { ascending: false })
-              .order("sort",       { ascending: true  })
-              .order("created_at", { ascending: true  }),
+              .order("sort", { ascending: true })
+              .order("created_at", { ascending: true }),
             REQUEST_TIMEOUT, "photos"
           ),
         ]);
 
-        if (profErr)                                     throw profErr;
+        if (profErr) throw profErr;
         if (cancelled || requestIdRef.current !== reqId) return;
 
         const name = profile?.display_name || "";
-        const prof = profile?.profession   || "";
-        const cty  = profile?.city         || "";
-        const bio_ = profile?.bio          || "";
+        const prof = profile?.profession || "";
+        const cty = profile?.city || "";
+        const bio_ = profile?.bio || "";
 
         setDisplayName(name);
         setProfession(prof);
@@ -564,7 +563,7 @@ export default function ProfileYou() {
         const unique = Array.from(
           new Map((photos || []).map((p) => [p.path, p])).values()
         );
-        const primary     = unique.find((p) => p.is_primary) || unique[0] || null;
+        const primary = unique.find((p) => p.is_primary) || unique[0] || null;
         const heroPublicUrl = primary?.path
           ? getPublicUrl(primary.path)
           : profile?.avatar_url || null;
@@ -595,16 +594,16 @@ export default function ProfileYou() {
     let score = 0;
     const hints = [];
 
-    if (displayName?.trim())             score += 20; else hints.push("Add your name");
-    if (heroUrl)                         score += 25; else hints.push("Add a primary photo");
-    if (selectedInterests.length >= 3)   score += 20;
+    if (displayName?.trim()) score += 20; else hints.push("Add your name");
+    if (heroUrl) score += 25; else hints.push("Add a primary photo");
+    if (selectedInterests.length >= 3) score += 20;
     else hints.push(`Pick ${Math.max(0, 3 - selectedInterests.length)} more interest${3 - selectedInterests.length !== 1 ? "s" : ""}`);
-    if (bio?.trim()?.length >= 50)       score += 15;
-    else if (bio?.trim())                { score += 8; hints.push("Extend your bio to 50+ chars"); }
-    else                                 hints.push("Write a bio about yourself");
-    if (city?.trim())                    score += 10; else hints.push("Add your city");
-    if (profession?.trim())              score += 5;  else hints.push("Add your profession");
-    if (gallery.length >= 3)             score += 5;
+    if (bio?.trim()?.length >= 50) score += 15;
+    else if (bio?.trim()) { score += 8; hints.push("Extend your bio to 50+ chars"); }
+    else hints.push("Write a bio about yourself");
+    if (city?.trim()) score += 10; else hints.push("Add your city");
+    if (profession?.trim()) score += 5; else hints.push("Add your profession");
+    if (gallery.length >= 3) score += 5;
     else hints.push(`Add ${Math.max(0, 3 - gallery.length)} more photo${3 - gallery.length !== 1 ? "s" : ""}`);
 
     return { score: Math.min(score, 100), hints };
@@ -622,10 +621,10 @@ export default function ProfileYou() {
         .from("profiles")
         .update({
           display_name: displayName.trim(),
-          profession:   profession.trim() || null,
-          city:         city.trim()       || null,
-          bio:          bio.trim()        || null,
-          updated_at:   new Date().toISOString(),
+          profession: profession.trim() || null,
+          city: city.trim() || null,
+          bio: bio.trim() || null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", me.id);
       if (err) throw err;
@@ -737,7 +736,7 @@ export default function ProfileYou() {
     try {
       const uploaded = [];
       for (let i = 0; i < files.length; i++) {
-        const file     = files[i];
+        const file = files[i];
         const fileName = `${user.id}/${Date.now()}-${sanitizeName(file.name)}`;
         setUploadPct(Math.round(((i + 0.5) / files.length) * 100));
         const { error: upErr } = await supabase.storage.from("profiles").upload(fileName, file, { upsert: false });
@@ -774,7 +773,7 @@ export default function ProfileYou() {
       if (err) throw err;
       const url = getPublicUrl(path);
       await supabase.from("profiles").update({ avatar_url: url }).eq("id", user.id);
-      const oldHeroUrl  = heroUrl;
+      const oldHeroUrl = heroUrl;
       const oldHeroPath = heroPath;
       setHeroUrl(url);
       setHeroPath(path);
@@ -1078,7 +1077,7 @@ export default function ProfileYou() {
                 {heroUrl && (
                   <PhotoTile
                     src={heroUrl} index={0} isPrimary
-                    onMakePrimary={() => {}}
+                    onMakePrimary={() => { }}
                     onDelete={() => deletePhoto(heroPath)}
                   />
                 )}
@@ -1135,7 +1134,7 @@ export default function ProfileYou() {
             >
               {loggingOut
                 ? <><SpinnerIcon className="h-4 w-4" /> Logging out…</>
-                : <><LogOutIcon  className="h-4 w-4" /> Log Out</>
+                : <><LogOutIcon className="h-4 w-4" /> Log Out</>
               }
             </button>
           </div>
