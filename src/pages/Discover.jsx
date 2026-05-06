@@ -6,19 +6,17 @@ import {
   memo,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import SwipeDeck            from "../components/SwipeDeck.jsx";
-import { useAuth }          from "../contexts/AuthContext.jsx";
-import { discoverService }  from "../services/discover.service.js";
-import { storiesService }   from "../services/stories.service.js";
+import SwipeDeck from "../components/SwipeDeck.jsx";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import { discoverService } from "../services/discover.service.js";
+import { storiesService } from "../services/stories.service.js";
 import { updateProfileLocation } from "../utils/location.js";
-import { DiscoverCache }    from "../lib/discoverCache.js";
-import { useGeolocation }   from "../hooks/useGeolocation.js";
+import { useGeolocation } from "../hooks/useGeolocation.js";
 import { useNotifications } from "../hooks/useNotifications";
 
 /* ================================================================
    CONSTANTS
    ================================================================ */
-
 const TABS = [
   { key: "matches", label: "Matches" },
   { key: "nearby",  label: "Nearby"  },
@@ -26,52 +24,44 @@ const TABS = [
 ];
 
 const LOC_SAVE_INTERVAL_MS = 300_000; // 5 min
-const STALE_HIDDEN_MS      = 30_000;  // re-fetch if tab hidden longer than this
 
 /* ================================================================
    MAIN PAGE
    ================================================================ */
-
 export default function Discover() {
   const navigate        = useNavigate();
   const { profile }     = useAuth();
   const { unreadCount } = useNotifications();
 
-  // ── Extract primitives from profile ──────────────────────────────
-  // Same technique as Feed.jsx — primitives in dep arrays, never objects
-  const userId     = profile?.id        ?? "me";
-  const profileLat = profile?.lat       ?? null;
-  const profileLng = profile?.lng       ?? null;
+  // ── Extract primitives from profile ──
+  const userId     = profile?.id         ?? "me";
+  const profileLat = profile?.lat        ?? null;
+  const profileLng = profile?.lng        ?? null;
   const avatarUrl  = profile?.avatar_url ?? null;
 
-  // ── Tab state ────────────────────────────────────────────────────
-  const [mode,       setMode]       = useState("for_you");
-  const [activeMode, setActiveMode] = useState("for_you");
+  // ── Tab state ──
+  const [mode, setMode] = useState("for_you");
 
-  // ── Per-tab data ─────────────────────────────────────────────────
+  // ── Per-tab data ──
   const [profilesMap, setProfilesMap] = useState({});
   const [loadingMap,  setLoadingMap]  = useState({});
   const [errorMap,    setErrorMap]    = useState({});
 
-  // ── Stories ──────────────────────────────────────────────────────
-  const [stories,        setStories]       = useState({ users: [], mine: false });
+  // ── Stories ──
+  const [stories,        setStories]        = useState({ users: [], mine: false });
   const [storiesLoading, setStoriesLoading] = useState(true);
 
-  // ── Location save throttle ───────────────────────────────────────
-  // One plain number — no ref needed
+  // ── Location save throttle ──
   const [lastLocSave, setLastLocSave] = useState(0);
 
-  // ── Derived ──────────────────────────────────────────────────────
+  // ── Derived ──
   const profiles = profilesMap[mode] ?? [];
   const loading  = loadingMap[mode]  ?? !profilesMap[mode];
   const error    = errorMap[mode]    ?? "";
 
   /* ──────────────────────────────────────────────────────────────
      GEOLOCATION
-     Keep it simple: extract lat/lng primitives just like Feed
-     extracts params.q / params.tag
   ────────────────────────────────────────────────────────────── */
-
   const onLocChange = async ({ lat, lng }) => {
     if (!lat || !lng) return;
     if (Date.now() - lastLocSave < LOC_SAVE_INTERVAL_MS) return;
@@ -91,8 +81,7 @@ export default function Discover() {
     onLocationChange: onLocChange,
   });
 
-  // ── Extract lat/lng primitives ───────────────────────────────────
-  // Realtime GPS wins; fall back to profile coords saved in DB
+  // ── Extract lat/lng primitives ──
   const geoLat = geo?.lat ?? null;
   const geoLng = geo?.lng ?? null;
   const geoAcc = geo?.accuracy ?? null;
@@ -101,30 +90,25 @@ export default function Discover() {
   const lng = geoLng ?? (profileLng ? +profileLng : null);
   const isRealtime = !!(geoLat && geoLng);
 
-  // myLoc object for child components — memoised so reference only
-  // changes when the primitive values actually change
   const myLoc = useMemo(() => {
     if (!lat || !lng) return null;
     return { lat, lng, accuracy: geoAcc, isRealtime };
   }, [lat, lng, geoAcc, isRealtime]);
 
   /* ──────────────────────────────────────────────────────────────
-     CORE FETCH — plain async function, no useCallback
-     Closes over current lat/lng/userId/mode on every render.
-     This is EXACTLY the same approach as Feed.load().
+     FETCH PROFILES — no caching, no in-flight tracking,
+     just fetch and set state. Navigation works instantly
+     because there's nothing to block or invalidate.
   ────────────────────────────────────────────────────────────── */
-
   async function loadProfiles(targetMode, silent = false) {
     if (!silent) {
-      setLoadingMap((p) => ({ ...p, [targetMode]: true }));
-      setErrorMap  ((p) => ({ ...p, [targetMode]: ""  }));
+      setLoadingMap((p) => ({ ...p, [targetMode]: true  }));
+      setErrorMap  ((p) => ({ ...p, [targetMode]: ""    }));
     }
     try {
       const data = await discoverService.list(targetMode, 20, { lat, lng });
       const list = Array.isArray(data) ? data : [];
       setProfilesMap((p) => ({ ...p, [targetMode]: list }));
-      setActiveMode(targetMode);
-      DiscoverCache.save(userId, targetMode, list);
     } catch (err) {
       if (err?.name === "AbortError") return;
       if (!silent) {
@@ -141,9 +125,8 @@ export default function Discover() {
   }
 
   /* ──────────────────────────────────────────────────────────────
-     STORIES — plain async, same pattern
+     FETCH STORIES
   ────────────────────────────────────────────────────────────── */
-
   async function loadStories() {
     setStoriesLoading(true);
     try {
@@ -161,38 +144,19 @@ export default function Discover() {
 
   /* ──────────────────────────────────────────────────────────────
      EFFECTS
-     Dep arrays contain only primitives — Object.is works correctly.
-     This is the key lesson from Feed.jsx.
   ────────────────────────────────────────────────────────────── */
 
-  // 1. Load profiles whenever mode, user, or location primitives change.
-  //    Cache check lives here — same place Feed checks authReady.
+  // 1. Load profiles when mode / user / location changes
   useEffect(() => {
-    const cached = DiscoverCache.load(userId, mode);
-
-    if (cached.items?.length) {
-      // Serve cache immediately so the user sees something at once
-      setProfilesMap((p) => ({ ...p, [mode]: cached.items }));
-      setLoadingMap ((p) => ({ ...p, [mode]: false }));
-      setActiveMode(mode);
-
-      // If stale, refresh silently in the background
-      if (DiscoverCache.isStale(cached.ts)) {
-        loadProfiles(mode, true);
-      }
-    } else {
-      loadProfiles(mode);
-    }
+    loadProfiles(mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, userId, lat, lng]);
-  // ↑ All primitives. loadProfiles intentionally omitted —
-  //   it's render-scoped and always reads the latest values.
 
-  // 2. Reset all tab data when the logged-in user switches
+  // 2. Reset tab data when user switches account
   useEffect(() => {
     setProfilesMap({});
-    setLoadingMap ({});
-    setErrorMap   ({});
+    setLoadingMap({});
+    setErrorMap({});
   }, [userId]);
 
   // 3. Stories — load once on mount
@@ -201,10 +165,7 @@ export default function Discover() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 4. Visibility recovery — re-fetch if tab was hidden long enough
-  //    No refs needed: closure captures current primitives at the time
-  //    the tab becomes visible (a new render will have fired by then
-  //    if anything changed, so values are always fresh)
+  // 4. Visibility recovery — re-fetch silently when tab regains focus
   useEffect(() => {
     let hiddenAt = null;
 
@@ -213,47 +174,21 @@ export default function Discover() {
         hiddenAt = Date.now();
         return;
       }
-      // Became visible
       const hiddenMs = hiddenAt ? Date.now() - hiddenAt : 0;
       hiddenAt = null;
-      if (hiddenMs < STALE_HIDDEN_MS) return;
-
-      // Re-check cache; if stale, do a real fetch
-      const cached = DiscoverCache.load(userId, mode);
-      if (cached.items?.length && !DiscoverCache.isStale(cached.ts)) {
-        setProfilesMap((p) => ({ ...p, [mode]: cached.items }));
-        setLoadingMap ((p) => ({ ...p, [mode]: false }));
-        setActiveMode(mode);
-      } else {
-        loadProfiles(mode);
-      }
+      // Only refresh if hidden for more than 2 minutes
+      if (hiddenMs < 120_000) return;
+      loadProfiles(mode, true);
     };
 
     document.addEventListener("visibilitychange", handle);
     return () => document.removeEventListener("visibilitychange", handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, userId, lat, lng]);
-  // ↑ Re-register the listener whenever these primitives change so the
-  //   handler always closes over their latest values. Because they're
-  //   primitives the comparison is exact — no false re-registrations.
-
-  // 5. Periodic background refresh — plain setInterval, no hook needed
-  useEffect(() => {
-    const id = setInterval(() => {
-      loadProfiles(mode, true); // silent — user sees no spinner
-    }, 60_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, userId, lat, lng]);
-  // ↑ Same dep list as the main fetch — interval restarts whenever
-  //   something meaningful changes, which is correct behaviour.
 
   /* ──────────────────────────────────────────────────────────────
-     HANDLERS — inline or plain functions, no useCallback needed
-     (these are not expensive; memo on child components handles
-     unnecessary re-renders if that becomes an issue)
+     HANDLERS
   ────────────────────────────────────────────────────────────── */
-
   function handleTabChange(key) {
     setMode(key);
   }
@@ -265,7 +200,6 @@ export default function Discover() {
   /* ──────────────────────────────────────────────────────────────
      RENDER
   ────────────────────────────────────────────────────────────── */
-
   return (
     <div className="flex min-h-screen flex-col bg-white text-gray-900">
 
@@ -351,7 +285,7 @@ export default function Discover() {
             )}
             <SwipeDeck
               initialItems={profiles}
-              mode={activeMode}
+              mode={mode}
               myLoc={myLoc}
             />
           </div>
@@ -364,7 +298,6 @@ export default function Discover() {
 /* ================================================================
    ICON BUTTON
    ================================================================ */
-
 const IconButton = memo(function IconButton({
   icon,
   onClick,
@@ -387,7 +320,6 @@ const IconButton = memo(function IconButton({
                15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
       )}
-
       {icon === "bell" && (
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24"
           stroke="currentColor" strokeWidth={2}>
@@ -399,7 +331,6 @@ const IconButton = memo(function IconButton({
                11-6 0m6 0H9" />
         </svg>
       )}
-
       {icon === "heart" && (
         <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2
@@ -408,7 +339,6 @@ const IconButton = memo(function IconButton({
                    19 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
         </svg>
       )}
-
       {count != null && count > 0 && (
         <span
           aria-label={`${count} unread`}
@@ -426,7 +356,6 @@ const IconButton = memo(function IconButton({
 /* ================================================================
    LOCATION STATUS
    ================================================================ */
-
 const LocationStatus = memo(function LocationStatus({ geo, status }) {
   if (!geo) return null;
   const syncing = status === "loading";
@@ -447,7 +376,6 @@ const LocationStatus = memo(function LocationStatus({ geo, status }) {
 /* ================================================================
    STORIES ROW
    ================================================================ */
-
 const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
   if (loading) {
     return (
@@ -513,7 +441,6 @@ const StoriesRow = memo(function StoriesRow({ data, loading, onMine, onUser }) {
 /* ================================================================
    STORY THUMBNAIL
    ================================================================ */
-
 const StoryThumbnail = memo(function StoryThumbnail({ story, onClick }) {
   const [mediaError, setMediaError] = useState(false);
   const isVideo  = story.media_type === "video";
@@ -563,13 +490,11 @@ const StoryThumbnail = memo(function StoryThumbnail({ story, onClick }) {
             </div>
           </div>
         </div>
-
         {story.unread && (
           <div className="absolute top-0 right-0 h-3 w-3 rounded-full
             bg-violet-600 border-2 border-white" />
         )}
       </div>
-
       <span className="text-[11px] font-semibold text-gray-700 w-16 truncate text-center">
         {story.name?.split(" ")[0] ?? "User"}
       </span>
@@ -580,7 +505,6 @@ const StoryThumbnail = memo(function StoryThumbnail({ story, onClick }) {
 /* ================================================================
    PROFILE SKELETON
    ================================================================ */
-
 function ProfileSkeleton() {
   return (
     <div className="flex flex-col items-center gap-4 animate-pulse">
@@ -609,7 +533,6 @@ function ProfileSkeleton() {
 /* ================================================================
    ERROR STATE
    ================================================================ */
-
 const ErrorState = memo(function ErrorState({ error, onRetry }) {
   return (
     <div className="flex h-64 flex-col items-center justify-center p-6 text-center">
@@ -639,7 +562,6 @@ const ErrorState = memo(function ErrorState({ error, onRetry }) {
 /* ================================================================
    LOCATION PROMPT
    ================================================================ */
-
 const LocationPrompt = memo(function LocationPrompt({ onEnable, loading }) {
   return (
     <div className="mb-6 flex items-center justify-between rounded-2xl
