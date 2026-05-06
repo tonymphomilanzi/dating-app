@@ -13,9 +13,12 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 /* ================================================================
    CONSTANTS & HELPERS
    ================================================================ */
-const DEFAULT_RADIUS_KM = 25;
-const NOMINATIM_BASE = "https://nominatim.openstreetmap.org";
+const DEFAULT_RADIUS_KM  = 25;
+const NOMINATIM_BASE     = "https://nominatim.openstreetmap.org";
 const SEARCH_DEBOUNCE_MS = 400;
+const GEOCODE_TIMEOUT_MS = 5000;
+const GEO_TIMEOUT_MS     = 12000;
+const GEO_MAX_AGE_MS     = 60000;
 
 const formatDistance = (km) => {
   if (!Number.isFinite(km)) return "";
@@ -24,7 +27,7 @@ const formatDistance = (km) => {
 
 const haversineKm = (a, b) => {
   if (!a || !b) return Infinity;
-  const R = 6371;
+  const R    = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
   const h =
@@ -59,7 +62,129 @@ const todayHours = (openingHours) => {
 };
 
 /* ================================================================
-   ICONS
+   useGeolocation  — mirrors Events.jsx exactly
+   ================================================================ */
+function useGeolocation() {
+  const [userLocation,   setUserLocation]   = useState(null);
+  const [locationStatus, setLocationStatus] = useState("idle");
+  const [locationLabel,  setLocationLabel]  = useState("");
+
+  const mountedRef      = useRef(true);
+  const geocodeAbortRef = useRef(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      geocodeAbortRef.current?.abort();
+    };
+  }, []);
+
+  const reverseGeocode = useCallback(async ({ lat, lng }) => {
+    geocodeAbortRef.current?.abort();
+    const ac = new AbortController();
+    geocodeAbortRef.current = ac;
+    const timerId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+    try {
+      const res = await fetch(
+        `${NOMINATIM_BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
+        { headers: { "Accept-Language": "en" }, signal: ac.signal }
+      );
+      clearTimeout(timerId);
+      if (!mountedRef.current || ac.signal.aborted) return;
+      const data = await res.json().catch(() => ({}));
+      const label =
+        data?.address?.city    ||
+        data?.address?.town    ||
+        data?.address?.village ||
+        data?.address?.county  ||
+        "Your area";
+      if (mountedRef.current) setLocationLabel(label);
+    } catch {
+      clearTimeout(timerId);
+      if (mountedRef.current) setLocationLabel("Your area");
+    }
+  }, []);
+
+  const requestLocation = useCallback(() => {
+    if (!("geolocation" in navigator)) {
+      setLocationStatus("denied");
+      return;
+    }
+    setLocationStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (!mountedRef.current) return;
+        const pos = { lat: Number(coords.latitude), lng: Number(coords.longitude) };
+        setUserLocation(pos);
+        setLocationStatus("granted");
+        reverseGeocode(pos);
+      },
+      () => {
+        if (mountedRef.current) setLocationStatus("denied");
+      },
+      { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS }
+    );
+  }, [reverseGeocode]);
+
+  return { userLocation, locationStatus, locationLabel, requestLocation };
+}
+
+/* ================================================================
+   useClinics  — fetch ALL, filter client-side (same as Events)
+   ================================================================ */
+function useClinics() {
+  const [allClinics, setAllClinics] = useState([]);
+  const [isLoading,  setIsLoading]  = useState(true);
+  const [error,      setError]      = useState("");
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from("massage_clinics")
+        .select(`
+          id, name, address, city, cover_url, rating, review_count,
+          lat, lng, phone, opening_hours, status, owner_id,
+          clinic_specialties(name)
+        `)
+        .in("status", ["approved", "pending"])
+        .order("rating", { ascending: false })
+        .limit(500); // fetch all — filter client-side like Events does
+
+      if (!mountedRef.current) return;
+      if (fetchErr) throw fetchErr;
+
+      const rows = (data ?? []).map((c) => ({
+        ...c,
+        // Normalise lat/lng to numbers regardless of DB storage type
+        lat: c.lat != null ? Number(c.lat) : null,
+        lng: c.lng != null ? Number(c.lng) : null,
+        specialties: c.clinic_specialties?.map((s) => s.name) ?? [],
+      }));
+
+      setAllClinics(rows);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      console.error("useClinics:", err);
+      setError("Failed to load clinics. Please try again.");
+    } finally {
+      if (mountedRef.current) setIsLoading(false);
+    }
+  }, []);
+
+  return { allClinics, isLoading, error, refresh };
+}
+
+/* ================================================================
+   SVG ICONS
    ================================================================ */
 const MapPinIcon = ({ className = "w-5 h-5" }) => (
   <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -248,12 +373,12 @@ function OwnerActionMenu({ clinic, onEdit, onDelete }) {
    LOCATION SEARCH BAR
    ================================================================ */
 function LocationSearchBar({ onSelect, onUseMyLocation }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
+  const [query,       setQuery]       = useState("");
+  const [results,     setResults]     = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const inputRef = useRef(null);
-  const abortRef = useRef(null);
+  const inputRef   = useRef(null);
+  const abortRef   = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -303,7 +428,7 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
       <div className="relative mb-2">
         {isSearching
           ? <SpinnerIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-500" />
-          : <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
+          : <SearchIcon  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
         <input ref={inputRef} type="text" value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search location..."
@@ -350,34 +475,36 @@ export default function MassageClinic() {
   const [isSearchExpanded,   setIsSearchExpanded]   = useState(false);
   const [showLocationFilter, setShowLocationFilter] = useState(false);
 
-  /* ── Delete / toast state ── */
+  /* ── Delete / toast ── */
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting,   setIsDeleting]   = useState(false);
   const [deleteError,  setDeleteError]  = useState("");
   const [toast,        setToast]        = useState(null);
 
-  /* ── Location state ── */
-  const [locStatus,     setLocStatus]     = useState("idle");
-  const [userCoords,    setUserCoords]    = useState(null);
-  const [locationLabel, setLocationLabel] = useState("");
-  const [searchCoords,  setSearchCoords]  = useState(null);
+  /* ── Manual location override (when user picks from search) ── */
+  const [manualLocation, setManualLocation] = useState(null);
+  const [manualLabel,    setManualLabel]    = useState("");
 
-  /* ── Clinics state ── */
-  const [clinics,   setClinics]   = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error,     setError]     = useState("");
-
-  /* ── Refs ── */
   const isMounted         = useRef(true);
   const locationFilterRef = useRef(null);
-  // We store coords in a ref too so the geolocation callback
-  // can read/write without stale closure issues
-  const coordsRef         = useRef(null);
 
   useEffect(() => {
     isMounted.current = true;
     window.scrollTo(0, 0);
     return () => { isMounted.current = false; };
+  }, []);
+
+  /* ── Geolocation — same hook as Events ── */
+  const { userLocation, locationStatus, locationLabel, requestLocation } = useGeolocation();
+
+  /* ── Clinics — fetch ALL, filter client-side ── */
+  const { allClinics, isLoading, error, refresh } = useClinics();
+
+  /* ── On mount: fetch clinics + request location — exactly like Events ── */
+  useEffect(() => {
+    refresh();
+    requestLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ── Toast helper ── */
@@ -386,172 +513,7 @@ export default function MassageClinic() {
     setTimeout(() => { if (isMounted.current) setToast(null); }, 3500);
   }, []);
 
-  /* ================================================================
-     GEOLOCATION
-     Key insight: we do NOT use a "did request" gate ref.
-     Instead we check locStatus via a ref so the callback is safe.
-     The geolocation API itself won't prompt twice if already granted.
-     ================================================================ */
-  const locStatusRef = useRef("idle");
-
-  const startGeolocation = useCallback(() => {
-    // Already loading or granted — don't fire again
-    if (locStatusRef.current === "loading" || locStatusRef.current === "granted") return;
-
-    if (!navigator.geolocation) {
-      locStatusRef.current = "denied";
-      setLocStatus("denied");
-      return;
-    }
-
-    locStatusRef.current = "loading";
-    setLocStatus("loading");
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        if (!isMounted.current) return;
-
-        const coords = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-
-        // Store in ref for immediate access
-        coordsRef.current = coords;
-        locStatusRef.current = "granted";
-
-        // Update state — these will trigger loadClinics via the effect
-        setUserCoords(coords);
-        setSearchCoords(coords);
-        setLocStatus("granted");
-
-        // Reverse geocode — fire and forget, doesn't block clinics loading
-        fetch(`${NOMINATIM_BASE}/reverse?format=jsonv2&lat=${coords.lat}&lon=${coords.lng}`)
-          .then((r) => r.json())
-          .then((data) => {
-            if (!isMounted.current) return;
-            const label =
-              data?.address?.city ||
-              data?.address?.town ||
-              data?.address?.village ||
-              "Your area";
-            setLocationLabel(label);
-          })
-          .catch(() => {
-            if (isMounted.current) setLocationLabel("Your area");
-          });
-      },
-      (err) => {
-        if (!isMounted.current) return;
-        console.warn("Geolocation denied:", err.message);
-        locStatusRef.current = "denied";
-        setLocStatus("denied");
-      },
-      {
-        enableHighAccuracy: false,
-        timeout: 10000,
-        maximumAge: 300000, // 5 min cache — avoids re-prompting on StrictMode remount
-      }
-    );
-  }, []); // stable — no deps, uses refs only
-
-  /* ── Fire geolocation on mount ── */
-  useEffect(() => {
-    startGeolocation();
-    // Intentional empty deps — run once on mount only
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ================================================================
-     LOAD CLINICS
-     This is the ONLY place we fetch from Supabase.
-     It re-runs whenever viewMode, searchCoords, radiusKm or sortBy change.
-     ================================================================ */
-  const loadClinics = useCallback(async () => {
-    // In nearby mode: wait for coords
-    if (viewMode === "nearby" && !searchCoords) return;
-
-    setIsLoading(true);
-    setError("");
-    setClinics([]);
-
-    try {
-      let q = supabase
-        .from("massage_clinics")
-        .select(`
-          id, name, address, city, cover_url, rating, review_count,
-          lat, lng, phone, opening_hours, status, owner_id,
-          clinic_specialties(name)
-        `)
-        .in("status", ["approved", "pending"]);
-
-      if (viewMode === "nearby" && searchCoords) {
-        const { lat, lng } = searchCoords;
-        // Use a generous bounding box — we filter precisely with haversine below
-        const latDelta = radiusKm / 111;
-        const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
-
-        q = q
-          .gte("lat", lat - latDelta)
-          .lte("lat", lat + latDelta)
-          .gte("lng", lng - lngDelta)
-          .lte("lng", lng + lngDelta);
-      }
-
-      const { data, error: fetchErr } = await q
-        .order("rating", { ascending: false })
-        .limit(200); // higher limit so bounding box has enough rows
-
-      if (!isMounted.current) return;
-      if (fetchErr) throw fetchErr;
-
-      let rows = (data ?? []).map((c) => {
-        const clat = typeof c.lat === "string" ? parseFloat(c.lat) : Number(c.lat);
-        const clng = typeof c.lng === "string" ? parseFloat(c.lng) : Number(c.lng);
-        const distance_km =
-          searchCoords && !isNaN(clat) && !isNaN(clng)
-            ? haversineKm(searchCoords, { lat: clat, lng: clng })
-            : null;
-        return {
-          ...c,
-          lat: clat,
-          lng: clng,
-          specialties: c.clinic_specialties?.map((s) => s.name) ?? [],
-          distance_km,
-        };
-      });
-
-      // Precise haversine filter — bounding box is a square, we want a circle
-      if (viewMode === "nearby" && searchCoords) {
-        rows = rows.filter(
-          (c) => c.distance_km !== null && c.distance_km <= radiusKm
-        );
-      }
-
-      // Sort
-      if (sortBy === "name") {
-        rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-      } else if (sortBy === "distance" && searchCoords) {
-        rows.sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity));
-      } else {
-        rows.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
-      }
-
-      setClinics(rows);
-    } catch (err) {
-      if (!isMounted.current) return;
-      console.error("loadClinics error:", err);
-      setError("Failed to load clinics. Please try again.");
-    } finally {
-      if (isMounted.current) setIsLoading(false);
-    }
-  }, [viewMode, searchCoords, radiusKm, sortBy]);
-
-  useEffect(() => {
-    loadClinics();
-  }, [loadClinics]);
-
-  /* ── Outside click — location filter ── */
+  /* ── Outside click for location filter ── */
   useEffect(() => {
     if (!showLocationFilter) return;
     const handler = (e) => {
@@ -562,47 +524,81 @@ export default function MassageClinic() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showLocationFilter]);
 
+  /* ── Active location: manual override takes priority over GPS ── */
+  const activeLocation = manualLocation || userLocation;
+  const activeLabel    = manualLabel    || locationLabel;
+
+  /* ================================================================
+     CLIENT-SIDE FILTERING — mirrors Events.nearbyEvents exactly
+     No database bounding box — pure JS haversine like Events does
+     ================================================================ */
+  const displayedClinics = useMemo(() => {
+    let rows = allClinics.slice();
+
+    // Text search
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      rows = rows.filter(
+        (c) =>
+          c.name?.toLowerCase().includes(q) ||
+          c.address?.toLowerCase().includes(q) ||
+          c.city?.toLowerCase().includes(q)
+      );
+    }
+
+    if (viewMode === "nearby") {
+      if (!activeLocation) return []; // no location yet
+
+      // Compute distance for every clinic then filter by radius
+      rows = rows
+        .filter((c) => c.lat != null && c.lng != null && !isNaN(c.lat) && !isNaN(c.lng))
+        .map((c) => ({
+          ...c,
+          distance_km: haversineKm(activeLocation, { lat: c.lat, lng: c.lng }),
+        }))
+        .filter((c) => Number.isFinite(c.distance_km) && c.distance_km <= radiusKm);
+    } else {
+      // "All" mode — no distance filter, but still compute distance if we have location
+      rows = rows.map((c) => ({
+        ...c,
+        distance_km:
+          activeLocation && c.lat != null && c.lng != null && !isNaN(c.lat) && !isNaN(c.lng)
+            ? haversineKm(activeLocation, { lat: c.lat, lng: c.lng })
+            : null,
+      }));
+    }
+
+    // Sort
+    if (sortBy === "distance" && viewMode === "nearby") {
+      rows.sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity));
+    } else if (sortBy === "name") {
+      rows.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    } else {
+      rows.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
+    }
+
+    return rows;
+  }, [allClinics, searchQuery, viewMode, activeLocation, radiusKm, sortBy]);
+
   /* ── Handlers ── */
   const toggleViewMode = useCallback((mode) => {
     if (mode === viewMode) return;
-    setClinics([]);
-    setError("");
     setViewMode(mode);
-    if (mode === "all") {
-      setSearchCoords(null);
-    } else if (mode === "nearby") {
-      if (userCoords) {
-        setSearchCoords(userCoords);
-      } else {
-        // Reset status so startGeolocation will fire again
-        locStatusRef.current = "idle";
-        setLocStatus("idle");
-        startGeolocation();
-      }
-    }
-  }, [viewMode, userCoords, startGeolocation]);
+  }, [viewMode]);
 
   const handleLocationSelect = useCallback((pos, label) => {
-    coordsRef.current = pos;
-    locStatusRef.current = "granted";
-    setUserCoords(pos);
-    setSearchCoords(pos);
-    setLocationLabel(label);
-    setLocStatus("granted");
+    setManualLocation(pos);
+    setManualLabel(label);
     setViewMode("nearby");
     setShowLocationFilter(false);
   }, []);
 
   const handleUseMyLocation = useCallback(() => {
+    setManualLocation(null); // clear manual, fall back to GPS
+    setManualLabel("");
     setShowLocationFilter(false);
-    if (userCoords) {
-      setSearchCoords(userCoords);
-    } else {
-      locStatusRef.current = "idle";
-      setLocStatus("idle");
-      startGeolocation();
-    }
-  }, [userCoords, startGeolocation]);
+    if (!userLocation) requestLocation();
+  }, [userLocation, requestLocation]);
 
   const handleEdit = useCallback((clinic) => {
     navigate(`/massage-clinics/${clinic.id}/edit`, { state: { clinic } });
@@ -624,7 +620,8 @@ export default function MassageClinic() {
         .eq("id", deleteTarget.id)
         .eq("owner_id", user.id);
       if (delErr) throw delErr;
-      setClinics((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+      // Remove from local state without re-fetching
+      refresh();
       setDeleteTarget(null);
       showToast("Clinic deleted successfully");
     } catch (err) {
@@ -632,29 +629,18 @@ export default function MassageClinic() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteTarget, user?.id, showToast]);
+  }, [deleteTarget, user?.id, showToast, refresh]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleteTarget(null);
     setDeleteError("");
   }, []);
 
-  /* ── Derived ── */
-  const filteredClinics = useMemo(() => {
-    if (!searchQuery.trim()) return clinics;
-    const q = searchQuery.toLowerCase();
-    return clinics.filter(
-      (c) =>
-        c.name?.toLowerCase().includes(q) ||
-        c.address?.toLowerCase().includes(q) ||
-        c.city?.toLowerCase().includes(q)
-    );
-  }, [clinics, searchQuery]);
-
+  /* ── Effective label for location button ── */
   const effectiveLabel =
-    locStatus === "loading" ? "Locating…"
-    : locationLabel ? locationLabel
-    : locStatus === "denied" ? "Location denied"
+    locationStatus === "loading" ? "Locating…"
+    : activeLabel                ? activeLabel
+    : locationStatus === "denied"? "Location denied"
     : "Set location";
 
   /* ── Render ── */
@@ -743,7 +729,7 @@ export default function MassageClinic() {
                 <div className="relative" ref={locationFilterRef}>
                   <button onClick={() => setShowLocationFilter((v) => !v)}
                     className="flex items-center gap-2 bg-white border border-gray-200 hover:border-violet-300 rounded-full px-3.5 py-2 text-xs font-bold text-gray-700 transition-all shadow-sm hover:shadow-md whitespace-nowrap">
-                    {locStatus === "loading"
+                    {locationStatus === "loading"
                       ? <SpinnerIcon className="w-3.5 h-3.5 text-violet-500" />
                       : <MapPinIcon className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
                     <span className="truncate max-w-[140px]">{effectiveLabel}</span>
@@ -759,17 +745,15 @@ export default function MassageClinic() {
                   )}
                 </div>
 
-                {searchCoords && (
-                  <div className="flex items-center bg-white border border-gray-200 rounded-full px-3.5 py-2 shadow-sm text-xs font-bold">
-                    <span className="text-gray-500 mr-1.5 hidden sm:inline">Within</span>
-                    <select value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))}
-                      className="bg-transparent text-violet-700 focus:outline-none cursor-pointer">
-                      {[5, 10, 25, 50, 100].map((r) => (
-                        <option key={r} value={r}>{r}km</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div className="flex items-center bg-white border border-gray-200 rounded-full px-3.5 py-2 shadow-sm text-xs font-bold">
+                  <span className="text-gray-500 mr-1.5 hidden sm:inline">Within</span>
+                  <select value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))}
+                    className="bg-transparent text-violet-700 focus:outline-none cursor-pointer">
+                    {[5, 10, 25, 50, 100].map((r) => (
+                      <option key={r} value={r}>{r}km</option>
+                    ))}
+                  </select>
+                </div>
 
                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}
                   className="sm:hidden ml-auto bg-white border border-gray-200 rounded-full px-3 py-2 text-xs font-bold focus:outline-none text-gray-700">
@@ -778,9 +762,9 @@ export default function MassageClinic() {
                   <option value="name">A–Z</option>
                 </select>
 
-                {!isLoading && clinics.length > 0 && (
+                {!isLoading && displayedClinics.length > 0 && (
                   <span className="ml-auto text-xs text-gray-400 font-medium hidden sm:block">
-                    {filteredClinics.length} clinic{filteredClinics.length !== 1 ? "s" : ""}
+                    {displayedClinics.length} clinic{displayedClinics.length !== 1 ? "s" : ""}
                   </span>
                 )}
               </div>
@@ -790,42 +774,35 @@ export default function MassageClinic() {
 
         {/* CONTENT */}
         <div className="px-4 md:px-6 pt-6">
-          {/* Priority order matters here */}
-          {locStatus === "denied" && viewMode === "nearby" && !searchCoords ? (
+          {/* Location denied — no location at all in nearby mode */}
+          {viewMode === "nearby" && locationStatus === "denied" && !activeLocation ? (
             <LocationDeniedState
-              onRequestLocation={() => {
-                locStatusRef.current = "idle";
-                setLocStatus("idle");
-                startGeolocation();
-              }}
+              onRequestLocation={requestLocation}
               onViewAll={() => toggleViewMode("all")}
             />
-          ) : locStatus === "loading" && viewMode === "nearby" && !searchCoords ? (
+          ) : viewMode === "nearby" && locationStatus === "loading" && !activeLocation ? (
             <LocationLoadingState />
           ) : isLoading ? (
             <LoadingState />
           ) : error ? (
-            <ErrorState error={error} onRetry={loadClinics} />
-          ) : viewMode === "nearby" && !searchCoords ? (
-            // Idle state — location not yet requested or available
+            <ErrorState error={error} onRetry={refresh} />
+          ) : viewMode === "nearby" && !activeLocation ? (
+            /* idle — location not requested yet or no GPS */
             <LocationDeniedState
-              onRequestLocation={() => {
-                locStatusRef.current = "idle";
-                setLocStatus("idle");
-                startGeolocation();
-              }}
+              onRequestLocation={requestLocation}
               onViewAll={() => toggleViewMode("all")}
             />
-          ) : filteredClinics.length === 0 ? (
+          ) : displayedClinics.length === 0 ? (
             <EmptyState
               viewMode={viewMode}
               searchQuery={searchQuery}
               locationLabel={effectiveLabel}
+              radiusKm={radiusKm}
               onCreateClinic={() => navigate("/massage-clinics/new")}
             />
           ) : (
             <ClinicsList
-              clinics={filteredClinics}
+              clinics={displayedClinics}
               viewMode={viewMode}
               currentUserId={user?.id}
               onEdit={handleEdit}
@@ -850,10 +827,14 @@ export default function MassageClinic() {
    ================================================================ */
 function LocationLoadingState() {
   return (
-    <div className="text-center py-24 bg-white rounded-3xl border border-gray-100 shadow-sm">
-      <SpinnerIcon className="w-10 h-10 text-violet-500 mx-auto mb-4" />
-      <h3 className="text-lg font-bold text-gray-900 mb-2">Getting your location…</h3>
-      <p className="text-sm text-gray-500">Please allow location access when prompted.</p>
+    <div className="mt-10 flex flex-col items-center gap-3 text-center">
+      <div className="relative h-12 w-12">
+        <span className="absolute inset-0 animate-ping rounded-full bg-violet-300 opacity-60" />
+        <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-violet-100">
+          <MapPinIcon className="w-6 h-6 text-violet-600" />
+        </span>
+      </div>
+      <p className="text-sm text-gray-500">Finding your location…</p>
     </div>
   );
 }
@@ -919,7 +900,7 @@ function ErrorState({ error, onRetry }) {
   );
 }
 
-function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
+function EmptyState({ viewMode, searchQuery, locationLabel, radiusKm, onCreateClinic }) {
   return (
     <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-200">
       <div className="w-24 h-24 bg-gradient-to-br from-violet-50 to-purple-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -931,7 +912,7 @@ function EmptyState({ viewMode, searchQuery, locationLabel, onCreateClinic }) {
           ? `No clinics match "${searchQuery}".`
           : viewMode === "all"
           ? "No massage clinics available yet. Be the first to list one!"
-          : `No clinics found near ${locationLabel}. Try a larger radius or browse all.`}
+          : `No clinics found within ${radiusKm}km of ${locationLabel}. Try a larger radius.`}
       </p>
       <button onClick={onCreateClinic}
         className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-8 py-3 rounded-full font-bold text-sm mx-auto transition-all active:scale-95 shadow-md">
@@ -962,7 +943,7 @@ function ClinicsList({ clinics, viewMode, currentUserId, onEdit, onDelete }) {
    CLINIC CARD
    ================================================================ */
 function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
-  const navigate = useNavigate();
+  const navigate    = useNavigate();
   const [isFavorited, setIsFavorited] = useState(false);
   const [imageError,  setImageError]  = useState(false);
 
