@@ -16,11 +16,11 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 /* ================================================================
    CONSTANTS
    ================================================================ */
-const EARTH_RADIUS_KM    = 6_371;
-const GEOCODE_TIMEOUT_MS = 5_000;
-const GEO_TIMEOUT_MS     = 12_000;
-const GEO_MAX_AGE_MS     = 60_000;
-const DEFAULT_RADIUS_KM  = 50;
+const EARTH_RADIUS_KM       = 6_371;
+const GEOCODE_TIMEOUT_MS    = 5_000;
+const GEO_TIMEOUT_MS        = 12_000;
+const GEO_MAX_AGE_MS        = 60_000;
+const DEFAULT_RADIUS_KM     = 50;
 const POPULAR_EVENTS_LIMIT  = 12;
 const UPCOMING_EVENTS_LIMIT = 10;
 
@@ -139,39 +139,49 @@ function useGeolocation() {
   const [locationStatus, setLocationStatus] = useState("idle");
   const [locationLabel,  setLocationLabel]  = useState("");
 
-  const mountedRef      = useRef(true);
-  const geocodeAbortRef = useRef(null);
+  const cancelledRef     = useRef(false);
+  const geocodeTimerRef  = useRef(null);
 
   useEffect(() => {
-    mountedRef.current = true;
+    cancelledRef.current = false;
     return () => {
-      mountedRef.current = false;
-      geocodeAbortRef.current?.abort();
+      cancelledRef.current = true;
+      // Clear any pending geocode timeout — no abort needed,
+      // we just stop caring about the result via cancelledRef
+      if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
     };
   }, []);
 
+  // reverseGeocode is stable — reads cancelledRef via ref, no stale closure
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
-    geocodeAbortRef.current?.abort();
-    const ac      = new AbortController();
-    geocodeAbortRef.current = ac;
-    const timerId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+    // Each call gets its own controller purely for the timeout abort,
+    // not for navigation cleanup — cancelledRef handles that
+    const ac = new AbortController();
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+    geocodeTimerRef.current = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
         { headers: { "Accept-Language": "en" }, signal: ac.signal }
       );
-      clearTimeout(timerId);
-      if (!mountedRef.current || ac.signal.aborted) return;
+      clearTimeout(geocodeTimerRef.current);
+      if (cancelledRef.current) return;
+
       const data = await res.json().catch(() => ({}));
+      if (cancelledRef.current) return;
+
       const city =
         data?.address?.city    || data?.address?.town    ||
         data?.address?.village || data?.address?.county  ||
         data?.address?.state   || "";
-      if (mountedRef.current) setLocationLabel(city || "Your area");
+      setLocationLabel(city || "Your area");
     } catch {
-      clearTimeout(timerId);
+      clearTimeout(geocodeTimerRef.current);
+      if (cancelledRef.current) return;
+      setLocationLabel("Your area");
     }
-  }, []);
+  }, []); // stable — only reads refs and sets state
 
   const requestLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
@@ -181,14 +191,20 @@ function useGeolocation() {
     setLocationStatus("loading");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        if (!mountedRef.current) return;
+        if (cancelledRef.current) return;
         const pos = { lat: Number(coords.latitude), lng: Number(coords.longitude) };
-        if (!isValidLatLng(pos.lat, pos.lng)) { setLocationStatus("denied"); return; }
+        if (!isValidLatLng(pos.lat, pos.lng)) {
+          setLocationStatus("denied");
+          return;
+        }
         setUserLocation(pos);
         setLocationStatus("granted");
         reverseGeocode(pos);
       },
-      () => { if (mountedRef.current) setLocationStatus("denied"); },
+      () => {
+        if (cancelledRef.current) return;
+        setLocationStatus("denied");
+      },
       { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: GEO_MAX_AGE_MS }
     );
   }, [reverseGeocode]);
@@ -203,26 +219,28 @@ function useEvents() {
   const [events,    setEvents]    = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error,     setError]     = useState("");
-  const mountedRef = useRef(true);
+
+  // cancelledRef scoped to hook lifetime
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
   }, []);
 
-  async function refresh(silent = false) {
+  // refresh is stable — all values read from refs or passed as args
+  const refresh = useCallback(async (silent = false) => {
     if (!silent) {
       setIsLoading(true);
       setError("");
     }
     try {
       const rows = await eventsService.list();
-      if (!mountedRef.current) return;
+      if (cancelledRef.current) return;
       setEvents((rows ?? []).map(mapRow));
       if (!silent) setError("");
     } catch (err) {
-      if (!mountedRef.current) return;
-      if (err?.name === "AbortError") return;
+      if (cancelledRef.current) return;
       if (!silent) {
         const status = err?.status || err?.response?.status;
         if (status === 401 || /session expired/i.test(err?.message ?? "")) {
@@ -232,9 +250,9 @@ function useEvents() {
         setError(err?.message || "Failed to load events");
       }
     } finally {
-      if (mountedRef.current && !silent) setIsLoading(false);
+      if (!cancelledRef.current && !silent) setIsLoading(false);
     }
-  }
+  }, []); // stable — reads cancelledRef via ref
 
   return { events, setEvents, isLoading, error, refresh };
 }
@@ -359,52 +377,73 @@ export default function Events() {
   const location = useLocation();
   const { user } = useAuth();
 
-  const [activeTab,        setActiveTab]        = useState(TABS.EXPLORE);
-  const [searchQuery,      setSearchQuery]       = useState("");
-  const [radius,           setRadius]            = useState(DEFAULT_RADIUS_KM);
-  const [viewType,         setViewType]          = useState(VIEW_TYPES.LIST);
-  const [selectedCategory, setSelectedCategory]  = useState("All");
+  const [activeTab,        setActiveTab]       = useState(TABS.EXPLORE);
+  const [searchQuery,      setSearchQuery]      = useState("");
+  const [radius,           setRadius]           = useState(DEFAULT_RADIUS_KM);
+  const [viewType,         setViewType]         = useState(VIEW_TYPES.LIST);
+  const [selectedCategory, setSelectedCategory] = useState("All");
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting,   setIsDeleting]   = useState(false);
   const [deleteError,  setDeleteError]  = useState("");
   const [toast,        setToast]        = useState(null);
 
-  const isMounted = useRef(true);
+  // Single cancelled ref for the main component lifetime
+  const cancelledRef  = useRef(false);
+  // Ref for the toast timer so it can be cleared on unmount
+  const toastTimerRef = useRef(null);
+
   useEffect(() => {
-    isMounted.current = true;
-    return () => { isMounted.current = false; };
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
+  // showToast is stable — clears its own timer, guarded by cancelledRef
   const showToast = useCallback((message, type = "success") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
-    const id = setTimeout(() => {
-      if (isMounted.current) setToast(null);
+    toastTimerRef.current = setTimeout(() => {
+      if (!cancelledRef.current) setToast(null);
     }, 3_500);
-    return () => clearTimeout(id);
-  }, []);
+  }, []); // stable — reads refs only
 
   const { userLocation, locationStatus, locationLabel, requestLocation } = useGeolocation();
   const { events, setEvents, isLoading, error, refresh } = useEvents();
 
-  /* ── Initial load ── */
+  // ── Initial load — runs once on mount ──
   useEffect(() => {
-    refresh(false); // foreground — show spinner
+    refresh(false);
     requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Visibility refresh — silent, no spinner ── */
+  // ── Visibility refresh — silent, no spinner ──
+  // Uses a ref snapshot for the hidden timestamp so the listener
+  // is only ever registered once and never becomes stale
+  const hiddenAtRef = useRef(null);
+
   useEffect(() => {
     const handle = () => {
-      if (document.visibilityState === "visible") refresh(true);
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      // Only refresh if hidden for more than 2 minutes
+      const hiddenMs = hiddenAtRef.current != null
+        ? Date.now() - hiddenAtRef.current
+        : 0;
+      hiddenAtRef.current = null;
+      if (hiddenMs < 120_000) return;
+      refresh(true); // silent — refresh is stable, safe to call here
     };
     document.addEventListener("visibilitychange", handle);
     return () => document.removeEventListener("visibilitychange", handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh]); // refresh is stable (useCallback []), runs once
 
-  /* ── Inject created / updated event from nav state ── */
+  // ── Inject created / updated event from nav state ──
   useEffect(() => {
     const created = location.state?.created;
     const updated = location.state?.updated;
@@ -436,13 +475,16 @@ export default function Events() {
     setDeleteError("");
     try {
       await eventsService.delete(deleteTarget.id);
+      if (cancelledRef.current) return;
+      // Functional updater — safe even if component somehow unmounts
       setEvents((prev) => prev.filter((e) => e.id !== deleteTarget.id));
       setDeleteTarget(null);
       showToast("Event deleted successfully");
     } catch (err) {
+      if (cancelledRef.current) return;
       setDeleteError(err?.message || "Failed to delete event.");
     } finally {
-      setIsDeleting(false);
+      if (!cancelledRef.current) setIsDeleting(false);
     }
   }, [deleteTarget, setEvents, showToast]);
 
@@ -941,7 +983,7 @@ function NearYouSection({
 }
 
 /* ================================================================
-   CARD COMPONENTS
+   CARD COMPONENTS (unchanged — no async inside these)
    ================================================================ */
 function FeaturedEventBanner({ event, onClick, currentUserId, onEdit, onDelete }) {
   const isOwner = !!(currentUserId && event.creator_id && currentUserId === event.creator_id);
@@ -1375,7 +1417,7 @@ function RecenterMap({ position }) {
 }
 
 /* ================================================================
-   ICONS
+   ICONS (unchanged)
    ================================================================ */
 function CompassIcon({ className = "h-5 w-5" }) {
   return (

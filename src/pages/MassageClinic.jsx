@@ -82,20 +82,12 @@ const todayHours = (openingHours) => {
 };
 
 /* ================================================================
-   useSubscription — checks if current user is premium/vip/basic
-   Reads from both profiles.is_premium AND user_subscriptions
-   (whichever grants the higher tier wins)
+   useSubscription
    ================================================================ */
 function useSubscription(userId) {
   const [isPremium, setIsPremium] = useState(false);
   const [plan, setPlan] = useState("free");
   const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
 
   useEffect(() => {
     if (!userId) {
@@ -105,17 +97,17 @@ function useSubscription(userId) {
       return;
     }
 
-    const check = async () => {
+    let cancelled = false;
+
+    async function check() {
       setIsLoadingSubscription(true);
       try {
-        // Check profiles.is_premium flag
         const { data: profile } = await supabase
           .from("profiles")
           .select("is_premium")
           .eq("id", userId)
           .single();
 
-        // Check active subscription row
         const now = new Date().toISOString();
         const { data: sub } = await supabase
           .from("user_subscriptions")
@@ -127,7 +119,7 @@ function useSubscription(userId) {
           .limit(1)
           .maybeSingle();
 
-        if (!mountedRef.current) return;
+        if (cancelled) return;
 
         const activePlan = sub?.plan ?? "free";
         const premiumPlans = ["basic", "premium", "vip"];
@@ -138,33 +130,30 @@ function useSubscription(userId) {
         setPlan(hasPremiumSub ? activePlan : hasPremiumFlag ? "premium" : "free");
       } catch (err) {
         console.error("useSubscription:", err);
-        if (mountedRef.current) {
-          setIsPremium(false);
-          setPlan("free");
-        }
+        if (cancelled) return;
+        setIsPremium(false);
+        setPlan("free");
       } finally {
-        if (mountedRef.current) setIsLoadingSubscription(false);
+        if (!cancelled) setIsLoadingSubscription(false);
       }
-    };
+    }
 
     check();
+    return () => { cancelled = true; };
   }, [userId]);
 
   return { isPremium, plan, isLoadingSubscription };
 }
 
 /* ================================================================
-   useOwnerClinicCount — counts how many clinics this user owns
+   useOwnerClinicCount
    ================================================================ */
 function useOwnerClinicCount(userId) {
   const [ownedCount, setOwnedCount] = useState(0);
   const [isLoadingCount, setIsLoadingCount] = useState(true);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+  // Keep a stable ref to userId so refreshCount never goes stale
+  const userIdRef = useRef(userId);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   useEffect(() => {
     if (!userId) {
@@ -172,7 +161,10 @@ function useOwnerClinicCount(userId) {
       setIsLoadingCount(false);
       return;
     }
-    const fetch = async () => {
+
+    let cancelled = false;
+
+    async function fetchCount() {
       setIsLoadingCount(true);
       try {
         const { count } = await supabase
@@ -180,25 +172,30 @@ function useOwnerClinicCount(userId) {
           .select("id", { count: "exact", head: true })
           .eq("owner_id", userId);
 
-        if (mountedRef.current) setOwnedCount(count ?? 0);
+        if (cancelled) return;
+        setOwnedCount(count ?? 0);
       } catch {
-        if (mountedRef.current) setOwnedCount(0);
+        if (cancelled) return;
+        setOwnedCount(0);
       } finally {
-        if (mountedRef.current) setIsLoadingCount(false);
+        if (!cancelled) setIsLoadingCount(false);
       }
-    };
-    fetch();
+    }
+
+    fetchCount();
+    return () => { cancelled = true; };
   }, [userId]);
 
-  // Expose a refresh so we can call it after delete
+  // refreshCount is stable — reads userId from ref, not closure
   const refreshCount = useCallback(async () => {
-    if (!userId) return;
+    const uid = userIdRef.current;
+    if (!uid) return;
     const { count } = await supabase
       .from("massage_clinics")
       .select("id", { count: "exact", head: true })
-      .eq("owner_id", userId);
-    if (mountedRef.current) setOwnedCount(count ?? 0);
-  }, [userId]);
+      .eq("owner_id", uid);
+    setOwnedCount(count ?? 0);
+  }, []); // empty deps — stable forever
 
   return { ownedCount, isLoadingCount, refreshCount };
 }
@@ -210,42 +207,55 @@ function useGeolocation() {
   const [userLocation, setUserLocation] = useState(null);
   const [locationStatus, setLocationStatus] = useState("idle");
   const [locationLabel, setLocationLabel] = useState("");
-  const mountedRef = useRef(true);
-  const geocodeAbortRef = useRef(null);
+  // Track whether this hook instance is still alive
+  const cancelledRef = useRef(false);
+  // Track the current geocode timeout so we can clear it
+  const geocodeTimerRef = useRef(null);
 
   useEffect(() => {
-    mountedRef.current = true;
+    cancelledRef.current = false;
     return () => {
-      mountedRef.current = false;
-      geocodeAbortRef.current?.abort();
+      cancelledRef.current = true;
+      if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
     };
   }, []);
 
   const reverseGeocode = useCallback(async ({ lat, lng }) => {
-    geocodeAbortRef.current?.abort();
-    const ac = new AbortController();
-    geocodeAbortRef.current = ac;
-    const timerId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+    // Clear any pending geocode timeout
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+
+    // Use a simple timeout-based approach — no AbortController in cleanup
+    // because this is a one-shot read triggered by user action, not navigation
+    const timeoutMs = GEOCODE_TIMEOUT_MS;
+
     try {
+      const controller = new AbortController();
+      geocodeTimerRef.current = setTimeout(() => controller.abort(), timeoutMs);
+
       const res = await fetch(
         `${NOMINATIM_BASE}/reverse?format=jsonv2&lat=${lat}&lon=${lng}`,
-        { headers: { "Accept-Language": "en" }, signal: ac.signal }
+        { headers: { "Accept-Language": "en" }, signal: controller.signal }
       );
-      clearTimeout(timerId);
-      if (!mountedRef.current || ac.signal.aborted) return;
+      clearTimeout(geocodeTimerRef.current);
+
+      if (cancelledRef.current) return;
+
       const data = await res.json().catch(() => ({}));
+      if (cancelledRef.current) return;
+
       const label =
         data?.address?.city ||
         data?.address?.town ||
         data?.address?.village ||
         data?.address?.county ||
         "Your area";
-      if (mountedRef.current) setLocationLabel(label);
+      setLocationLabel(label);
     } catch {
-      clearTimeout(timerId);
-      if (mountedRef.current) setLocationLabel("Your area");
+      clearTimeout(geocodeTimerRef.current);
+      if (cancelledRef.current) return;
+      setLocationLabel("Your area");
     }
-  }, []);
+  }, []); // stable — reads cancelledRef via ref, no stale closure
 
   const requestLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
@@ -255,7 +265,7 @@ function useGeolocation() {
     setLocationStatus("loading");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        if (!mountedRef.current) return;
+        if (cancelledRef.current) return;
         const pos = {
           lat: Number(coords.latitude),
           lng: Number(coords.longitude),
@@ -265,7 +275,8 @@ function useGeolocation() {
         reverseGeocode(pos);
       },
       () => {
-        if (mountedRef.current) setLocationStatus("denied");
+        if (cancelledRef.current) return;
+        setLocationStatus("denied");
       },
       {
         enableHighAccuracy: true,
@@ -285,11 +296,15 @@ function useClinics() {
   const [allClinics, setAllClinics] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const mountedRef = useRef(true);
+
+  // refresh is called both on mount and after delete.
+  // We use a cancelledRef stored on the hook so concurrent calls
+  // from the same mount don't race each other.
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
   }, []);
 
   const refresh = useCallback(async () => {
@@ -307,7 +322,7 @@ function useClinics() {
         .order("rating", { ascending: false })
         .limit(500);
 
-      if (!mountedRef.current) return;
+      if (cancelledRef.current) return;
       if (fetchErr) throw fetchErr;
 
       const rows = (data ?? []).map((c) => ({
@@ -319,19 +334,19 @@ function useClinics() {
 
       setAllClinics(rows);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (cancelledRef.current) return;
       console.error("useClinics:", err);
       setError("Failed to load clinics. Please try again.");
     } finally {
-      if (mountedRef.current) setIsLoading(false);
+      if (!cancelledRef.current) setIsLoading(false);
     }
-  }, []);
+  }, []); // stable — reads cancelledRef via ref
 
   return { allClinics, isLoading, error, refresh };
 }
 
 /* ================================================================
-   SVG ICONS
+   SVG ICONS (unchanged)
    ================================================================ */
 const MapPinIcon = ({ className = "w-5 h-5" }) => (
   <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -460,12 +475,10 @@ function Toast({ message, type = "success" }) {
 
 /* ================================================================
    PREMIUM CTA BANNER
-   Shown only to non-premium users who are logged in
    ================================================================ */
 function PremiumCtaBanner({ onUpgrade }) {
   return (
     <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none">
-      {/* Fade mask */}
       <div className="h-6 bg-gradient-to-t from-gray-50 to-transparent" />
       <div
         className="bg-white/95 backdrop-blur-xl border-t border-gray-100 px-4 pt-3 pointer-events-auto"
@@ -475,7 +488,6 @@ function PremiumCtaBanner({ onUpgrade }) {
           onClick={onUpgrade}
           className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500 py-4 text-base font-extrabold text-white shadow-lg shadow-orange-200 hover:shadow-xl hover:shadow-orange-300 active:scale-[0.98] transition-all"
         >
-          {/* Shimmer */}
           <span className="pointer-events-none absolute inset-0 -skew-x-12 translate-x-[-200%] animate-[shimmer_2.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
           <span className="relative flex items-center justify-center gap-2.5">
             <span className="text-xl">👑</span>
@@ -492,7 +504,6 @@ function PremiumCtaBanner({ onUpgrade }) {
 
 /* ================================================================
    FREE LIMIT MODAL
-   Shown when a free user tries to add a second clinic
    ================================================================ */
 function FreeLimitModal({ onUpgrade, onClose }) {
   return (
@@ -502,24 +513,17 @@ function FreeLimitModal({ onUpgrade, onClose }) {
         onClick={onClose}
       />
       <div className="relative z-10 w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
-        {/* Icon */}
         <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-amber-100 to-orange-100 mx-auto">
           <LockIcon className="w-8 h-8 text-amber-500" />
         </div>
-
         <h3 className="text-center text-lg font-bold text-gray-900">
           Free Limit Reached
         </h3>
         <p className="mt-2 text-center text-sm text-gray-500 leading-relaxed">
           Free accounts can list{" "}
-          <span className="font-bold text-gray-700">
-            1 clinic
-          </span>{" "}
-          only. Upgrade to Premium to list unlimited clinics and unlock
-          all features.
+          <span className="font-bold text-gray-700">1 clinic</span>{" "}
+          only. Upgrade to Premium to list unlimited clinics and unlock all features.
         </p>
-
-        {/* Perks */}
         <ul className="mt-4 space-y-2">
           {[
             "Unlimited clinic listings",
@@ -533,7 +537,6 @@ function FreeLimitModal({ onUpgrade, onClose }) {
             </li>
           ))}
         </ul>
-
         <div className="mt-6 flex gap-3">
           <button
             onClick={onClose}
@@ -652,24 +655,26 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const inputRef = useRef(null);
-  const abortRef = useRef(null);
-  const mountedRef = useRef(true);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    mountedRef.current = true;
+    cancelledRef.current = false;
     setTimeout(() => inputRef.current?.focus(), 50);
-    return () => {
-      mountedRef.current = false;
-      abortRef.current?.abort();
-    };
+    return () => { cancelledRef.current = true; };
   }, []);
 
   useEffect(() => {
-    if (!query.trim() || query.length < 3) { setResults([]); return; }
+    if (!query.trim() || query.length < 3) {
+      setResults([]);
+      return;
+    }
+
     const timer = setTimeout(async () => {
-      abortRef.current?.abort();
+      // Each search gets its own controller so the timeout abort
+      // only affects this specific request, not the component lifecycle
       const ac = new AbortController();
-      abortRef.current = ac;
+      const timeoutId = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+
       setIsSearching(true);
       setSearchError("");
       try {
@@ -677,24 +682,26 @@ function LocationSearchBar({ onSelect, onUseMyLocation }) {
           `${NOMINATIM_BASE}/search?format=jsonv2&limit=5&q=${encodeURIComponent(query)}`,
           { headers: { "Accept-Language": "en" }, signal: ac.signal }
         );
-        if (ac.signal.aborted) return;
+        clearTimeout(timeoutId);
+        if (cancelledRef.current) return;
         const data = await res.json();
-        if (mountedRef.current) {
-          setResults(
-            data.map((r) => ({
-              label: r.display_name,
-              lat: parseFloat(r.lat),
-              lng: parseFloat(r.lon),
-            }))
-          );
-        }
+        if (cancelledRef.current) return;
+        setResults(
+          data.map((r) => ({
+            label: r.display_name,
+            lat: parseFloat(r.lat),
+            lng: parseFloat(r.lon),
+          }))
+        );
       } catch (err) {
-        if (err.name !== "AbortError" && mountedRef.current)
-          setSearchError("Search failed. Try again.");
+        clearTimeout(timeoutId);
+        if (cancelledRef.current) return;
+        if (err.name !== "AbortError") setSearchError("Search failed. Try again.");
       } finally {
-        if (!ac.signal.aborted && mountedRef.current) setIsSearching(false);
+        if (!cancelledRef.current) setIsSearching(false);
       }
     }, SEARCH_DEBOUNCE_MS);
+
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -757,7 +764,6 @@ export default function MassageClinic() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // ── Persisted filter state ──
   const savedState = useMemo(() => loadFilterState(), []);
 
   /* ── UI state ── */
@@ -779,13 +785,19 @@ export default function MassageClinic() {
   const [deleteError, setDeleteError] = useState("");
   const [toast, setToast] = useState(null);
 
-  const isMounted = useRef(true);
+  // Single cancelled ref for the main component lifetime
+  const cancelledRef = useRef(false);
   const locationFilterRef = useRef(null);
+  // Ref for the toast timer so it can be cleared on unmount
+  const toastTimerRef = useRef(null);
 
   useEffect(() => {
-    isMounted.current = true;
+    cancelledRef.current = false;
     window.scrollTo(0, 0);
-    return () => { isMounted.current = false; };
+    return () => {
+      cancelledRef.current = true;
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
   /* ── Hooks ── */
@@ -794,10 +806,10 @@ export default function MassageClinic() {
   const { isPremium, isLoadingSubscription } = useSubscription(user?.id);
   const { ownedCount, isLoadingCount, refreshCount } = useOwnerClinicCount(user?.id);
 
-  /* ── Derived: can this user add another clinic? ── */
+  /* ── Derived ── */
   const canAddClinic = isPremium || ownedCount < FREE_CLINIC_LIMIT;
 
-  /* ── On mount ── */
+  /* ── On mount: load data ── */
   useEffect(() => {
     refresh();
     if (!savedState?.manualLocation) requestLocation();
@@ -811,9 +823,13 @@ export default function MassageClinic() {
 
   /* ── Toast helper ── */
   const showToast = useCallback((message, type = "success") => {
+    // Clear any pending toast timer before setting a new one
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
-    setTimeout(() => { if (isMounted.current) setToast(null); }, 3500);
-  }, []);
+    toastTimerRef.current = setTimeout(() => {
+      if (!cancelledRef.current) setToast(null);
+    }, 3500);
+  }, []); // stable — reads refs, no stale closure
 
   /* ── Outside click closes location dropdown ── */
   useEffect(() => {
@@ -915,14 +931,16 @@ export default function MassageClinic() {
         .eq("id", deleteTarget.id)
         .eq("owner_id", user.id);
       if (delErr) throw delErr;
-      // Refresh both the list and the owned count
+      if (cancelledRef.current) return;
       await Promise.all([refresh(), refreshCount()]);
+      if (cancelledRef.current) return;
       setDeleteTarget(null);
       showToast("Clinic deleted successfully");
     } catch (err) {
+      if (cancelledRef.current) return;
       setDeleteError(err?.message || "Failed to delete. Please try again.");
     } finally {
-      setIsDeleting(false);
+      if (!cancelledRef.current) setIsDeleting(false);
     }
   }, [deleteTarget, user?.id, showToast, refresh, refreshCount]);
 
@@ -931,7 +949,6 @@ export default function MassageClinic() {
     setDeleteError("");
   }, []);
 
-  /* ── FAB click: gate behind limit check ── */
   const handleAddClinic = useCallback(() => {
     if (isLoadingSubscription || isLoadingCount) return;
     if (!canAddClinic) {
@@ -956,7 +973,6 @@ export default function MassageClinic() {
   /* ── Render ── */
   return (
     <div className={`min-h-dvh bg-gradient-to-br from-slate-50 via-white to-slate-50/50 ${
-      // Extra bottom padding when banner is visible so content isn't hidden behind it
       !isPremium && user ? "pb-40" : "pb-32"
     }`}>
       {toast && <Toast message={toast.message} type={toast.type} />}
@@ -997,7 +1013,6 @@ export default function MassageClinic() {
         <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-2xl border-b border-gray-100/50 shadow-sm">
           <div className="px-4 md:px-6 py-4">
 
-            {/* Top row */}
             <div className="flex items-center justify-between mb-3">
               <h1 className="text-2xl font-black bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent">
                 Massage Clinics
@@ -1043,7 +1058,6 @@ export default function MassageClinic() {
               </div>
             </div>
 
-            {/* Search bar */}
             {isSearchExpanded && (
               <div className="mb-3">
                 <div className="relative">
@@ -1068,7 +1082,6 @@ export default function MassageClinic() {
               </div>
             )}
 
-            {/* Location row */}
             {viewMode === "nearby" && (
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative" ref={locationFilterRef}>
@@ -1163,8 +1176,7 @@ export default function MassageClinic() {
         </div>
       </div>
 
-      {/* ── FAB ──
-          Shows a lock badge when the user has hit the free limit  */}
+      {/* ── FAB ── */}
       <button
         onClick={handleAddClinic}
         disabled={isLoadingSubscription || isLoadingCount}
@@ -1176,7 +1188,6 @@ export default function MassageClinic() {
         ) : canAddClinic ? (
           <PlusIcon className="w-7 h-7 group-hover:rotate-90 transition-transform duration-300" />
         ) : (
-          /* Lock icon with crown badge when limit reached */
           <span className="relative">
             <LockIcon className="w-6 h-6" />
             <span className="absolute -top-2 -right-2 text-xs">👑</span>
@@ -1184,7 +1195,6 @@ export default function MassageClinic() {
         )}
       </button>
 
-      {/* ── PREMIUM BANNER — only for logged-in non-premium users ── */}
       {user && !isPremium && !isLoadingSubscription && (
         <PremiumCtaBanner onUpgrade={() => navigate("/subscription")} />
       )}
@@ -1193,7 +1203,7 @@ export default function MassageClinic() {
 }
 
 /* ================================================================
-   STATE COMPONENTS
+   STATE COMPONENTS (unchanged)
    ================================================================ */
 function LocationLoadingState() {
   return (
@@ -1318,7 +1328,7 @@ function ClinicsList({ clinics, viewMode, currentUserId, onEdit, onDelete }) {
 }
 
 /* ================================================================
-   CLINIC CARD
+   CLINIC CARD (unchanged)
    ================================================================ */
 function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
   const navigate = useNavigate();
@@ -1335,7 +1345,6 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
       onClick={() => navigate(`/massage-clinics/${clinic.id}`)}
       className="group bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden border border-gray-100 hover:border-violet-200 flex flex-col"
     >
-      {/* Image */}
       <div className="relative h-48 sm:h-44 lg:h-48 overflow-hidden bg-gradient-to-br from-violet-100 to-fuchsia-100 shrink-0">
         {clinic.cover_url && !imageError ? (
           <img
@@ -1353,7 +1362,6 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
         )}
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/65 via-black/20 to-transparent pointer-events-none" />
 
-        {/* Favourite */}
         <button
           onClick={(e) => { e.stopPropagation(); setIsFavorited((v) => !v); }}
           className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-white/90 backdrop-blur-sm shadow flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
@@ -1362,7 +1370,6 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
           <HeartIcon className={`w-4 h-4 ${isFavorited ? "text-red-500" : "text-gray-400"}`} filled={isFavorited} />
         </button>
 
-        {/* Top-right badges */}
         <div
           className="absolute top-3 right-3 flex flex-col items-end gap-1.5 z-10"
           onClick={(e) => e.stopPropagation()}
@@ -1382,7 +1389,6 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
           )}
         </div>
 
-        {/* Name + rating */}
         <div className="absolute bottom-0 left-0 right-0 p-3 z-10">
           <h3 className="font-bold text-base text-white leading-snug line-clamp-1 mb-0.5">
             {clinic.name || "Unnamed Clinic"}
@@ -1407,7 +1413,6 @@ function ClinicCard({ clinic, viewMode, currentUserId, onEdit, onDelete }) {
         </div>
       </div>
 
-      {/* Body */}
       <div className="p-4 flex flex-col flex-1">
         {(clinic.address || clinic.city) && (
           <div className="flex items-start gap-2 mb-2.5">

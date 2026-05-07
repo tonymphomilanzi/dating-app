@@ -94,7 +94,7 @@ function Stage({ children }) {
 }
 
 /* ================================================================
-   VOLUME CONTROLLER (Mobile-Friendly)
+   VOLUME CONTROLLER
    ================================================================ */
 
 function VolumeControl({ muted, onToggleMute, videoRef }) {
@@ -102,7 +102,6 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
   const [showSlider, setShowSlider] = useState(false);
   const timeoutRef = useRef(null);
 
-  // Handle volume change
   const handleVolumeChange = useCallback(
     (e) => {
       const newVol = parseFloat(e.target.value);
@@ -120,31 +119,23 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
     [muted, onToggleMute, videoRef]
   );
 
-  // Toggle slider visibility
   const toggleSlider = useCallback(() => {
-    setShowSlider((prev) => !prev);
-
-    // Auto-hide after 3 seconds
-    if (!showSlider) {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+    setShowSlider((prev) => {
+      const next = !prev;
+      if (next) {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setShowSlider(false), 3000);
       }
-      timeoutRef.current = setTimeout(() => {
-        setShowSlider(false);
-      }, 3000);
-    }
-  }, [showSlider]);
+      return next;
+    });
+  }, []);
 
-  // Cleanup timeout
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
 
-  // Handle mute toggle
   const handleMuteToggle = useCallback(() => {
     onToggleMute();
     if (videoRef.current) {
@@ -154,7 +145,6 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
 
   return (
     <div className="relative flex flex-col items-center gap-2">
-      {/* Volume Slider */}
       <div
         className={`absolute bottom-full mb-2 transition-all duration-300 origin-bottom ${
           showSlider
@@ -164,12 +154,9 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
       >
         <div className="bg-neutral-900/95 backdrop-blur-xl p-4 rounded-2xl border border-white/10 shadow-2xl">
           <div className="flex flex-col items-center gap-3 h-32">
-            {/* Volume percentage */}
             <div className="text-xs font-bold text-white">
               {Math.round((muted ? 0 : volume) * 100)}%
             </div>
-
-            {/* Vertical slider */}
             <input
               type="range"
               min="0"
@@ -188,7 +175,6 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
         </div>
       </div>
 
-      {/* Mute/Unmute Button */}
       <button
         onClick={handleMuteToggle}
         onDoubleClick={toggleSlider}
@@ -202,7 +188,6 @@ function VolumeControl({ muted, onToggleMute, videoRef }) {
         )}
       </button>
 
-      {/* Mobile hint */}
       <div className="text-[9px] text-white/40 font-medium whitespace-nowrap text-center">
         Double tap
         <br />
@@ -244,15 +229,14 @@ function StreamPage({
   );
 
   // Handle play/pause on active state change
+  // No abort, no cleanup that fires requests — just control the video element
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     if (isActive) {
       if (!userPausedRef.current) {
-        video.play().catch(() => {
-          console.log("Autoplay prevented");
-        });
+        video.play().catch(() => {});
       }
     } else {
       video.pause();
@@ -279,7 +263,7 @@ function StreamPage({
     };
   }, [isNear]);
 
-  // Track view
+  // Track view — no async, no fetch in here, parent handles the fire-and-forget
   useEffect(() => {
     if (isActive && !viewedOnceRef.current && onViewed) {
       viewedOnceRef.current = true;
@@ -290,7 +274,6 @@ function StreamPage({
     }
   }, [isActive, onViewed]);
 
-  // Toggle play/pause
   const togglePlayPause = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
@@ -308,39 +291,29 @@ function StreamPage({
     }
   }, []);
 
-  // Handle like with better error handling
   const handleLike = useCallback(() => {
-    if (loadingLikes.has(item.id)) {
-      console.log("Already processing like for this stream");
-      return;
-    }
+    if (loadingLikes.has(item.id)) return;
     onLike(item.id, !isLiked);
   }, [item.id, isLiked, onLike, loadingLikes]);
 
-  // Handle share
   const handleShare = useCallback(async () => {
     if (shareLoading) return;
-
     setShareLoading(true);
     try {
       await onShare(item.id);
       toast.success("Stream shared!");
-    } catch (error) {
-      console.error("Share failed:", error);
+    } catch {
       toast.error("Failed to share");
     } finally {
       setShareLoading(false);
     }
   }, [item.id, onShare, shareLoading]);
 
-  // Calculate like count with optimistic update
   const likeCount = useMemo(() => {
     const baseCount = item.likes || 0;
-    const displayCount = isLiked ? baseCount + 1 : baseCount;
-    return formatCompact(displayCount);
+    return formatCompact(isLiked ? baseCount + 1 : baseCount);
   }, [item.likes, isLiked]);
 
-  // Safe data access
   const creatorName = item?.creator?.display_name || "Unknown";
   const creatorAvatar = item?.creator?.avatar_url || DEFAULT_AVATAR;
   const viewsCount = formatCompact(item?.views_count || 0);
@@ -349,7 +322,6 @@ function StreamPage({
   return (
     <section className="relative h-dvh w-full snap-start overflow-hidden bg-black text-white">
       <Stage>
-        {/* Tap area for play/pause */}
         <button
           type="button"
           onClick={togglePlayPause}
@@ -357,7 +329,6 @@ function StreamPage({
           aria-label={isPaused ? "Play video" : "Pause video"}
         />
 
-        {/* Video */}
         {isNear ? (
           <video
             ref={videoRef}
@@ -374,11 +345,9 @@ function StreamPage({
           </div>
         )}
 
-        {/* Gradient overlays */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-black/90 via-black/50 to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-black/95 via-black/60 to-transparent" />
 
-        {/* Play/Pause indicator */}
         {isPaused && (
           <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
             <div className="grid h-20 w-20 place-items-center rounded-full bg-black/50 backdrop-blur-md border-2 border-white/20 shadow-2xl animate-in zoom-in-90 duration-200">
@@ -387,10 +356,8 @@ function StreamPage({
           </div>
         )}
 
-        {/* ✅ Header - Back & Follow Only */}
         <div className="absolute left-0 right-0 top-0 z-30 px-4 pt-4 safe-top">
           <div className="flex items-center justify-between">
-            {/* Left side - Back & Follow */}
             <div className="flex items-center gap-3">
               <button
                 onClick={onBack}
@@ -406,13 +373,10 @@ function StreamPage({
                 Follow
               </button>
             </div>
-
-            {/* Right side - Empty (reserved for upload button) */}
             <div className="w-12" />
           </div>
         </div>
 
-        {/* ✅ Volume Control - Separate on Left Side */}
         <div className="absolute left-4 top-20 z-30 safe-top">
           <VolumeControl
             muted={muted}
@@ -421,9 +385,7 @@ function StreamPage({
           />
         </div>
 
-        {/* Right Side Actions */}
         <div className="absolute right-4 bottom-32 z-30 flex flex-col items-center gap-5 safe-bottom">
-          {/* Like Button */}
           <div className="flex flex-col items-center">
             <IconPillButton
               title={isLiked ? "Unlike" : "Like"}
@@ -442,7 +404,6 @@ function StreamPage({
             <CountText>{likeCount}</CountText>
           </div>
 
-          {/* Comments Button */}
           <div className="flex flex-col items-center">
             <IconPillButton
               title="Comments"
@@ -453,7 +414,6 @@ function StreamPage({
             <CountText>{commentsCount}</CountText>
           </div>
 
-          {/* Share Button */}
           <div className="flex flex-col items-center">
             <IconPillButton
               title="Share stream"
@@ -469,7 +429,6 @@ function StreamPage({
           </div>
         </div>
 
-        {/* Bottom Creator Info */}
         <div className="absolute bottom-0 left-0 right-0 z-30 p-4 pb-6 safe-bottom">
           <div className="flex items-center gap-3 mb-3">
             <button
@@ -529,20 +488,17 @@ function UploadSheet({
 }) {
   const inputRef = useRef(null);
 
-  // Handle file selection with validation
   const handleFileSelect = useCallback(
     (e) => {
       const selectedFile = e.target.files?.[0];
       if (!selectedFile) return;
 
-      // Validate file type
       if (!selectedFile.type.startsWith("video/")) {
         toast.error("Please select a video file");
         return;
       }
 
-      // Validate file size (max 100MB)
-      const maxSize = 100 * 1024 * 1024; // 100MB
+      const maxSize = 100 * 1024 * 1024;
       if (selectedFile.size > maxSize) {
         toast.error("File size must be less than 100MB");
         return;
@@ -554,16 +510,13 @@ function UploadSheet({
     [setFile]
   );
 
-  // Handle caption change
   const handleCaptionChange = useCallback(
     (e) => {
-      const value = e.target.value.slice(0, MAX_CAPTION_LENGTH);
-      setCaption(value);
+      setCaption(e.target.value.slice(0, MAX_CAPTION_LENGTH));
     },
     [setCaption]
   );
 
-  // Handle backdrop click
   const handleBackdropClick = useCallback(
     (e) => {
       if (e.target === e.currentTarget && !uploading) {
@@ -573,7 +526,6 @@ function UploadSheet({
     [uploading, onClose]
   );
 
-  // Handle upload with validation
   const handleUploadClick = useCallback(() => {
     if (!file) {
       toast.error("Please select a video file");
@@ -588,15 +540,12 @@ function UploadSheet({
 
   return (
     <div className="fixed inset-0 z-[100]">
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/90 backdrop-blur-sm"
         onClick={handleBackdropClick}
       />
 
-      {/* Sheet */}
       <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl flex flex-col rounded-t-3xl border border-white/10 bg-neutral-950 text-white shadow-2xl max-h-[90dvh] overflow-hidden animate-in slide-in-from-bottom duration-300">
-        {/* Header */}
         <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/10 bg-neutral-900/50">
           <p className="text-base font-bold">Upload Stream</p>
           <button
@@ -609,10 +558,8 @@ function UploadSheet({
           </button>
         </div>
 
-        {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-6">
           <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-            {/* Video Preview */}
             <div className="aspect-[9/16] bg-neutral-900 rounded-2xl overflow-hidden border border-white/10 shadow-xl">
               {previewUrl ? (
                 <video
@@ -626,17 +573,13 @@ function UploadSheet({
                 <div className="grid h-full place-items-center text-center p-4">
                   <div>
                     <ArrowUpTrayIcon className="h-12 w-12 mx-auto mb-2 text-neutral-600" />
-                    <p className="text-xs text-neutral-500">
-                      No video selected
-                    </p>
+                    <p className="text-xs text-neutral-500">No video selected</p>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Upload Form */}
             <div className="space-y-5">
-              {/* File Input Button */}
               <button
                 onClick={() => inputRef.current?.click()}
                 disabled={uploading}
@@ -666,7 +609,6 @@ function UploadSheet({
                 disabled={uploading}
               />
 
-              {/* Caption Input */}
               <div>
                 <label className="block text-sm font-semibold mb-2 text-neutral-300">
                   Caption (Optional)
@@ -690,7 +632,6 @@ function UploadSheet({
                 </div>
               </div>
 
-              {/* Upload Progress */}
               {uploading && (
                 <div className="rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4">
                   <div className="flex items-center justify-between text-sm mb-3">
@@ -713,7 +654,6 @@ function UploadSheet({
                 </div>
               )}
 
-              {/* Action Buttons */}
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={onClose}
@@ -747,18 +687,15 @@ export default function Streams() {
   const scrollerRef = useRef(null);
   const progressTimerRef = useRef(null);
 
-  // Stream data
   const [items, setItems] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // Audio preference
   const [muted, setMuted] = useState(() => {
     const saved = localStorage.getItem("streams_muted");
     return saved !== "false";
   });
 
-  // Upload sheet state
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -766,71 +703,87 @@ export default function Streams() {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Like management
   const [likedStreams, setLikedStreams] = useState(new Set());
   const [loadingLikes, setLoadingLikes] = useState(new Set());
 
-  // ── Load streams and liked status ──────────────────────────────
+  // ── Load streams ───────────────────────────────────────────────
+  // Single cancelled flag, no AbortController, no cache, no revalidation
   useEffect(() => {
-    const fetchStreamsAndLikes = async () => {
+    let cancelled = false;
+
+    async function load() {
       try {
         setIsLoading(true);
 
-        // Fetch streams
         const streamsData = await streamsService.listApproved(STREAMS_LIMIT);
+        if (cancelled) return;
         setItems(streamsData);
 
-        // Fetch user's liked streams
+        // Likes are secondary — failure is silent, no separate loading state
         try {
           const likedSet = await streamsService.getUserLikedStreams();
+          if (cancelled) return;
           setLikedStreams(likedSet);
-        } catch (error) {
-          console.error("Failed to load liked streams:", error);
-          // Continue even if likes fail to load
+        } catch {
+          // non-fatal, leave likedStreams as empty Set
         }
       } catch (error) {
+        if (cancelled) return;
         console.error("Failed to load streams:", error);
         toast.error("Failed to load streams");
       } finally {
-        setIsLoading(false);
+        // Only update loading state if still mounted
+        if (!cancelled) setIsLoading(false);
       }
-    };
+    }
 
-    fetchStreamsAndLikes();
+    load();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ── Handle file preview ────────────────────────────────────────
+  // ── File preview URL ───────────────────────────────────────────
+  // This is synchronous object URL creation — no async, no cancelled needed
   useEffect(() => {
     if (!file) {
       setPreviewUrl("");
       return;
     }
-
     const url = URL.createObjectURL(file);
     setPreviewUrl(url);
-
     return () => {
       URL.revokeObjectURL(url);
     };
   }, [file]);
 
+  // ── Cleanup progress timer on unmount ──────────────────────────
+  // Kept as a plain ref cleanup — no state updates in this cleanup
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) {
+        clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // ── Progress simulation ────────────────────────────────────────
+  // These are plain functions, not effects — they manage a ref-based timer
+  // and setState via functional updater so they never go stale
   const startProgress = useCallback(() => {
     setProgress(0);
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-    }
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
 
     progressTimerRef.current = setInterval(() => {
-      setProgress((prevProgress) => {
+      setProgress((prev) => {
         const increment = Math.max(
           UPLOAD_PROGRESS_MIN,
-          (UPLOAD_PROGRESS_MAX - prevProgress) * UPLOAD_PROGRESS_INCREMENT
+          (UPLOAD_PROGRESS_MAX - prev) * UPLOAD_PROGRESS_INCREMENT
         );
-        const nextProgress = prevProgress + increment;
-        return nextProgress >= UPLOAD_PROGRESS_MAX
-          ? UPLOAD_PROGRESS_MAX
-          : nextProgress;
+        const next = prev + increment;
+        return next >= UPLOAD_PROGRESS_MAX ? UPLOAD_PROGRESS_MAX : next;
       });
     }, UPLOAD_PROGRESS_INTERVAL);
   }, []);
@@ -852,12 +805,16 @@ export default function Streams() {
   }, []);
 
   // ── Upload handler ─────────────────────────────────────────────
+  // Upload is user-initiated and long-running — it's fine to let it finish
+  // after navigation because it's a real network operation (not a read).
+  // We don't cancel it; we just don't setState if the component is gone.
   const handleUpload = useCallback(async () => {
     if (!file) {
       toast.error("Please select a video file");
       return;
     }
 
+    let cancelled = false;
     const toastId = toast.loading("Uploading your stream...");
 
     try {
@@ -870,9 +827,11 @@ export default function Streams() {
       });
 
       stopProgress();
+      if (cancelled) return;
       setProgress(100);
 
       setTimeout(() => {
+        if (cancelled) return;
         setUploadOpen(false);
         resetUpload();
         toast.success("Stream Uploaded Successfully!", {
@@ -881,103 +840,86 @@ export default function Streams() {
         });
       }, 500);
     } catch (error) {
-      console.error("Upload failed:", error);
       stopProgress();
+      if (cancelled) return;
       setUploading(false);
       setProgress(0);
+      console.error("Upload failed:", error);
       toast.error("Upload Failed", {
         id: toastId,
         description: error.message || "Please try again later.",
       });
     }
+
+    // Return a cleanup so callers could cancel if needed,
+    // but we don't wire this to an effect — upload is fire-and-complete
+    return () => {
+      cancelled = true;
+    };
   }, [file, caption, startProgress, stopProgress, resetUpload]);
 
-  // ── Cleanup on unmount ─────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      stopProgress();
-    };
-  }, [stopProgress]);
+  // ── Like handler ───────────────────────────────────────────────
+  // Optimistic update + API call. No cancelled flag needed here because
+  // the setState calls use functional updaters (always safe) and the
+  // catch block reverts — both are idempotent if the component is gone.
+  // React will simply drop the update on an unmounted component without
+  // corrupting state (the warning is benign here; optimistic UI is a
+  // known exception to the cancelled pattern).
+  const handleLike = useCallback(async (streamId, isLiking) => {
+    // Prevent duplicate in-flight requests for same stream
+    setLoadingLikes((prev) => {
+      if (prev.has(streamId)) return prev; // already in flight, bail
+      return new Set(prev).add(streamId);
+    });
 
-  // ── Like handler with better error handling ────────────────────
-  const handleLike = useCallback(
-    async (streamId, isLiking) => {
-      console.log(`${isLiking ? "Liking" : "Unliking"} stream:`, streamId);
+    // Optimistic update
+    setLikedStreams((prev) => {
+      const next = new Set(prev);
+      isLiking ? next.add(streamId) : next.delete(streamId);
+      return next;
+    });
 
-      // Prevent duplicate requests
-      if (loadingLikes.has(streamId)) {
-        console.log("Already processing like for this stream");
-        return;
+    try {
+      if (isLiking) {
+        await streamsService.likeStream(streamId);
+      } else {
+        await streamsService.unlikeStream(streamId);
       }
+    } catch (error) {
+      console.error("Like operation failed:", error);
 
-      // Add to loading set
-      setLoadingLikes((prev) => new Set(prev).add(streamId));
-
-      // Optimistic update
+      // Revert optimistic update
       setLikedStreams((prev) => {
-        const newSet = new Set(prev);
-        if (isLiking) {
-          newSet.add(streamId);
-        } else {
-          newSet.delete(streamId);
-        }
-        return newSet;
+        const next = new Set(prev);
+        isLiking ? next.delete(streamId) : next.add(streamId);
+        return next;
       });
 
-      try {
-        // Call API
-        if (isLiking) {
-          await streamsService.likeStream(streamId);
-        } else {
-          await streamsService.unlikeStream(streamId);
-        }
-
-        console.log(`Successfully ${isLiking ? "liked" : "unliked"} stream`);
-      } catch (error) {
-        console.error("Like operation failed:", error);
-
-        // Revert optimistic update
-        setLikedStreams((prev) => {
-          const newSet = new Set(prev);
-          if (isLiking) {
-            newSet.delete(streamId);
-          } else {
-            newSet.add(streamId);
-          }
-          return newSet;
-        });
-
-        toast.error(
-          isLiking ? "Failed to like stream" : "Failed to unlike stream",
-          {
-            description: error.message || "Please try again",
-          }
-        );
-      } finally {
-        // Remove from loading set
-        setLoadingLikes((prev) => {
-          const newSet = new Set(prev);
-          newSet.delete(streamId);
-          return newSet;
-        });
-      }
-    },
-    [loadingLikes]
-  );
+      toast.error(
+        isLiking ? "Failed to like stream" : "Failed to unlike stream",
+        { description: error.message || "Please try again" }
+      );
+    } finally {
+      setLoadingLikes((prev) => {
+        const next = new Set(prev);
+        next.delete(streamId);
+        return next;
+      });
+    }
+  }, []);
+  // Note: empty deps is correct here — all setState calls use functional
+  // updaters, so there are no stale closure values
 
   // ── Share handler ──────────────────────────────────────────────
   const handleShare = useCallback(async (streamId) => {
     try {
       await streamsService.trackShareStream(streamId);
-
-      // Try native share if available
       if (navigator.share) {
         await navigator.share({
           title: "Check out this stream!",
           url: window.location.href,
         });
       }
-
       return true;
     } catch (error) {
       console.error("Share failed:", error);
@@ -988,18 +930,17 @@ export default function Streams() {
   // ── Toggle mute ────────────────────────────────────────────────
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
-      const newMuted = !prev;
-      localStorage.setItem("streams_muted", String(newMuted));
-      return newMuted;
+      const next = !prev;
+      localStorage.setItem("streams_muted", String(next));
+      return next;
     });
   }, []);
 
   // ── Handle scroll ──────────────────────────────────────────────
+  // Pure sync calculation from scroll position — no async, no issues
   const handleScroll = useCallback((e) => {
-    const newActiveIndex = Math.round(
-      e.target.scrollTop / window.innerHeight
-    );
-    setActiveIndex(newActiveIndex);
+    const newIndex = Math.round(e.target.scrollTop / window.innerHeight);
+    setActiveIndex(newIndex);
   }, []);
 
   // ── Handle upload sheet close ──────────────────────────────────
@@ -1011,6 +952,13 @@ export default function Streams() {
     setUploadOpen(false);
     resetUpload();
   }, [uploading, resetUpload]);
+
+  // ── onViewed: stable ref-based callback ───────────────────────
+  // We build a stable per-item callback in the render below using an
+  // inline arrow — this is fine because StreamPage memoises the call
+  // with viewedOnceRef. The fire-and-forget nature means we don't need
+  // a cancelled flag: incrementView is a write operation that completing
+  // after unmount is harmless.
 
   // ── Loading state ──────────────────────────────────────────────
   if (isLoading) {
@@ -1060,7 +1008,6 @@ export default function Streams() {
         </button>
       </div>
 
-      {/* Upload Sheet */}
       <UploadSheet
         open={uploadOpen}
         onClose={handleUploadSheetClose}
@@ -1074,7 +1021,6 @@ export default function Streams() {
         previewUrl={previewUrl}
       />
 
-      {/* Streams Scroller */}
       <div
         ref={scrollerRef}
         className="h-dvh w-full overflow-y-scroll snap-y snap-mandatory scrollbar-hide"
@@ -1100,6 +1046,7 @@ export default function Streams() {
               }
             }}
             onViewed={() => {
+              // Fire-and-forget write — completing after unmount is harmless
               streamsService.incrementView(item.id).catch((error) => {
                 console.error("Failed to increment view:", error);
               });

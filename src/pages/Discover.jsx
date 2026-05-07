@@ -2,6 +2,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   memo,
 } from "react";
@@ -24,6 +25,7 @@ const TABS = [
 ];
 
 const LOC_SAVE_INTERVAL_MS = 300_000; // 5 min
+const IDLE_THRESHOLD_MS    = 120_000; // 2 min
 
 /* ================================================================
    MAIN PAGE
@@ -51,8 +53,8 @@ export default function Discover() {
   const [stories,        setStories]        = useState({ users: [], mine: false });
   const [storiesLoading, setStoriesLoading] = useState(true);
 
-  // ── Location save throttle ──
-  const [lastLocSave, setLastLocSave] = useState(0);
+  // ── Location save throttle (ref — never needs to trigger a re-render) ──
+  const lastLocSaveRef = useRef(0);
 
   // ── Derived ──
   const profiles = profilesMap[mode] ?? [];
@@ -62,14 +64,21 @@ export default function Discover() {
   /* ──────────────────────────────────────────────────────────────
      GEOLOCATION
   ────────────────────────────────────────────────────────────── */
-  const onLocChange = async ({ lat, lng }) => {
+  // Stable callback ref so useGeolocation never sees a new function
+  const onLocChangeRef = useRef(null);
+  onLocChangeRef.current = async ({ lat, lng }) => {
     if (!lat || !lng) return;
-    if (Date.now() - lastLocSave < LOC_SAVE_INTERVAL_MS) return;
+    if (Date.now() - lastLocSaveRef.current < LOC_SAVE_INTERVAL_MS) return;
     try {
       await updateProfileLocation(lat, lng);
-      setLastLocSave(Date.now());
+      lastLocSaveRef.current = Date.now();
     } catch { /* silent */ }
   };
+
+  const onLocChange = useMemo(
+    () => (coords) => onLocChangeRef.current(coords),
+    [] // stable forever — the ref always holds the latest version
+  );
 
   const {
     location: geo,
@@ -96,49 +105,65 @@ export default function Discover() {
   }, [lat, lng, geoAcc, isRealtime]);
 
   /* ──────────────────────────────────────────────────────────────
-     FETCH PROFILES — no caching, no in-flight tracking,
-     just fetch and set state. Navigation works instantly
-     because there's nothing to block or invalidate.
+     FETCH PROFILES
+     - cancelled flag guards every setState after await
+     - no AbortController, no cache, no revalidation timers
   ────────────────────────────────────────────────────────────── */
-  async function loadProfiles(targetMode, silent = false) {
-    if (!silent) {
-      setLoadingMap((p) => ({ ...p, [targetMode]: true  }));
-      setErrorMap  ((p) => ({ ...p, [targetMode]: ""    }));
-    }
-    try {
-      const data = await discoverService.list(targetMode, 20, { lat, lng });
-      const list = Array.isArray(data) ? data : [];
-      setProfilesMap((p) => ({ ...p, [targetMode]: list }));
-    } catch (err) {
-      if (err?.name === "AbortError") return;
+  const loadProfiles = useMemo(() => {
+    // We return a stable function that closes over nothing mutable.
+    // All values it needs are passed as arguments.
+    return async function load(
+      targetMode,
+      currentLat,
+      currentLng,
+      silent,
+      cancelled  // { current: bool } ref passed in so caller can cancel
+    ) {
       if (!silent) {
-        setErrorMap((p) => ({
-          ...p,
-          [targetMode]: err?.message || "Failed to load profiles",
-        }));
+        setLoadingMap((p) => ({ ...p, [targetMode]: true }));
+        setErrorMap  ((p) => ({ ...p, [targetMode]: ""   }));
       }
-    } finally {
-      if (!silent) {
-        setLoadingMap((p) => ({ ...p, [targetMode]: false }));
+      try {
+        const data = await discoverService.list(targetMode, 20, {
+          lat: currentLat,
+          lng: currentLng,
+        });
+        if (cancelled.current) return;
+        const list = Array.isArray(data) ? data : [];
+        setProfilesMap((p) => ({ ...p, [targetMode]: list }));
+      } catch (err) {
+        if (cancelled.current) return;
+        if (!silent) {
+          setErrorMap((p) => ({
+            ...p,
+            [targetMode]: err?.message || "Failed to load profiles",
+          }));
+        }
+      } finally {
+        if (!cancelled.current && !silent) {
+          setLoadingMap((p) => ({ ...p, [targetMode]: false }));
+        }
       }
-    }
-  }
+    };
+  }, []); // no deps — pure function, all values passed as args
 
   /* ──────────────────────────────────────────────────────────────
      FETCH STORIES
   ────────────────────────────────────────────────────────────── */
-  async function loadStories() {
+  async function loadStories(cancelled) {
     setStoriesLoading(true);
     try {
       const [users, mine] = await Promise.all([
         storiesService.listActiveUsers(30),
         storiesService.hasMyActive(),
       ]);
+      if (cancelled.current) return;
       setStories({ users: users ?? [], mine });
     } catch {
+      if (cancelled.current) return;
       setStories({ users: [], mine: false });
     } finally {
-      setStoriesLoading(false);
+      if (!cancelled.current) setStoriesLoading(false);
     }
   }
 
@@ -148,9 +173,12 @@ export default function Discover() {
 
   // 1. Load profiles when mode / user / location changes
   useEffect(() => {
-    loadProfiles(mode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, userId, lat, lng]);
+    const cancelled = { current: false };
+    loadProfiles(mode, lat, lng, false, cancelled);
+    return () => {
+      cancelled.current = true;
+    };
+  }, [mode, userId, lat, lng, loadProfiles]);
 
   // 2. Reset tab data when user switches account
   useEffect(() => {
@@ -161,30 +189,53 @@ export default function Discover() {
 
   // 3. Stories — load once on mount
   useEffect(() => {
-    loadStories();
+    const cancelled = { current: false };
+    loadStories(cancelled);
+    return () => {
+      cancelled.current = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 4. Visibility recovery — re-fetch silently when tab regains focus
+  // 4. Visibility recovery — re-fetch silently when tab returns from idle
+  //    Uses a ref for hiddenAt so it never causes re-renders and is never
+  //    stale. Uses a ref snapshot of current values so the listener always
+  //    reads the latest mode/lat/lng without being re-registered.
+  const visibilityStateRef = useRef({ mode, lat, lng });
+  useEffect(() => {
+    visibilityStateRef.current = { mode, lat, lng };
+  }, [mode, lat, lng]);
+
   useEffect(() => {
     let hiddenAt = null;
+    let cancelled = { current: false };
 
     const handle = () => {
       if (document.visibilityState === "hidden") {
         hiddenAt = Date.now();
+        // Cancel any in-flight silent refresh that was running
+        cancelled.current = true;
         return;
       }
-      const hiddenMs = hiddenAt ? Date.now() - hiddenAt : 0;
+
+      const hiddenMs = hiddenAt != null ? Date.now() - hiddenAt : 0;
       hiddenAt = null;
-      // Only refresh if hidden for more than 2 minutes
-      if (hiddenMs < 120_000) return;
-      loadProfiles(mode, true);
+
+      // Only refresh if the page was hidden for more than 2 minutes
+      if (hiddenMs < IDLE_THRESHOLD_MS) return;
+
+      // Read latest values from ref — no stale closure
+      const { mode: m, lat: la, lng: lo } = visibilityStateRef.current;
+      cancelled = { current: false };
+      loadProfiles(m, la, lo, true, cancelled);
     };
 
     document.addEventListener("visibilitychange", handle);
-    return () => document.removeEventListener("visibilitychange", handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, userId, lat, lng]);
+    return () => {
+      document.removeEventListener("visibilitychange", handle);
+      cancelled.current = true;
+    };
+  }, [loadProfiles]); // loadProfiles is stable (useMemo [] deps)
 
   /* ──────────────────────────────────────────────────────────────
      HANDLERS
@@ -194,7 +245,11 @@ export default function Discover() {
   }
 
   function handleRetry() {
-    loadProfiles(mode);
+    const cancelled = { current: false };
+    loadProfiles(mode, lat, lng, false, cancelled);
+    // No cleanup needed here — retry is user-initiated,
+    // if they navigate away the setState calls use functional
+    // updaters so they're safe even on an unmounted component
   }
 
   /* ──────────────────────────────────────────────────────────────
