@@ -1,4 +1,6 @@
 // src/admin/components/Sidebar.jsx
+import { useState, useEffect } from 'react'
+import { supabaseAdmin } from '../utils/supabase'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
@@ -66,6 +68,22 @@ const navigation = [
     ),
   },
   {
+    name: 'Ticket Payments',
+    href: '/admin/tickets',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M2 9a3 3 0 010-6h20a3 3 0 010 6" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M2 15a3 3 0 000 6h20a3 3 0 000-6" />
+        <line x1="2" y1="9" x2="2" y2="15" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+        <line x1="22" y1="9" x2="22" y2="15" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+      </svg>
+    ),
+    // live pending badge — fetched inside the component below
+    badge: true,
+  },
+  {
     name: 'Notifications',
     href: '/admin/notifications',
     icon: (
@@ -80,6 +98,25 @@ const navigation = [
 const Sidebar = ({ open, setOpen }) => {
   const location = useLocation()
   const { logout } = useAuth()
+
+  // Live pending ticket count for badge
+  const [pendingTickets, setPendingTickets] = useState(0)
+
+  useEffect(() => {
+    async function fetchPending() {
+      try {
+        const { count } = await supabaseAdmin
+          .from('event_ticket_purchases')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pending')
+        setPendingTickets(count || 0)
+      } catch {}
+    }
+    fetchPending()
+    // Poll every 60 seconds
+    const interval = setInterval(fetchPending, 60_000)
+    return () => clearInterval(interval)
+  }, [])
 
   const isActive = (href) =>
     location.pathname === href || location.pathname.startsWith(href + '/')
@@ -124,6 +161,8 @@ const Sidebar = ({ open, setOpen }) => {
         <nav className="flex-1 overflow-y-auto mt-4 px-3 space-y-0.5">
           {navigation.map((item) => {
             const active = isActive(item.href)
+            const showBadge = item.badge && pendingTickets > 0
+
             return (
               <Link
                 key={item.name}
@@ -141,9 +180,19 @@ const Sidebar = ({ open, setOpen }) => {
                 }`}>
                   {item.icon}
                 </span>
-                {item.name}
-                {active && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-400" />
+
+                <span className="flex-1 truncate">{item.name}</span>
+
+                {/* Pending badge */}
+                {showBadge && (
+                  <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-black text-[10px] font-extrabold flex items-center justify-center">
+                    {pendingTickets > 99 ? '99+' : pendingTickets}
+                  </span>
+                )}
+
+                {/* Active dot */}
+                {active && !showBadge && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
                 )}
               </Link>
             )
@@ -172,3 +221,6 @@ const Sidebar = ({ open, setOpen }) => {
 }
 
 export default Sidebar
+
+// NOTE: add these two imports at the top of Sidebar.jsx:
+'
