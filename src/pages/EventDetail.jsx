@@ -804,65 +804,64 @@ function GetTicketsModal({ event, onClose }) {
   }
 
   /* ── paid submit ── */
-  async function handleSubmit() {
-    if (!txRef.trim()) {
-      showToast("Please enter your transaction reference", "error");
-      return;
-    }
-    if (!user?.id) {
-      showToast("You must be signed in", "error");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      if (!isFallback(selectedTicket?.id)) {
-        /* real ticket type */
-        const { error } = await supabase
-          .from("event_ticket_purchases")
-          .insert({
-            event_id: event.id,
-            ticket_type_id: selectedTicket.id,
-            user_id: user.id,
-            order_id: orderId,
-            quantity: qty,
-            unit_price: Number(selectedTicket.price),
-            total_amount: parseFloat(totalStr),
-            payment_method: method?.id,
-            payment_reference: txRef.trim(),
-            proof_url: proofUrl.trim() || null,
-            note: note.trim() || null,
-            status: "pending",
-          });
-        if (error) throw error;
-      } else {
-        /* fallback → subscription_requests table */
-        const { error } = await supabase
-          .from("subscription_requests")
-          .insert({
-            user_id: user.id,
-            order_id: orderId,
-            plan_id: event.id,
-            plan_name: `${event.title} — ${selectedTicket.name} × ${qty}`,
-            billing_cycle: "one_time",
-            price_usd: Number(selectedTicket.price),
-            total_usd: parseFloat(totalStr),
-            method: method?.id,
-            crypto_option: cryptoOption?.id ?? null,
-            tx_reference: txRef.trim(),
-            proof_url: proofUrl.trim() || null,
-            note: note.trim() || null,
-            status: "pending",
-            created_at: new Date().toISOString(),
-          });
-        if (error) throw error;
-      }
-      setStep(MODAL_STEP.DONE);
-    } catch (err) {
-      showToast(err.message || "Submission failed. Please try again.", "error");
-    } finally {
-      setSubmitting(false);
-    }
+// src/pages/EventDetail.jsx - Replace the handleSubmit function in GetTicketsModal
+
+async function handleSubmit() {
+  if (!txRef.trim()) {
+    showToast("Please enter your transaction reference", "error");
+    return;
   }
+  if (!user?.id) {
+    showToast("You must be signed in", "error");
+    return;
+  }
+  setSubmitting(true);
+  try {
+    const payload = {
+      event_id: event.id,
+      ticket_type_id: !isFallback(selectedTicket?.id) ? selectedTicket.id : null,
+      user_id: user.id,
+      order_id: orderId,
+      quantity: qty,
+      unit_price: Number(selectedTicket.price),
+      total_amount: parseFloat(totalStr),
+      payment_method: method?.id || "unknown",
+      payment_reference: txRef.trim(),
+      proof_url: proofUrl.trim() || null,
+      note: note.trim() || null,
+      status: "pending",
+    };
+
+    // Insert into event_ticket_purchases
+    const { data, error } = await supabase
+      .from("event_ticket_purchases")
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Insert error:", error);
+      throw new Error(error.message || "Failed to submit payment");
+    }
+
+    if (!data) {
+      throw new Error("No data returned from submission");
+    }
+
+    // Success - move to done step
+    setStep(MODAL_STEP.DONE);
+    showToast("✓ Payment submitted successfully! Admin will verify within 24 hours.", "success");
+    
+  } catch (err) {
+    console.error("Submit error:", err);
+    showToast(
+      err.message || "Failed to submit payment. Please try again.",
+      "error"
+    );
+  } finally {
+    setSubmitting(false);
+  }
+}
 
   /* ── back logic ── */
   function handleBack() {
