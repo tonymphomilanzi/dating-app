@@ -14,6 +14,7 @@ import NotificationCenter from "./pages/NotificationCenter";
 import Layout from "./components/Layout";
 import { AlertProvider } from "./components/CustomAlert/AlertProvider";
 import FeedsManagement from './pages/FeedsManagement'
+import TicketPayments from "./pages/TicketPayments";
 
 function AdminLoading() {
   return (
@@ -138,6 +139,15 @@ function AdminRoutes() {
           </ProtectedRoute>
         }
       />
+
+      <Route
+        path="/admin/ticket-payments"
+        element={
+          <ProtectedRoute>
+            <TicketPayments />
+          </ProtectedRoute>
+        }
+      />  
 
       {/* Admin catch-all */}
       <Route path="/admin/*" element={<Navigate to="/admin/login" replace />} />

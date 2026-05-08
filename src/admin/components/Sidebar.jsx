@@ -222,5 +222,3 @@ const Sidebar = ({ open, setOpen }) => {
 
 export default Sidebar
 
-// NOTE: add these two imports at the top of Sidebar.jsx:
-'
