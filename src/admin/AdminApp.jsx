@@ -140,14 +140,14 @@ function AdminRoutes() {
         }
       />
 
-      <Route
-        path="/admin/ticket-payments"
-        element={
-          <ProtectedRoute>
-            <TicketPayments />
-          </ProtectedRoute>
-        }
-      />  
+       <Route
+          path="/admin/tickets"
+          element={
+            <ProtectedRoute>
+              <TicketPayments />
+            </ProtectedRoute>
+          }
+        />
 
       {/* Admin catch-all */}
       <Route path="/admin/*" element={<Navigate to="/admin/login" replace />} />
