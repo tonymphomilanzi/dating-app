@@ -66,11 +66,6 @@ function serializeHours(hours) {
   );
 }
 
-/**
- * Parse stored hours JSON back into the component's hours map shape.
- * e.g. [{ day:"Monday", from:"09:00", to:"18:00" }]
- * → { Monday: { open:true, from:"09:00", to:"18:00" }, ... }
- */
 function deserializeHours(raw) {
   const base = { ...DEFAULT_HOURS };
   try {
@@ -145,21 +140,26 @@ const isValidLatLng = (lat, lng) =>
    ================================================================ */
 
 function useLocationPicker(initialAddress = "", initialCoords = null) {
-  const [address,   setAddress]   = useState(initialAddress);
-  const [coords,    setCoords]    = useState(initialCoords);
-  const [geoStatus, setGeoStatus] = useState(initialCoords ? "granted" : "idle");
-  const [geoError,  setGeoError]  = useState("");
-  const [geocoding, setGeocoding] = useState(false);
-  const [geocodeErr,setGeocodeErr]= useState("");
+  const [address,    setAddress]    = useState(initialAddress);
+  const [coords,     setCoords]     = useState(initialCoords);
+  const [geoStatus,  setGeoStatus]  = useState(initialCoords ? "granted" : "idle");
+  const [geoError,   setGeoError]   = useState("");
+  const [geocoding,  setGeocoding]  = useState(false);
+  const [geocodeErr, setGeocodeErr] = useState("");
 
-  const abortRef   = useRef(null);
-  const mountedRef = useRef(true);
+  // cancelledRef replaces mountedRef — single flag, scoped to hook lifetime
+  const cancelledRef    = useRef(false);
+  // geocodeTimerRef holds the current timeout so we can clear it without
+  // aborting the controller in the cleanup (which would fire on navigation)
+  const geocodeTimerRef = useRef(null);
 
   useEffect(() => {
-    mountedRef.current = true;
+    cancelledRef.current = false;
     return () => {
-      mountedRef.current = false;
-      abortRef.current?.abort();
+      cancelledRef.current = true;
+      // Clear any pending geocode timeout on unmount —
+      // no abort needed, cancelledRef prevents setState
+      if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
     };
   }, []);
 
@@ -172,51 +172,76 @@ function useLocationPicker(initialAddress = "", initialCoords = null) {
     if (initialCoords) { setCoords(initialCoords); setGeoStatus("granted"); }
   }, [initialCoords]);
 
+  // confirmAddress — each call gets its own AbortController purely for
+  // the fetch timeout; we don't abort it in cleanup because the cleanup
+  // runs on navigation and we just want to ignore the result via cancelledRef
   const confirmAddress = useCallback(async () => {
     if (!address.trim()) return;
-    abortRef.current?.abort();
+
+    // Create a per-call controller for the timeout only
     const ac = new AbortController();
-    abortRef.current = ac;
-    const timer = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
-    setGeocoding(true); setGeocodeErr(""); setCoords(null);
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+    geocodeTimerRef.current = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+
+    setGeocoding(true);
+    setGeocodeErr("");
+    setCoords(null);
+
     try {
       const result = await geocodeAddress(address.trim(), ac.signal);
-      clearTimeout(timer);
-      if (!mountedRef.current || ac.signal.aborted) return;
+      clearTimeout(geocodeTimerRef.current);
+      if (cancelledRef.current) return;
       setCoords({ lat: result.lat, lng: result.lng });
       setAddress(result.display);
     } catch (err) {
-      clearTimeout(timer);
-      if (!mountedRef.current || ac.signal.aborted) return;
-      setGeocodeErr(err?.name === "AbortError" ? "Request timed out." : (err.message || "Could not find that address."));
+      clearTimeout(geocodeTimerRef.current);
+      if (cancelledRef.current) return;
+      setGeocodeErr(
+        err?.name === "AbortError"
+          ? "Request timed out."
+          : (err.message || "Could not find that address.")
+      );
     } finally {
-      if (mountedRef.current) setGeocoding(false);
+      if (!cancelledRef.current) setGeocoding(false);
     }
-  }, [address]);
+  }, [address]); // address is fine in deps — this is user-triggered
 
+  // useMyLocation — geolocation callback is guarded by cancelledRef
   const useMyLocation = useCallback(() => {
-    if (!("geolocation" in navigator)) { setGeoStatus("denied"); setGeoError("Geolocation not supported."); return; }
-    setGeoStatus("loading"); setGeoError("");
+    if (!("geolocation" in navigator)) {
+      setGeoStatus("denied");
+      setGeoError("Geolocation not supported.");
+      return;
+    }
+    setGeoStatus("loading");
+    setGeoError("");
+
     navigator.geolocation.getCurrentPosition(
       async ({ coords: c }) => {
-        const lat = c.latitude, lng = c.longitude;
+        const lat = c.latitude;
+        const lng = c.longitude;
         if (!isValidLatLng(lat, lng)) {
-          if (mountedRef.current) { setGeoStatus("error"); setGeoError("Invalid coordinates."); }
+          if (!cancelledRef.current) { setGeoStatus("error"); setGeoError("Invalid coordinates."); }
           return;
         }
-        if (mountedRef.current) { setCoords({ lat, lng }); setGeoStatus("granted"); }
-        abortRef.current?.abort();
+        if (cancelledRef.current) return;
+        setCoords({ lat, lng });
+        setGeoStatus("granted");
+
+        // Reverse geocode — per-call controller for timeout only
         const ac = new AbortController();
-        abortRef.current = ac;
-        const timer = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
+        if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+        geocodeTimerRef.current = setTimeout(() => ac.abort(), GEOCODE_TIMEOUT_MS);
         try {
           const display = await reverseGeocode(lat, lng, ac.signal);
-          clearTimeout(timer);
-          if (mountedRef.current && !ac.signal.aborted && display) setAddress(display);
-        } catch { clearTimeout(timer); }
+          clearTimeout(geocodeTimerRef.current);
+          if (!cancelledRef.current && display) setAddress(display);
+        } catch {
+          clearTimeout(geocodeTimerRef.current);
+        }
       },
       (err) => {
-        if (!mountedRef.current) return;
+        if (cancelledRef.current) return;
         setGeoStatus("denied");
         const msgs = {
           [err.PERMISSION_DENIED]:    "Location permission denied.",
@@ -227,14 +252,24 @@ function useLocationPicker(initialAddress = "", initialCoords = null) {
       },
       { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: 60_000 }
     );
-  }, []);
+  }, []); // stable — reads cancelledRef via ref
 
   const clearLocation = useCallback(() => {
-    abortRef.current?.abort();
-    setCoords(null); setAddress(""); setGeocodeErr(""); setGeoError(""); setGeoStatus("idle");
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+    setCoords(null);
+    setAddress("");
+    setGeocodeErr("");
+    setGeoError("");
+    setGeoStatus("idle");
   }, []);
 
-  return { address, setAddress, coords, setCoords, geoStatus, geoError, geocoding, geocodeErr, confirmAddress, useMyLocation, clearLocation };
+  return {
+    address, setAddress,
+    coords,  setCoords,
+    geoStatus, geoError,
+    geocoding, geocodeErr,
+    confirmAddress, useMyLocation, clearLocation,
+  };
 }
 
 /* ================================================================
@@ -366,7 +401,7 @@ function TimeSelect({ value, onChange, label, minTime }) {
 export default function CreateMassageClinic() {
   const navigate       = useNavigate();
   const routeLocation  = useLocation();
-  const { id: editId } = useParams();          // undefined when creating
+  const { id: editId } = useParams();
   const { user }       = useAuth();
 
   const isEditMode = Boolean(editId);
@@ -377,15 +412,15 @@ export default function CreateMassageClinic() {
 
   /* ── Form state ── */
   const [form, setForm] = useState({
-    name        : "",
-    phone       : "",
-    email       : "",
-    website     : "",
-    description : "",
-    specialties : [],
-    coverFile   : null,
-    coverPreview: null,
-    existingCoverUrl: null, // keep track of existing image in edit mode
+    name:             "",
+    phone:            "",
+    email:            "",
+    website:          "",
+    description:      "",
+    specialties:      [],
+    coverFile:        null,
+    coverPreview:     null,
+    existingCoverUrl: null,
   });
 
   const [hours,       setHours]       = useState(DEFAULT_HOURS);
@@ -393,15 +428,18 @@ export default function CreateMassageClinic() {
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState("");
 
-  const loc         = useLocationPicker();
+  const loc = useLocationPicker();
+
   const fileRef     = useRef(null);
-  const mountedRef  = useRef(true);
-  const createdURLs = useRef(new Set());
+  // Single cancelled ref for main component lifetime
+  const cancelledRef = useRef(false);
+  const createdURLs  = useRef(new Set());
 
   useEffect(() => {
-    mountedRef.current = true;
+    cancelledRef.current = false;
     return () => {
-      mountedRef.current = false;
+      cancelledRef.current = true;
+      // Revoke any object URLs we created to prevent memory leaks
       createdURLs.current.forEach((u) => URL.revokeObjectURL(u));
       createdURLs.current.clear();
     };
@@ -415,73 +453,82 @@ export default function CreateMassageClinic() {
 
     const clinicFromState = routeLocation.state?.clinic;
 
-    const hydrate = (clinic) => {
-      if (!mountedRef.current) return;
+    // hydrate is a pure synchronous function — no async, no guards needed
+    function hydrate(clinic) {
+      if (cancelledRef.current) return;
 
-      // Basic fields
       setForm({
-        name:            clinic.name         || "",
-        phone:           clinic.phone        || "",
-        email:           clinic.email        || "",
-        website:         clinic.website      || "",
-        description:     clinic.description  || "",
+        name:             clinic.name         || "",
+        phone:            clinic.phone        || "",
+        email:            clinic.email        || "",
+        website:          clinic.website      || "",
+        description:      clinic.description  || "",
         specialties:
           clinic.specialties
             ?? clinic.clinic_specialties?.map((s) => s.name)
             ?? [],
-        coverFile:       null,
-        coverPreview:    null,
-        existingCoverUrl: clinic.cover_url   || null,
+        coverFile:        null,
+        coverPreview:     null,
+        existingCoverUrl: clinic.cover_url    || null,
       });
 
-      // Hours
       setHours(deserializeHours(clinic.opening_hours));
 
-      // Location — set directly on the picker's state via exposed setters
       if (clinic.address) loc.setAddress(clinic.address);
       if (clinic.lat && clinic.lng) {
-        loc.setCoords({
-          lat: Number(clinic.lat),
-          lng: Number(clinic.lng),
-        });
+        loc.setCoords({ lat: Number(clinic.lat), lng: Number(clinic.lng) });
       }
 
       setHydrating(false);
-    };
+    }
 
     if (clinicFromState) {
       hydrate(clinicFromState);
       return;
     }
 
-    // No nav state — fetch fresh
-    supabase
-      .from("massage_clinics")
-      .select(`
-        id, name, description, phone, email, website,
-        address, city, state, country, lat, lng,
-        cover_url, opening_hours, status, owner_id,
-        clinic_specialties ( name )
-      `)
-      .eq("id", editId)
-      .single()
-      .then(({ data, error }) => {
-        if (!mountedRef.current) return;
+    // No nav state — fetch fresh, guarded by cancelledRef
+    let cancelled = false; // local cancelled for this specific fetch
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("massage_clinics")
+          .select(`
+            id, name, description, phone, email, website,
+            address, city, state, country, lat, lng,
+            cover_url, opening_hours, status, owner_id,
+            clinic_specialties ( name )
+          `)
+          .eq("id", editId)
+          .single();
+
+        if (cancelled || cancelledRef.current) return;
+
         if (error || !data) {
           setHydrateError("Could not load clinic for editing.");
           setHydrating(false);
           return;
         }
-        // Ownership guard
+
         if (data.owner_id && user?.id && data.owner_id !== user.id) {
           setHydrateError("You don't have permission to edit this clinic.");
           setHydrating(false);
           return;
         }
+
         hydrate(data);
-      });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      } catch {
+        if (cancelled || cancelledRef.current) return;
+        setHydrateError("Could not load clinic for editing.");
+        setHydrating(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId, isEditMode]);
+  // Note: loc.setAddress and loc.setCoords are stable (useState setters),
+  // user?.id intentionally omitted — ownership check is advisory only here
 
   /* ── Field helpers ── */
   const setField = useCallback((key, value) => {
@@ -505,15 +552,18 @@ export default function CreateMassageClinic() {
       setErrors((p) => ({ ...p, cover: "Image must be under 5 MB." }));
       return;
     }
-    if (form.coverPreview) {
-      URL.revokeObjectURL(form.coverPreview);
-      createdURLs.current.delete(form.coverPreview);
-    }
-    const url = URL.createObjectURL(file);
-    createdURLs.current.add(url);
-    setForm((p) => ({ ...p, coverFile: file, coverPreview: url }));
+    // Revoke previous preview URL before creating a new one
+    setForm((prev) => {
+      if (prev.coverPreview) {
+        URL.revokeObjectURL(prev.coverPreview);
+        createdURLs.current.delete(prev.coverPreview);
+      }
+      const url = URL.createObjectURL(file);
+      createdURLs.current.add(url);
+      return { ...prev, coverFile: file, coverPreview: url };
+    });
     setErrors((p) => ({ ...p, cover: "" }));
-  }, [form.coverPreview]);
+  }, []); // stable — reads createdURLs via ref, uses functional updater
 
   /* ── Validation ── */
   const validate = useCallback(() => {
@@ -530,9 +580,10 @@ export default function CreateMassageClinic() {
 
   /* ================================================================
      SUBMIT — handles both INSERT (create) and UPDATE (edit)
+     Guards every setState after await with cancelledRef
      ================================================================ */
   const handleSubmit = useCallback(async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
 
     const validationErrors = validate();
     if (Object.keys(validationErrors).length) {
@@ -549,7 +600,7 @@ export default function CreateMassageClinic() {
 
     try {
       /* ── 1. Upload new cover image (if provided) ── */
-      let coverUrl = form.existingCoverUrl ?? null; // keep existing by default
+      let coverUrl = form.existingCoverUrl ?? null;
 
       if (form.coverFile) {
         const ext      = form.coverFile.name.split(".").pop().toLowerCase();
@@ -564,6 +615,7 @@ export default function CreateMassageClinic() {
           });
 
         if (uploadErr) throw new Error(`Cover upload failed: ${uploadErr.message}`);
+        if (cancelledRef.current) return;
 
         const { data: urlData } = supabase.storage
           .from(STORAGE_BUCKET)
@@ -572,7 +624,7 @@ export default function CreateMassageClinic() {
         coverUrl = urlData?.publicUrl ?? null;
       }
 
-      /* ── 2a. CREATE mode: insert new row ── */
+      /* ── 2a. CREATE mode ── */
       if (!isEditMode) {
         const { data: clinic, error: insertErr } = await supabase
           .from("massage_clinics")
@@ -594,22 +646,21 @@ export default function CreateMassageClinic() {
           .single();
 
         if (insertErr) throw new Error(insertErr.message);
+        if (cancelledRef.current) return;
 
-        // Insert specialties
         if (form.specialties.length && clinic) {
           await supabase
             .from("clinic_specialties")
             .insert(form.specialties.map((name) => ({ clinic_id: clinic.id, name })));
+          if (cancelledRef.current) return;
         }
 
-        if (mountedRef.current) {
-          navigate("/massage-clinics", {
-            replace: true,
-            state:   { created: true, clinicId: clinic?.id },
-          });
-        }
+        navigate("/massage-clinics", {
+          replace: true,
+          state:   { created: true, clinicId: clinic?.id },
+        });
 
-      /* ── 2b. EDIT mode: update existing row ── */
+      /* ── 2b. EDIT mode ── */
       } else {
         const { error: updateErr } = await supabase
           .from("massage_clinics")
@@ -627,36 +678,36 @@ export default function CreateMassageClinic() {
             updated_at:    new Date().toISOString(),
           })
           .eq("id", editId)
-          .eq("owner_id", user.id); // server-side ownership guard
+          .eq("owner_id", user.id);
 
         if (updateErr) throw new Error(updateErr.message);
+        if (cancelledRef.current) return;
 
-        // Sync specialties: delete old, re-insert new
         await supabase
           .from("clinic_specialties")
           .delete()
           .eq("clinic_id", editId);
 
+        if (cancelledRef.current) return;
+
         if (form.specialties.length) {
           await supabase
             .from("clinic_specialties")
             .insert(form.specialties.map((name) => ({ clinic_id: editId, name })));
+          if (cancelledRef.current) return;
         }
 
-        if (mountedRef.current) {
-          // Navigate back to detail page so user sees their changes immediately
-          navigate(`/massage-clinics/${editId}`, {
-            replace: true,
-            state:   { updated: true },
-          });
-        }
+        navigate(`/massage-clinics/${editId}`, {
+          replace: true,
+          state:   { updated: true },
+        });
       }
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (cancelledRef.current) return;
       console.error("[CreateMassageClinic] submit error:", err);
       setSubmitError(err?.message || "Failed to save. Please try again.");
     } finally {
-      if (mountedRef.current) setSubmitting(false);
+      if (!cancelledRef.current) setSubmitting(false);
     }
   }, [form, hours, loc.address, loc.coords, navigate, user, validate, isEditMode, editId]);
 
@@ -698,7 +749,6 @@ export default function CreateMassageClinic() {
     );
   }
 
-  /* ── The cover image to display ── */
   const coverDisplayUrl = form.coverPreview || form.existingCoverUrl;
 
   return (
@@ -726,7 +776,6 @@ export default function CreateMassageClinic() {
             {isEditMode ? "Update your clinic listing" : "Create your clinic listing"}
           </p>
         </div>
-        {/* Quick save button in header for edit mode */}
         {isEditMode && (
           <button
             onClick={handleSubmit}
@@ -774,11 +823,13 @@ export default function CreateMassageClinic() {
           {coverDisplayUrl && (
             <button type="button"
               onClick={() => {
-                if (form.coverPreview) {
-                  URL.revokeObjectURL(form.coverPreview);
-                  createdURLs.current.delete(form.coverPreview);
-                }
-                setForm((p) => ({ ...p, coverFile: null, coverPreview: null, existingCoverUrl: null }));
+                setForm((prev) => {
+                  if (prev.coverPreview) {
+                    URL.revokeObjectURL(prev.coverPreview);
+                    createdURLs.current.delete(prev.coverPreview);
+                  }
+                  return { ...prev, coverFile: null, coverPreview: null, existingCoverUrl: null };
+                });
               }}
               className="mt-1 text-xs text-red-500 hover:underline">
               Remove photo
@@ -856,7 +907,6 @@ export default function CreateMassageClinic() {
               <input type="text" value={loc.address}
                 onChange={(e) => {
                   loc.setAddress(e.target.value);
-                  // Clear coords when user edits address manually
                   if (loc.coords) loc.setCoords(null);
                   setErrors((p) => ({ ...p, address: "", coords: "" }));
                 }}
@@ -969,7 +1019,7 @@ export default function CreateMassageClinic() {
 }
 
 /* ================================================================
-   FORM UI PRIMITIVES
+   FORM UI PRIMITIVES (unchanged)
    ================================================================ */
 
 function Section({ title, subtitle, children }) {

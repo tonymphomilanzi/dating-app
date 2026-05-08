@@ -51,28 +51,27 @@ function fmtCount(n) {
    HOOK — useFeeds
    ================================================================ */
 function useFeeds(userId) {
-  const [feeds, setFeeds] = useState([]);
-  const [myLikes, setMyLikes] = useState(new Set());
-  const [loading, setLoading] = useState(true);
+  const [feeds,       setFeeds]       = useState([]);
+  const [myLikes,     setMyLikes]     = useState(new Set());
+  const [loading,     setLoading]     = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [error, setError] = useState("");
+  const [hasMore,     setHasMore]     = useState(true);
+  const [error,       setError]       = useState("");
 
-  const offsetRef = useRef(0);
-  const isMounted = useRef(true);
-  const userIdRef = useRef(userId); // stable ref so callbacks don't go stale
+  const offsetRef  = useRef(0);
+  const cancelledRef = useRef(false); // single guard for this hook's lifetime
+  const userIdRef  = useRef(userId);  // stable ref so callbacks never go stale
 
   useEffect(() => {
     userIdRef.current = userId;
   }, [userId]);
 
   useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-    };
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
   }, []);
 
+  // fetchLikes — stable, reads userId via ref
   const fetchLikes = useCallback(async (ids) => {
     const uid = userIdRef.current;
     if (!uid || !ids.length) return;
@@ -82,7 +81,8 @@ function useFeeds(userId) {
         .select("feed_id")
         .eq("user_id", uid)
         .in("feed_id", ids);
-      if (isMounted.current && liked) {
+      if (cancelledRef.current) return;
+      if (liked) {
         setMyLikes((prev) => {
           const next = new Set(prev);
           liked.forEach((l) => next.add(l.feed_id));
@@ -92,64 +92,64 @@ function useFeeds(userId) {
     } catch (e) {
       console.warn("fetchLikes:", e.message);
     }
-  }, []); // no deps — uses refs
+  }, []); // stable — reads refs only
 
-  const load = useCallback(
-    async (replace = false) => {
-      if (replace) {
-        offsetRef.current = 0;
-        setLoading(true);
-      } else {
-        setLoadingMore(true);
+  // load — stable, guards every setState with cancelledRef
+  const load = useCallback(async (replace = false) => {
+    if (replace) {
+      offsetRef.current = 0;
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+    setError("");
+
+    try {
+      const from = offsetRef.current;
+      const to   = from + PAGE_SIZE - 1;
+
+      const { data, error: err } = await supabase
+        .from("feeds")
+        .select(
+          `id, title, content, image_url, tags, pinned,
+           views_count, likes_count, comments_count, shares_count,
+           created_at, updated_at,
+           admin:admin_users(id, username, display_name, avatar_url)`
+        )
+        .eq("published", true)
+        .order("pinned",      { ascending: false })
+        .order("created_at",  { ascending: false })
+        .range(from, to);
+
+      if (err) throw err;
+      if (cancelledRef.current) return;
+
+      const rows = data ?? [];
+      setFeeds((prev) => (replace ? rows : [...prev, ...rows]));
+      setHasMore(rows.length === PAGE_SIZE);
+      offsetRef.current = from + rows.length;
+
+      if (rows.length > 0) {
+        await fetchLikes(rows.map((r) => r.id));
       }
-      setError("");
-
-      try {
-        const from = offsetRef.current;
-        const to = from + PAGE_SIZE - 1;
-
-        const { data, error: err } = await supabase
-          .from("feeds")
-          .select(
-            `id, title, content, image_url, tags, pinned,
-             views_count, likes_count, comments_count, shares_count,
-             created_at, updated_at,
-             admin:admin_users(id, username, display_name, avatar_url)`
-          )
-          .eq("published", true)
-          .order("pinned", { ascending: false })
-          .order("created_at", { ascending: false })
-          .range(from, to);
-
-        if (err) throw err;
-        if (!isMounted.current) return;
-
-        const rows = data ?? [];
-        setFeeds((prev) => (replace ? rows : [...prev, ...rows]));
-        setHasMore(rows.length === PAGE_SIZE);
-        offsetRef.current = from + rows.length;
-
-        if (rows.length > 0) {
-          await fetchLikes(rows.map((r) => r.id));
-        }
-      } catch (e) {
-        if (isMounted.current) setError(e.message || "Failed to load feeds");
-      } finally {
-        if (isMounted.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
+    } catch (e) {
+      if (cancelledRef.current) return;
+      setError(e.message || "Failed to load feeds");
+    } finally {
+      if (!cancelledRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
       }
-    },
-    [fetchLikes]
-  );
+    }
+  }, [fetchLikes]); // fetchLikes is stable
 
-  // Initial load
+  // Initial load — once on mount
   useEffect(() => {
     load(true);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Realtime subscription — set up once
+  // Realtime subscription — set up once, torn down on unmount
   useEffect(() => {
     const channel = supabase
       .channel("feeds-realtime")
@@ -157,7 +157,7 @@ function useFeeds(userId) {
         "postgres_changes",
         { event: "*", schema: "public", table: "feeds" },
         (payload) => {
-          if (!isMounted.current) return;
+          if (cancelledRef.current) return;
           if (payload.eventType === "INSERT" && payload.new.published) {
             setFeeds((prev) =>
               prev.some((f) => f.id === payload.new.id)
@@ -177,36 +177,36 @@ function useFeeds(userId) {
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => { supabase.removeChannel(channel); };
+  }, []); // no deps — subscribe once, cancelledRef guards the callbacks
 
+  // toggleLike — optimistic, no cancelled guard needed because all
+  // setState calls use functional updaters (always safe)
   const toggleLike = useCallback(async (feedId) => {
     const uid = userIdRef.current;
     if (!uid) return;
 
-    const isLiked = myLikes.has(feedId);
-
-    // Optimistic update
+    // Read current like state inside the functional updater to avoid
+    // closing over stale myLikes
+    let wasLiked = false;
     setMyLikes((prev) => {
+      wasLiked = prev.has(feedId);
       const next = new Set(prev);
-      isLiked ? next.delete(feedId) : next.add(feedId);
+      wasLiked ? next.delete(feedId) : next.add(feedId);
       return next;
     });
+
+    // Use wasLiked from closure — set synchronously above before any await
     setFeeds((prev) =>
       prev.map((f) =>
         f.id === feedId
-          ? {
-              ...f,
-              likes_count: Math.max(0, (f.likes_count || 0) + (isLiked ? -1 : 1)),
-            }
+          ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (wasLiked ? -1 : 1)) }
           : f
       )
     );
 
     try {
-      if (isLiked) {
+      if (wasLiked) {
         const { error } = await supabase
           .from("feed_likes")
           .delete()
@@ -221,27 +221,21 @@ function useFeeds(userId) {
       }
     } catch (e) {
       console.error("toggleLike:", e.message);
-      // Revert
+      // Revert — functional updaters, safe on unmounted component
       setMyLikes((prev) => {
         const next = new Set(prev);
-        isLiked ? next.add(feedId) : next.delete(feedId);
+        wasLiked ? next.add(feedId) : next.delete(feedId);
         return next;
       });
       setFeeds((prev) =>
         prev.map((f) =>
           f.id === feedId
-            ? {
-                ...f,
-                likes_count: Math.max(
-                  0,
-                  (f.likes_count || 0) + (isLiked ? 1 : -1)
-                ),
-              }
+            ? { ...f, likes_count: Math.max(0, (f.likes_count || 0) + (wasLiked ? 1 : -1)) }
             : f
         )
       );
     }
-  }, [myLikes]); // myLikes needed to read current state
+  }, []); // stable — reads userIdRef, all setState uses functional updaters
 
   const recordView = useCallback(async (feedId) => {
     try {
@@ -268,20 +262,21 @@ function useFeeds(userId) {
    HOOK — useComments
    ================================================================ */
 function useComments(feedId, open) {
-  const [comments, setComments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [comments,    setComments]    = useState([]);
+  const [loading,     setLoading]     = useState(false);
+  const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [myLikes, setMyLikes] = useState(new Set());
+  const [myLikes,     setMyLikes]     = useState(new Set());
 
-  const isMounted = useRef(true);
-  const { user } = useAuth();
+  const cancelledRef = useRef(false);
+  const { user }     = useAuth();
+  // Keep user stable in a ref so callbacks don't close over stale user
+  const userRef      = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
 
   useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-    };
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
   }, []);
 
   // Reset when feedId changes
@@ -291,6 +286,7 @@ function useComments(feedId, open) {
     setMyLikes(new Set());
   }, [feedId]);
 
+  // fetchComments — stable, guards every setState
   const fetchComments = useCallback(async () => {
     if (!feedId) return;
     setLoading(true);
@@ -303,28 +299,28 @@ function useComments(feedId, open) {
         .limit(COMMENT_PAGE);
 
       if (error) throw error;
-      if (!isMounted.current) return;
+      if (cancelledRef.current) return;
 
       const list = data ?? [];
       setComments(list);
 
-      if (user?.id && list.length > 0) {
+      const uid = userRef.current?.id;
+      if (uid && list.length > 0) {
         const ids = list.map((c) => c.id);
         const { data: liked } = await supabase
           .from("feed_comment_likes")
           .select("comment_id")
-          .eq("user_id", user.id)
+          .eq("user_id", uid)
           .in("comment_id", ids);
-        if (isMounted.current && liked) {
-          setMyLikes(new Set(liked.map((l) => l.comment_id)));
-        }
+        if (cancelledRef.current) return;
+        if (liked) setMyLikes(new Set(liked.map((l) => l.comment_id)));
       }
     } catch (e) {
       console.error("fetchComments:", e.message);
     } finally {
-      if (isMounted.current) setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
-  }, [feedId, user?.id]);
+  }, [feedId]); // only feedId — reads userRef via ref
 
   // Fetch + subscribe when sheet opens
   useEffect(() => {
@@ -336,21 +332,16 @@ function useComments(feedId, open) {
       .channel(`comments-${feedId}`)
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "feed_comments",
-          filter: `feed_id=eq.${feedId}`,
-        },
+        { event: "INSERT", schema: "public", table: "feed_comments", filter: `feed_id=eq.${feedId}` },
         async (payload) => {
-          if (!isMounted.current) return;
-          // Fetch full row with joined user
+          if (cancelledRef.current) return;
           const { data } = await supabase
             .from("feed_comments")
             .select(COMMENT_SELECT)
             .eq("id", payload.new.id)
             .single();
-          if (data && isMounted.current) {
+          if (cancelledRef.current) return;
+          if (data) {
             setComments((prev) =>
               prev.some((c) => c.id === data.id) ? prev : [...prev, data]
             );
@@ -359,183 +350,149 @@ function useComments(feedId, open) {
       )
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "feed_comments",
-          filter: `feed_id=eq.${feedId}`,
-        },
+        { event: "UPDATE", schema: "public", table: "feed_comments", filter: `feed_id=eq.${feedId}` },
         (payload) => {
-          if (!isMounted.current) return;
+          if (cancelledRef.current) return;
           setComments((prev) =>
-            prev.map((c) =>
-              c.id === payload.new.id ? { ...c, ...payload.new } : c
-            )
+            prev.map((c) => c.id === payload.new.id ? { ...c, ...payload.new } : c)
           );
         }
       )
       .on(
         "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "feed_comments",
-          filter: `feed_id=eq.${feedId}`,
-        },
+        { event: "DELETE", schema: "public", table: "feed_comments", filter: `feed_id=eq.${feedId}` },
         (payload) => {
-          if (!isMounted.current) return;
+          if (cancelledRef.current) return;
           setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
         }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [open, feedId, fetchComments]);
 
-  const submitComment = useCallback(
-    async (body, parentId = null) => {
-      if (!user?.id || !feedId || !body.trim()) return false;
-      setSubmitting(true);
-      setSubmitError("");
+  // submitComment — guarded, reads user via ref
+  const submitComment = useCallback(async (body, parentId = null) => {
+    const uid = userRef.current?.id;
+    if (!uid || !feedId || !body.trim()) return false;
+    setSubmitting(true);
+    setSubmitError("");
 
-      const tempId = `temp-${Date.now()}`;
-      const tempComment = {
-        id: tempId,
-        feed_id: feedId,
-        parent_id: parentId,
-        body: body.trim(),
-        likes_count: 0,
-        created_at: new Date().toISOString(),
-        user: {
-          id: user.id,
-          display_name:
-            user.user_metadata?.display_name ||
-            user.email?.split("@")[0] ||
-            "You",
-          avatar_url: user.user_metadata?.avatar_url || null,
-        },
-      };
-      setComments((prev) => [...prev, tempComment]);
+    const tempId = `temp-${Date.now()}`;
+    const u = userRef.current;
+    const tempComment = {
+      id:         tempId,
+      feed_id:    feedId,
+      parent_id:  parentId,
+      body:       body.trim(),
+      likes_count: 0,
+      created_at: new Date().toISOString(),
+      user: {
+        id:           uid,
+        display_name: u.user_metadata?.display_name || u.email?.split("@")[0] || "You",
+        avatar_url:   u.user_metadata?.avatar_url || null,
+      },
+    };
+    setComments((prev) => [...prev, tempComment]);
 
-      try {
-        const { data, error } = await supabase
-          .from("feed_comments")
-          .insert({
-            feed_id: feedId,
-            user_id: user.id,
-            parent_id: parentId ?? null,
-            body: body.trim(),
-          })
-          .select(COMMENT_SELECT)
-          .single();
+    try {
+      const { data, error } = await supabase
+        .from("feed_comments")
+        .insert({ feed_id: feedId, user_id: uid, parent_id: parentId ?? null, body: body.trim() })
+        .select(COMMENT_SELECT)
+        .single();
 
-        if (error) throw error;
+      if (error) throw error;
+      if (cancelledRef.current) return true; // still succeeded, just don't setState
 
-        if (isMounted.current && data) {
-          setComments((prev) => prev.map((c) => (c.id === tempId ? data : c)));
-        }
-        return true;
-      } catch (e) {
-        console.error("submitComment:", e.message);
-        if (isMounted.current) {
-          setComments((prev) => prev.filter((c) => c.id !== tempId));
-          setSubmitError(e.message || "Failed to post comment");
-        }
-        return false;
-      } finally {
-        if (isMounted.current) setSubmitting(false);
+      if (data) {
+        setComments((prev) => prev.map((c) => (c.id === tempId ? data : c)));
       }
-    },
-    [user, feedId]
-  );
+      return true;
+    } catch (e) {
+      console.error("submitComment:", e.message);
+      if (cancelledRef.current) return false;
+      setComments((prev) => prev.filter((c) => c.id !== tempId));
+      setSubmitError(e.message || "Failed to post comment");
+      return false;
+    } finally {
+      if (!cancelledRef.current) setSubmitting(false);
+    }
+  }, [feedId]); // only feedId — reads userRef via ref
 
-  const toggleCommentLike = useCallback(
-    async (commentId) => {
-      if (!user?.id) return;
-      const isLiked = myLikes.has(commentId);
+  // toggleCommentLike — optimistic, functional updaters, no cancelled guard needed
+  const toggleCommentLike = useCallback(async (commentId) => {
+    const uid = userRef.current?.id;
+    if (!uid) return;
 
+    // Read current state inside functional updater to avoid stale closure
+    let wasLiked = false;
+    setMyLikes((prev) => {
+      wasLiked = prev.has(commentId);
+      const next = new Set(prev);
+      wasLiked ? next.delete(commentId) : next.add(commentId);
+      return next;
+    });
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === commentId
+          ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (wasLiked ? -1 : 1)) }
+          : c
+      )
+    );
+
+    try {
+      if (wasLiked) {
+        const { error } = await supabase
+          .from("feed_comment_likes")
+          .delete()
+          .eq("comment_id", commentId)
+          .eq("user_id", uid);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("feed_comment_likes")
+          .insert({ comment_id: commentId, user_id: uid });
+        if (error && error.code !== "23505") throw error;
+      }
+    } catch (e) {
+      console.error("toggleCommentLike:", e.message);
+      // Revert — functional updaters, safe even if unmounted
       setMyLikes((prev) => {
         const next = new Set(prev);
-        isLiked ? next.delete(commentId) : next.add(commentId);
+        wasLiked ? next.add(commentId) : next.delete(commentId);
         return next;
       });
       setComments((prev) =>
         prev.map((c) =>
           c.id === commentId
-            ? {
-                ...c,
-                likes_count: Math.max(
-                  0,
-                  (c.likes_count || 0) + (isLiked ? -1 : 1)
-                ),
-              }
+            ? { ...c, likes_count: Math.max(0, (c.likes_count || 0) + (wasLiked ? 1 : -1)) }
             : c
         )
       );
+    }
+  }, []); // stable — reads userRef, all setState functional updaters
 
-      try {
-        if (isLiked) {
-          const { error } = await supabase
-            .from("feed_comment_likes")
-            .delete()
-            .eq("comment_id", commentId)
-            .eq("user_id", user.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase
-            .from("feed_comment_likes")
-            .insert({ comment_id: commentId, user_id: user.id });
-          if (error && error.code !== "23505") throw error;
-        }
-      } catch (e) {
-        console.error("toggleCommentLike:", e.message);
-        // Revert
-        setMyLikes((prev) => {
-          const next = new Set(prev);
-          isLiked ? next.add(commentId) : next.delete(commentId);
-          return next;
-        });
-        setComments((prev) =>
-          prev.map((c) =>
-            c.id === commentId
-              ? {
-                  ...c,
-                  likes_count: Math.max(
-                    0,
-                    (c.likes_count || 0) + (isLiked ? 1 : -1)
-                  ),
-                }
-              : c
-          )
-        );
-      }
-    },
-    [user?.id, myLikes]
-  );
-
-  const deleteComment = useCallback(
-    async (commentId) => {
-      if (!user?.id) return;
-      // Optimistic removal
-      setComments((prev) => prev.filter((c) => c.id !== commentId));
-      const { error } = await supabase
-        .from("feed_comments")
-        .delete()
-        .eq("id", commentId)
-        .eq("user_id", user.id);
-      if (error) {
-        console.error("deleteComment:", error.message);
-        fetchComments(); // reconcile
-      }
-    },
-    [user?.id, fetchComments]
-  );
+  // deleteComment — optimistic removal, reconciles on error
+  const deleteComment = useCallback(async (commentId) => {
+    const uid = userRef.current?.id;
+    if (!uid) return;
+    // Optimistic removal — functional updater, safe on unmount
+    setComments((prev) => prev.filter((c) => c.id !== commentId));
+    const { error } = await supabase
+      .from("feed_comments")
+      .delete()
+      .eq("id", commentId)
+      .eq("user_id", uid);
+    if (error) {
+      console.error("deleteComment:", error.message);
+      if (!cancelledRef.current) fetchComments(); // reconcile only if still mounted
+    }
+  }, [fetchComments]); // fetchComments is stable
 
   const threaded = useMemo(() => {
-    const top = comments.filter((c) => !c.parent_id);
-    const replies = comments.filter((c) => c.parent_id);
+    const top     = comments.filter((c) => !c.parent_id);
+    const replies = comments.filter((c) =>  c.parent_id);
     return top.map((c) => ({
       ...c,
       replies: replies.filter((r) => r.parent_id === c.id),
@@ -558,60 +515,64 @@ function useComments(feedId, open) {
    MAIN PAGE
    ================================================================ */
 export default function Feeds() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
+  const { user }   = useAuth();
+  const navigate   = useNavigate();
 
   const {
-    feeds,
-    myLikes: likedPosts,
-    loading,
-    loadingMore,
-    hasMore,
-    error,
-    load,
-    toggleLike,
-    recordView,
+    feeds, myLikes: likedPosts, loading, loadingMore,
+    hasMore, error, load, toggleLike, recordView,
   } = useFeeds(user?.id);
 
   const [activeCommentFeed, setActiveCommentFeed] = useState(null);
-  const [activeShareFeed, setActiveShareFeed] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [activeShareFeed,   setActiveShareFeed]   = useState(null);
+  const [toast,             setToast]             = useState(null);
 
-  // Scroll to top on mount
+  // Refs for main component lifetime cleanup
+  const cancelledRef  = useRef(false);
+  const toastTimerRef = useRef(null);
+
   useEffect(() => {
+    cancelledRef.current = false;
     window.scrollTo(0, 0);
+    return () => {
+      cancelledRef.current = true;
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
+  // showToast — stable, timer stored in ref, cleared on unmount
   const showToast = useCallback((message, type = "success") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
-  }, []);
+    toastTimerRef.current = setTimeout(() => {
+      if (!cancelledRef.current) setToast(null);
+    }, 3500);
+  }, []); // stable — reads refs only
 
   const handleShare = useCallback((feed) => {
     setActiveShareFeed(feed);
   }, []);
 
-  const handleShareLog = useCallback(
-    async (feed) => {
-      if (!user?.id || !feed) return;
-      try {
-        await supabase
-          .from("feed_shares")
-          .insert({ feed_id: feed.id, user_id: user.id });
-      } catch (e) {
-        console.warn("share log:", e.message);
-      }
-    },
-    [user?.id]
-  );
+  // userRef so handleShareLog doesn't close over stale user
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
 
-  // Navigate to feed detail
-const handleCardClick = useCallback(
-  (feedId) => {
+  const handleShareLog = useCallback(async (feed) => {
+    const uid = userRef.current?.id;
+    if (!uid || !feed) return;
+    try {
+      await supabase
+        .from("feed_shares")
+        .insert({ feed_id: feed.id, user_id: uid });
+    } catch (e) {
+      console.warn("share log:", e.message);
+    }
+  }, []); // stable — reads userRef
+
+  const handleCardClick = useCallback((feedId) => {
     navigate(`/feed/${feedId}`);
-  },
-  [navigate]
-);
+  }, [navigate]);
+
   /* Infinite scroll */
   const loaderRef = useRef(null);
   useEffect(() => {
@@ -690,18 +651,9 @@ const handleCardClick = useCallback(
             feed={feed}
             liked={likedPosts.has(feed.id)}
             userId={user?.id}
-            onLike={(e) => {
-              e.stopPropagation();
-              toggleLike(feed.id);
-            }}
-            onComment={(e) => {
-              e.stopPropagation();
-              setActiveCommentFeed(feed);
-            }}
-            onShare={(e) => {
-              e.stopPropagation();
-              handleShare(feed);
-            }}
+            onLike={(e) => { e.stopPropagation(); toggleLike(feed.id); }}
+            onComment={(e) => { e.stopPropagation(); setActiveCommentFeed(feed); }}
+            onShare={(e) => { e.stopPropagation(); handleShare(feed); }}
             onView={() => recordView(feed.id)}
             onClick={() => handleCardClick(feed.id)}
           />
@@ -746,13 +698,14 @@ const handleCardClick = useCallback(
 function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onClick }) {
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const viewedRef = useRef(false);
+  const viewedRef  = useRef(false);
 
-  // View tracking via IntersectionObserver
+  // Reset viewed flag when feed changes
   useEffect(() => {
-    viewedRef.current = false; // reset if feed changes
+    viewedRef.current = false;
   }, [feed.id]);
 
+  // View tracking — observer cleaned up on unmount, onView is fire-and-forget
   useEffect(() => {
     const el = document.getElementById(`feed-${feed.id}`);
     if (!el) return;
@@ -760,7 +713,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
       ([entry]) => {
         if (entry.isIntersecting && !viewedRef.current) {
           viewedRef.current = true;
-          onView();
+          onView(); // fire-and-forget RPC write — completing after unmount is harmless
           obs.disconnect();
         }
       },
@@ -768,15 +721,15 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [feed.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feed.id]); // onView is stable (useCallback []) so omitting it is safe
 
-  const admin = feed.admin;
-  const adminName = admin?.display_name || admin?.username || "Admin";
-  const isLong = (feed.content || "").length > 280;
-  const displayed =
-    isLong && !expanded
-      ? feed.content.slice(0, 280) + "…"
-      : feed.content || "";
+  const admin      = feed.admin;
+  const adminName  = admin?.display_name || admin?.username || "Admin";
+  const isLong     = (feed.content || "").length > 280;
+  const displayed  = isLong && !expanded
+    ? feed.content.slice(0, 280) + "…"
+    : feed.content || "";
 
   return (
     <article
@@ -784,12 +737,8 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
       onClick={onClick}
       className="group rounded-3xl bg-white border border-gray-100 shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden cursor-pointer"
     >
-      {/* Cover image */}
       {feed.image_url && !imgError && (
-        <div
-          className="relative w-full bg-gray-100 overflow-hidden"
-          style={{ maxHeight: 480 }}
-        >
+        <div className="relative w-full bg-gray-100 overflow-hidden" style={{ maxHeight: 480 }}>
           <img
             src={feed.image_url}
             alt={feed.title}
@@ -808,7 +757,6 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
       )}
 
       <div className="p-5">
-        {/* Author row */}
         <div className="flex items-center gap-3 mb-4">
           {admin?.avatar_url ? (
             <img
@@ -823,9 +771,7 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-extrabold text-gray-900">
-                {adminName}
-              </span>
+              <span className="text-sm font-extrabold text-gray-900">{adminName}</span>
               <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
                 <ShieldIcon className="h-2.5 w-2.5" /> Admin
               </span>
@@ -838,28 +784,22 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
           </div>
         </div>
 
-        {/* Title */}
         <h2 className="text-lg font-extrabold text-gray-900 leading-snug mb-2">
           {feed.title}
         </h2>
 
-        {/* Content */}
         <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
           {displayed}
         </p>
         {isLong && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded(!expanded);
-            }}
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
             className="mt-1.5 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
           >
             {expanded ? "Show less" : "Read more"}
           </button>
         )}
 
-        {/* Tags */}
         {feed.tags?.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-3">
             {feed.tags.map((tag) => (
@@ -875,14 +815,12 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
 
         <div className="my-4 h-px bg-gray-100" />
 
-        {/* Counts */}
         <div className="flex items-center gap-4 text-xs text-gray-400 mb-3">
           <span>{fmtCount(feed.likes_count)} likes</span>
           <span>{fmtCount(feed.comments_count)} comments</span>
           <span>{fmtCount(feed.shares_count)} shares</span>
         </div>
 
-        {/* Action buttons — stopPropagation so card click doesn't fire */}
         <div className="grid grid-cols-3 gap-2">
           <button
             onClick={onLike}
@@ -926,20 +864,14 @@ function FeedCard({ feed, liked, userId, onLike, onComment, onShare, onView, onC
    ================================================================ */
 function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
   const {
-    threaded,
-    loading,
-    submitting,
-    submitError,
-    myLikes,
-    submitComment,
-    toggleCommentLike,
-    deleteComment,
+    threaded, loading, submitting, submitError,
+    myLikes, submitComment, toggleCommentLike, deleteComment,
   } = useComments(feed?.id, !!feed);
 
-  const [body, setBody] = useState("");
+  const [body,    setBody]    = useState("");
   const [replyTo, setReplyTo] = useState(null);
-  const inputRef = useRef(null);
-  const listRef = useRef(null);
+  const inputRef  = useRef(null);
+  const listRef   = useRef(null);
 
   // Reset form when sheet opens for a different feed
   useEffect(() => {
@@ -952,10 +884,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!userId) {
-      onRequireAuth();
-      return;
-    }
+    if (!userId) { onRequireAuth(); return; }
     if (!body.trim()) return;
 
     const ok = await submitComment(body, replyTo?.id ?? null);
@@ -963,10 +892,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
       setBody("");
       setReplyTo(null);
       setTimeout(() => {
-        listRef.current?.scrollTo({
-          top: listRef.current.scrollHeight,
-          behavior: "smooth",
-        });
+        listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
       }, 150);
     }
   };
@@ -981,16 +907,13 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
       />
       <div className="fixed inset-x-0 bottom-0 z-50 md:inset-y-0 md:right-0 md:left-auto md:w-[420px] flex flex-col bg-white rounded-t-3xl md:rounded-none md:rounded-l-3xl shadow-2xl">
 
-        {/* Header */}
         <div className="relative flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
           <div className="md:hidden absolute left-1/2 -translate-x-1/2 top-2 w-10 h-1 rounded-full bg-gray-300" />
           <div className="flex items-center gap-3">
             <CommentIcon className="h-5 w-5 text-violet-600" />
             <div>
               <p className="text-sm font-extrabold text-gray-900">Comments</p>
-              <p className="text-xs text-gray-400 truncate max-w-[200px]">
-                {feed.title}
-              </p>
+              <p className="text-xs text-gray-400 truncate max-w-[200px]">{feed.title}</p>
             </div>
           </div>
           <button
@@ -1001,11 +924,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           </button>
         </div>
 
-        {/* Comments list */}
-        <div
-          ref={listRef}
-          className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0"
-        >
+        <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
           {loading && (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
@@ -1025,9 +944,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
             <div className="flex flex-col items-center gap-3 py-12 text-center">
               <CommentIcon className="h-10 w-10 text-gray-300" />
               <p className="text-sm font-bold text-gray-500">No comments yet</p>
-              <p className="text-xs text-gray-400">
-                Be the first to share your thoughts!
-              </p>
+              <p className="text-xs text-gray-400">Be the first to share your thoughts!</p>
             </div>
           )}
 
@@ -1047,7 +964,6 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           ))}
         </div>
 
-        {/* Input area */}
         <div
           className="shrink-0 border-t border-gray-100 px-4 pt-3"
           style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
@@ -1061,13 +977,9 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
           {replyTo && (
             <div className="flex items-center justify-between rounded-xl bg-violet-50 border border-violet-100 px-3 py-2 mb-2">
               <p className="text-xs text-violet-700 font-medium">
-                Replying to{" "}
-                <span className="font-bold">{replyTo.name}</span>
+                Replying to <span className="font-bold">{replyTo.name}</span>
               </p>
-              <button
-                onClick={() => setReplyTo(null)}
-                className="text-violet-400 hover:text-violet-600"
-              >
+              <button onClick={() => setReplyTo(null)} className="text-violet-400 hover:text-violet-600">
                 <XIcon className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -1077,18 +989,14 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               <textarea
                 ref={inputRef}
                 value={body}
-                onChange={(e) =>
-                  setBody(e.target.value.slice(0, MAX_COMMENT_LEN))
-                }
+                onChange={(e) => setBody(e.target.value.slice(0, MAX_COMMENT_LEN))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSubmit(e);
                   }
                 }}
-                placeholder={
-                  userId ? "Write a comment…" : "Sign in to comment"
-                }
+                placeholder={userId ? "Write a comment…" : "Sign in to comment"}
                 disabled={!userId || submitting}
                 rows={1}
                 className="w-full resize-none rounded-2xl border border-gray-200 px-4 py-3 pr-12 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all disabled:opacity-50"
@@ -1103,11 +1011,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
               disabled={!body.trim() || submitting || !userId}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shadow-md"
             >
-              {submitting ? (
-                <SpinnerIcon className="h-4 w-4" />
-              ) : (
-                <SendIcon className="h-4 w-4" />
-              )}
+              {submitting ? <SpinnerIcon className="h-4 w-4" /> : <SendIcon className="h-4 w-4" />}
             </button>
           </form>
         </div>
@@ -1117,7 +1021,7 @@ function CommentSheet({ feed, userId, onClose, onRequireAuth }) {
 }
 
 /* ================================================================
-   COMMENT THREAD + ROW
+   COMMENT THREAD + ROW (unchanged — no async issues)
    ================================================================ */
 function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) {
   const [showReplies, setShowReplies] = useState(true);
@@ -1141,9 +1045,7 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
           >
             {showReplies
               ? "Hide replies"
-              : `View ${comment.replies.length} repl${
-                  comment.replies.length !== 1 ? "ies" : "y"
-                }`}
+              : `View ${comment.replies.length} repl${comment.replies.length !== 1 ? "ies" : "y"}`}
           </button>
           {showReplies &&
             comment.replies.map((reply) => (
@@ -1163,27 +1065,17 @@ function CommentThread({ comment, userId, myLikes, onLike, onDelete, onReply }) 
   );
 }
 
-function CommentRow({
-  comment,
-  userId,
-  liked,
-  onLike,
-  onDelete,
-  onReply,
-  isTop = false,
-}) {
+function CommentRow({ comment, userId, liked, onLike, onDelete, onReply, isTop = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef(null);
-  const author = comment.user;
+  const menuRef   = useRef(null);
+  const author    = comment.user;
   const authorName = author?.display_name || "User";
-  const isOwn = !!(userId && userId === author?.id);
+  const isOwn     = !!(userId && userId === author?.id);
 
   useEffect(() => {
     if (!menuOpen) return;
     function handler(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setMenuOpen(false);
-      }
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -1205,25 +1097,17 @@ function CommentRow({
 
       <div className="flex-1 min-w-0">
         <div className="inline-block max-w-full rounded-2xl bg-gray-50 border border-gray-100 px-3.5 py-2.5">
-          <p className="text-xs font-extrabold text-gray-900 mb-0.5">
-            {authorName}
-          </p>
-          <p className="text-sm text-gray-700 leading-relaxed break-words">
-            {comment.body}
-          </p>
+          <p className="text-xs font-extrabold text-gray-900 mb-0.5">{authorName}</p>
+          <p className="text-sm text-gray-700 leading-relaxed break-words">{comment.body}</p>
         </div>
 
         <div className="flex items-center gap-3 mt-1.5 px-1">
-          <span className="text-[11px] text-gray-400">
-            {timeAgo(comment.created_at)}
-          </span>
+          <span className="text-[11px] text-gray-400">{timeAgo(comment.created_at)}</span>
 
           <button
             onClick={onLike}
             className={`text-[11px] font-bold transition-colors ${
-              liked
-                ? "text-red-500"
-                : "text-gray-400 hover:text-red-500"
+              liked ? "text-red-500" : "text-gray-400 hover:text-red-500"
             }`}
           >
             {liked ? "Liked" : "Like"}
@@ -1250,10 +1134,7 @@ function CommentRow({
               {menuOpen && (
                 <div className="absolute right-0 bottom-6 rounded-2xl bg-white border border-gray-100 shadow-xl py-1 z-10 min-w-[120px]">
                   <button
-                    onClick={() => {
-                      onDelete();
-                      setMenuOpen(false);
-                    }}
+                    onClick={() => { onDelete(); setMenuOpen(false); }}
                     className="flex w-full items-center gap-2 px-4 py-2.5 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors"
                   >
                     <TrashIcon className="h-3.5 w-3.5" /> Delete
@@ -1269,16 +1150,13 @@ function CommentRow({
 }
 
 /* ================================================================
-   SKELETON
+   SKELETON / TOAST / ICONS (unchanged)
    ================================================================ */
 function FeedSkeleton() {
   return (
     <div className="space-y-5">
       {[1, 2, 3].map((i) => (
-        <div
-          key={i}
-          className="rounded-3xl bg-white border border-gray-100 overflow-hidden animate-pulse"
-        >
+        <div key={i} className="rounded-3xl bg-white border border-gray-100 overflow-hidden animate-pulse">
           <div className="h-56 bg-gray-200" />
           <div className="p-5 space-y-3">
             <div className="flex gap-3">
@@ -1303,35 +1181,23 @@ function FeedSkeleton() {
   );
 }
 
-/* ================================================================
-   TOAST
-   ================================================================ */
 function Toast({ toast }) {
   if (!toast) return null;
   const isErr = toast.type === "error";
   return (
     <div className="fixed left-1/2 top-20 z-50 -translate-x-1/2 pointer-events-none">
-      <div
-        className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
-          isErr
-            ? "bg-red-500 border-red-400 text-white"
-            : "bg-white border-gray-200 text-gray-900"
-        }`}
-      >
-        {isErr ? (
-          <AlertIcon className="h-4 w-4 shrink-0" />
-        ) : (
-          <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />
-        )}
+      <div className={`flex items-center gap-2.5 rounded-2xl px-5 py-3 shadow-2xl border text-sm font-semibold ${
+        isErr ? "bg-red-500 border-red-400 text-white" : "bg-white border-gray-200 text-gray-900"
+      }`}>
+        {isErr
+          ? <AlertIcon className="h-4 w-4 shrink-0" />
+          : <CheckIcon className="h-4 w-4 shrink-0 text-green-500" />}
         {toast.message}
       </div>
     </div>
   );
 }
 
-/* ================================================================
-   ICONS
-   ================================================================ */
 function ChevronLeftIcon({ className = "h-5 w-5" }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">

@@ -1,5 +1,5 @@
 // src/pages/CreateEvent.jsx
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import TopBar from "../components/TopBar.jsx";
 import Button from "../components/Button.jsx";
 import { supabase } from "../lib/supabase.client.js";
@@ -18,85 +18,100 @@ export default function CreateEvent() {
   const fileInputRef = useRef(null);
 
   // Form state
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [city, setCity] = useState("");
-  const [latitude, setLatitude] = useState(null);
-  const [longitude, setLongitude] = useState(null);
-  const [category, setCategory] = useState("Concert");
-  const [price, setPrice] = useState("");
+  const [title,       setTitle]       = useState("");
+  const [date,        setDate]        = useState("");
+  const [time,        setTime]        = useState("");
+  const [city,        setCity]        = useState("");
+  const [latitude,    setLatitude]    = useState(null);
+  const [longitude,   setLongitude]   = useState(null);
+  const [category,    setCategory]    = useState("Concert");
+  const [price,       setPrice]       = useState("");
   const [description, setDescription] = useState("");
 
   // Cover image state
-  const [coverFile, setCoverFile] = useState(null);
+  const [coverFile,    setCoverFile]    = useState(null);
   const [coverPreview, setCoverPreview] = useState("");
 
   // UI state
-  const [isSaving, setIsSaving] = useState(false);
-  const [isGettingLocation, setIsGettingLocation] = useState(false);
-  const [error, setError] = useState("");
-  
+  const [isSaving,           setIsSaving]           = useState(false);
+  const [isGettingLocation,  setIsGettingLocation]  = useState(false);
+  const [error,              setError]              = useState("");
+
   // Location search state
-  const [locationQuery, setLocationQuery] = useState("");
+  const [locationQuery,       setLocationQuery]       = useState("");
   const [locationSuggestions, setLocationSuggestions] = useState([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showSuggestions,     setShowSuggestions]     = useState(false);
   const [isSearchingLocation, setIsSearchingLocation] = useState(false);
-  const searchTimeoutRef = useRef(null);
+
+  // Refs
+  const searchTimerRef   = useRef(null);  // debounce timer
+  const cancelledRef     = useRef(false); // component lifetime guard
+  const coverPreviewRef  = useRef("");    // track current preview URL for revocation
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+      // Clear any pending debounce timer
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      // Revoke any object URL we created to prevent memory leaks
+      if (coverPreviewRef.current) URL.revokeObjectURL(coverPreviewRef.current);
+    };
+  }, []);
 
   // Handle file selection
-  const handleFileSelect = () => fileInputRef.current?.click();
-  
-  const handleFileChange = (event) => {
+  const handleFileSelect = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback((event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    // Revoke previous preview URL before creating a new one
+    if (coverPreviewRef.current) {
+      URL.revokeObjectURL(coverPreviewRef.current);
+    }
+    const url = URL.createObjectURL(file);
+    coverPreviewRef.current = url;
     setCoverFile(file);
-    setCoverPreview(URL.createObjectURL(file));
-  };
+    setCoverPreview(url);
+  }, []);
 
   // Get current location with reverse geocoding
-  const handleUseMyLocation = async () => {
+  // Fire-and-forget from user gesture — completing after unmount is harmless
+  // for the geolocation API itself; cancelledRef guards all setState calls
+  const handleUseMyLocation = useCallback(async () => {
     setIsGettingLocation(true);
     setError("");
-
     try {
       const location = await getCurrentLocationWithAddress();
-      
+      if (cancelledRef.current) return;
+
       setLatitude(location.lat);
       setLongitude(location.lng);
-      
-      // Auto-fill city field with the geocoded city name
+
       if (location.city) {
         setCity(location.city);
         setLocationQuery(location.city);
       } else if (location.displayName) {
-        // Fallback to display name if city not found
         setCity(location.displayName);
         setLocationQuery(location.displayName);
       }
-
-      console.log(">>>Location found:", {
-        lat: location.lat,
-        lng: location.lng,
-        city: location.city,
-        displayName: location.displayName,
-      });
     } catch (err) {
+      if (cancelledRef.current) return;
       setError(err.message || "Could not get your location");
     } finally {
-      setIsGettingLocation(false);
+      if (!cancelledRef.current) setIsGettingLocation(false);
     }
-  };
+  }, []); // stable — reads cancelledRef via ref
 
-  // Handle location search (forward geocoding)
-  const handleLocationSearch = async (query) => {
+  // Handle location search (forward geocoding) with debounce
+  // Each debounced call gets its own cancelled check via cancelledRef
+  const handleLocationSearch = useCallback((query) => {
     setLocationQuery(query);
-    setCity(query); // Update city as user types
+    setCity(query);
 
-    // Clear previous timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
     if (query.length < 2) {
       setLocationSuggestions([]);
@@ -104,125 +119,120 @@ export default function CreateEvent() {
       return;
     }
 
-    // Debounce search
-    searchTimeoutRef.current = setTimeout(async () => {
+    searchTimerRef.current = setTimeout(async () => {
+      if (cancelledRef.current) return;
       setIsSearchingLocation(true);
       try {
         const results = await searchLocation(query, 5);
+        if (cancelledRef.current) return;
         setLocationSuggestions(results);
         setShowSuggestions(results.length > 0);
-      } catch (err) {
-        console.warn(">>>Location search failed:", err);
+      } catch {
+        if (cancelledRef.current) return;
         setLocationSuggestions([]);
+        setShowSuggestions(false);
       } finally {
-        setIsSearchingLocation(false);
+        if (!cancelledRef.current) setIsSearchingLocation(false);
       }
     }, 300);
-  };
+  }, []); // stable — timer stored in ref, all setState guarded
 
   // Handle selecting a location from suggestions
-  const handleSelectLocation = (location) => {
+  const handleSelectLocation = useCallback((location) => {
     setCity(location.city || location.displayName);
     setLocationQuery(location.city || location.displayName);
     setLatitude(location.lat);
     setLongitude(location.lng);
     setShowSuggestions(false);
     setLocationSuggestions([]);
+  }, []);
 
-    console.log(">>>Location selected:", {
-      city: location.city,
-      lat: location.lat,
-      lng: location.lng,
-    });
-  };
-
-  // Upload cover image
-  const uploadCoverImage = async (file) => {
+  // Upload cover image — pure async utility, no setState, no guard needed
+  const uploadCoverImage = useCallback(async (file) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Not authenticated");
 
     const fileName = `${user.id}/${Date.now()}-${sanitizeFileName(file.name)}`;
-    
+
     const { error: uploadError } = await supabase.storage
       .from("events")
       .upload(fileName, file, { upsert: false });
-    
+
     if (uploadError) throw uploadError;
 
     const { data } = supabase.storage.from("events").getPublicUrl(fileName);
     return data.publicUrl;
-  };
+  }, []);
 
-  // Save event
-  const handleSave = async () => {
+  // Save event — all setState calls after awaits guarded by cancelledRef
+  const handleSave = useCallback(async () => {
     setError("");
 
-    // Validation
-    if (!title.trim()) {
-      setError("Title is required");
-      return;
-    }
-    if (!date || !time) {
-      setError("Date and time are required");
-      return;
-    }
+    if (!title.trim()) { setError("Title is required"); return; }
+    if (!date || !time) { setError("Date and time are required"); return; }
 
     setIsSaving(true);
 
     try {
       const startsAt = new Date(`${date}T${time}:00`);
-      
+
       let coverUrl = null;
       if (coverFile) {
         coverUrl = await uploadCoverImage(coverFile);
+        if (cancelledRef.current) return;
       }
 
       const payload = {
-        title: title.trim(),
+        title:       title.trim(),
         description: description.trim() || null,
-        cover_url: coverUrl,
-        starts_at: startsAt.toISOString(),
-        ends_at: null,
-        city: city.trim() || null,
-        lat: latitude,
-        lng: longitude,
-        capacity: null,
+        cover_url:   coverUrl,
+        starts_at:   startsAt.toISOString(),
+        ends_at:     null,
+        city:        city.trim() || null,
+        lat:         latitude,
+        lng:         longitude,
+        capacity:    null,
         category,
-        price: price ? Number(price) : null,
+        price:       price ? Number(price) : null,
       };
 
       const event = await eventsService.create(payload);
+      if (cancelledRef.current) return;
 
-      // Format event for Events page display
-      const eventDate = new Date(event.starts_at);
-      const dateLabel = eventDate.toLocaleDateString([], { 
-        day: "2-digit", 
-        month: "short" 
-      });
+      const eventDate  = new Date(event.starts_at);
+      const dateLabel  = eventDate.toLocaleDateString([], { day: "2-digit", month: "short" });
 
       const mappedEvent = {
-        id: event.id,
-        title: event.title,
+        id:       event.id,
+        title:    event.title,
         dateLabel,
         category: event.category || "Other",
-        place: event.city || "Unknown",
-        lat: event.lat,
-        lng: event.lng,
-        price: event.price || 0,
-        img: event.cover_url || "",
+        place:    event.city     || "Unknown",
+        lat:      event.lat,
+        lng:      event.lng,
+        price:    event.price    || 0,
+        img:      event.cover_url || "",
         attendees: [],
-        short: event.description || "",
-        dateISO: event.starts_at,
+        short:    event.description || "",
+        dateISO:  event.starts_at,
       };
 
+      // navigate is always safe to call — React Router handles it even
+      // if the component is mid-unmount because it's a router operation,
+      // not a setState on this component
       navigate("/events", { replace: true, state: { created: mappedEvent } });
     } catch (err) {
+      if (cancelledRef.current) return;
       console.error("[CreateEvent] error:", err);
       setError(err.message || "Failed to create event");
     } finally {
-      setIsSaving(false);
+      if (!cancelledRef.current) setIsSaving(false);
     }
-  };
+  }, [
+    title, date, time, city, latitude, longitude,
+    category, price, description, coverFile,
+    uploadCoverImage, navigate,
+  ]);
 
   return (
     <div className="min-h-dvh bg-gradient-to-b from-violet-50 to-white pb-28">
@@ -264,14 +274,12 @@ export default function CreateEvent() {
 
       {/* Form Card */}
       <div className="mx-4 mt-5 rounded-3xl bg-white p-5 shadow-xl space-y-5">
-        {/* Error Message */}
         {error && (
           <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-600">
             {error}
           </div>
         )}
 
-        {/* Title */}
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -279,7 +287,6 @@ export default function CreateEvent() {
           className="w-full text-sm font-semibold rounded-xl border border-gray-200 p-3 placeholder-gray-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 outline-none transition-colors"
         />
 
-        {/* Date + Time */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex items-center gap-2 rounded-xl border border-gray-200 p-3 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-colors">
             <i className="lni lni-calendar text-violet-600" />
@@ -302,7 +309,6 @@ export default function CreateEvent() {
           </div>
         </div>
 
-        {/* Category Chips */}
         <div>
           <p className="mb-2 text-sm font-semibold text-gray-600">Category</p>
           <div className="flex flex-wrap gap-2">
@@ -322,7 +328,6 @@ export default function CreateEvent() {
           </div>
         </div>
 
-        {/* Price */}
         <div className="flex items-center gap-2 rounded-xl border border-gray-200 p-3 focus-within:border-violet-500 focus-within:ring-1 focus-within:ring-violet-500 transition-colors">
           <i className="lni lni-dollar text-violet-600" />
           <input
@@ -344,7 +349,12 @@ export default function CreateEvent() {
               value={locationQuery}
               onChange={(e) => handleLocationSearch(e.target.value)}
               onFocus={() => locationSuggestions.length > 0 && setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              onBlur={() => {
+                // Delay so click on suggestion registers before hiding
+                searchTimerRef.current = setTimeout(() => {
+                  if (!cancelledRef.current) setShowSuggestions(false);
+                }, 200);
+              }}
               placeholder="Search city or location..."
               className="w-full outline-none text-sm"
             />
@@ -353,7 +363,6 @@ export default function CreateEvent() {
             )}
           </div>
 
-          {/* Location Suggestions Dropdown */}
           {showSuggestions && locationSuggestions.length > 0 && (
             <div className="absolute z-10 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg max-h-60 overflow-y-auto">
               {locationSuggestions.map((suggestion) => (
@@ -373,7 +382,6 @@ export default function CreateEvent() {
             </div>
           )}
 
-          {/* Use My Location Button */}
           <button
             onClick={handleUseMyLocation}
             disabled={isGettingLocation}
@@ -392,7 +400,6 @@ export default function CreateEvent() {
             )}
           </button>
 
-          {/* Show coordinates if available */}
           {latitude && longitude && (
             <p className="mt-1 text-xs text-gray-400">
               {latitude.toFixed(6)}, {longitude.toFixed(6)}
@@ -400,7 +407,6 @@ export default function CreateEvent() {
           )}
         </div>
 
-        {/* Description */}
         <div>
           <textarea
             rows={4}
