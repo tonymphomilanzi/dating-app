@@ -28,7 +28,7 @@ const priceFmtExact = new Intl.NumberFormat("en-US", {
 });
 
 /* ================================================================
-   PAYMENT CONFIG — same data as SubscriptionPayment but for tickets
+   PAYMENT CONFIG
    ================================================================ */
 const CRYPTO_OPTIONS = [
   {
@@ -68,8 +68,7 @@ const PAYMENT_METHODS = [
     color: "text-orange-500",
     bg: "bg-orange-50",
     border: "border-orange-200",
-    accentBtn:
-      "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-200",
+    accentBtn: "bg-orange-500 hover:bg-orange-600 text-white shadow-orange-200",
   },
   {
     id: "momo",
@@ -79,15 +78,10 @@ const PAYMENT_METHODS = [
     color: "text-violet-600",
     bg: "bg-violet-50",
     border: "border-violet-200",
-    accentBtn:
-      "bg-violet-600 hover:bg-violet-700 text-white shadow-violet-200",
+    accentBtn: "bg-violet-600 hover:bg-violet-700 text-white shadow-violet-200",
     fields: [
       { label: "Provider", value: "MTN Mobile Money / Orange Money" },
-      {
-        label: "Phone Number",
-        value: "+1 (555) 000-0000",
-        copyable: true,
-      },
+      { label: "Phone Number", value: "+1 (555) 000-0000", copyable: true },
       { label: "Account Name", value: "MatchApp Inc." },
     ],
     instructions: [
@@ -107,18 +101,13 @@ const PAYMENT_METHODS = [
     color: "text-yellow-600",
     bg: "bg-yellow-50",
     border: "border-yellow-200",
-    accentBtn:
-      "bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-200",
+    accentBtn: "bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-200",
     fields: [
       { label: "Recipient Name", value: "John Smith", copyable: true },
       { label: "Country", value: "United States" },
       { label: "State / City", value: "New York, NY" },
       { label: "Test Question", value: "What is the code?" },
-      {
-        label: "Test Answer",
-        value: "MATCHAPP2024",
-        copyable: true,
-      },
+      { label: "Test Answer", value: "MATCHAPP2024", copyable: true },
     ],
     instructions: [
       "Visit any Western Union agent or westernunion.com.",
@@ -140,18 +129,10 @@ const PAYMENT_METHODS = [
     fields: [
       { label: "Bank Name", value: "Chase Bank" },
       { label: "Account Name", value: "MatchApp Inc." },
-      {
-        label: "Account Number",
-        value: "000123456789",
-        copyable: true,
-      },
+      { label: "Account Number", value: "000123456789", copyable: true },
       { label: "Routing / ABA", value: "021000021", copyable: true },
       { label: "SWIFT / BIC", value: "CHASUS33", copyable: true },
-      {
-        label: "IBAN",
-        value: "US29 CHAS 0210 0002 1000 1234",
-        copyable: true,
-      },
+      { label: "IBAN", value: "US29 CHAS 0210 0002 1000 1234", copyable: true },
       { label: "Reference", value: "Use your Order ID" },
     ],
     instructions: [
@@ -200,15 +181,15 @@ function normaliseEvent(raw) {
         raw.organizer?.avatar ||
         raw.organiser?.avatar ||
         "",
-      bio:
-        raw.host?.bio || raw.organizer?.bio || raw.organiser?.bio || "",
+      bio: raw.host?.bio || raw.organizer?.bio || raw.organiser?.bio || "",
     },
     tags: Array.isArray(raw.tags) ? raw.tags : [],
   };
 }
 
 function formatDateTime(isoString) {
-  if (!isoString) return { date: "Date TBA", time: "", relative: "", iso: "" };
+  if (!isoString)
+    return { date: "Date TBA", time: "", relative: "", iso: "" };
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime()))
@@ -236,7 +217,11 @@ function relativeDay(date) {
   try {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tgt = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const tgt = new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    );
     const diff = Math.round((tgt - today) / 86_400_000);
     if (diff === 0) return "Today";
     if (diff === 1) return "Tomorrow";
@@ -285,7 +270,7 @@ function generateOrderId() {
 }
 
 /* ================================================================
-   MAP — lazy loaded vanilla Leaflet
+   MAP — lazy loaded vanilla Leaflet, no top-level imports
    ================================================================ */
 const EventMap = memo(function EventMap({ lat, lng, title, address }) {
   const mapRef = useRef(null);
@@ -488,7 +473,33 @@ function Toast({ toast }) {
 }
 
 /* ================================================================
-   PAYMENT METHOD ICON RESOLVER
+   EXPANDABLE TEXT
+   ================================================================ */
+function ExpandableText({ text, maxChars = 200 }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const needsTruncation = text.length > maxChars;
+  const displayed =
+    expanded || !needsTruncation
+      ? text
+      : `${text.slice(0, maxChars).trimEnd()}…`;
+  return (
+    <div>
+      <p className="text-sm text-gray-600 leading-relaxed">{displayed}</p>
+      {needsTruncation && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
+        >
+          {expanded ? "Show less" : "Read more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================
+   PAYMENT METHOD ICON RESOLVERS
    ================================================================ */
 function MethodIcon({ iconId, className }) {
   if (iconId === "crypto") return <CryptoIcon className={className} />;
@@ -506,7 +517,7 @@ function CryptoOptionIcon({ iconId, className }) {
 }
 
 /* ================================================================
-   IMPORTANT BOX (reused from SubscriptionPayment)
+   IMPORTANT BOX
    ================================================================ */
 function ImportantBox({ orderId, total, currency }) {
   return (
@@ -522,7 +533,10 @@ function ImportantBox({ orderId, total, currency }) {
           "Double-check the address before sending.",
           "Keep your receipt — you'll need it to confirm.",
         ].map((line, i) => (
-          <li key={i} className="flex items-start gap-2 text-xs text-amber-800">
+          <li
+            key={i}
+            className="flex items-start gap-2 text-xs text-amber-800"
+          >
             <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
             {line}
           </li>
@@ -533,19 +547,35 @@ function ImportantBox({ orderId, total, currency }) {
 }
 
 /* ================================================================
-   SUMMARY ROW HELPER
+   SUMMARY ROW
    ================================================================ */
-function Row({ label, value, truncate = false }) {
+function Row({ label, value, truncate = false, highlight = false }) {
   return (
     <div className="flex justify-between text-sm gap-2">
       <span className="text-gray-500 shrink-0">{label}</span>
       <span
-        className={`font-semibold text-gray-900 text-right ${
+        className={`font-semibold text-right ${
           truncate ? "truncate max-w-[180px]" : ""
-        }`}
+        } ${highlight ? "text-amber-600" : "text-gray-900"}`}
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+/* ================================================================
+   TICKET TYPE SKELETON (loading state inside modal)
+   ================================================================ */
+function TicketSkeleton() {
+  return (
+    <div className="space-y-2 animate-pulse">
+      {[1, 2].map((i) => (
+        <div
+          key={i}
+          className="h-16 rounded-2xl bg-gray-100 border border-gray-200"
+        />
+      ))}
     </div>
   );
 }
@@ -565,12 +595,14 @@ const MODAL_STEP = {
 function GetTicketsModal({ event, onClose }) {
   const { user } = useAuth();
 
-  /* ── ticket selection state ── */
+  /* ── ticket selection ── */
   const [step, setStep] = useState(MODAL_STEP.SELECT);
   const [qty, setQty] = useState(1);
-  const [ticketType, setTicketType] = useState("general");
+  const [selectedTypeId, setSelectedTypeId] = useState(null);
+  const [ticketTypes, setTicketTypes] = useState([]);
+  const [loadingTypes, setLoadingTypes] = useState(true);
 
-  /* ── payment state ── */
+  /* ── payment ── */
   const [method, setMethod] = useState(null);
   const [cryptoOption, setCryptoOption] = useState(null);
   const [orderId] = useState(() => generateOrderId());
@@ -600,34 +632,101 @@ function GetTicketsModal({ event, onClose }) {
     [showToast]
   );
 
-  /* ── derived ticket info ── */
-  const isFree = event.price === 0;
-  const spotsLeft =
-    event.capacity != null
-      ? Math.max(0, event.capacity - event.attendees_count)
-      : 999;
-  const maxQty = Math.min(10, spotsLeft);
-  const soldOut = event.capacity != null && spotsLeft === 0;
+  /* ── load ticket types from DB ── */
+  useEffect(() => {
+    let cancelled = false;
 
-  const ticketTypes = isFree
-    ? [{ id: "general", label: "Free Admission", price: 0 }]
-    : [
-        { id: "general", label: "General Admission", price: event.price },
-        {
-          id: "vip",
-          label: "VIP Access",
-          price: Math.round(event.price * 2.5),
-        },
-      ];
+    async function load() {
+      setLoadingTypes(true);
+      try {
+        const { data, error } = await supabase
+          .from("event_ticket_types")
+          .select("*")
+          .eq("event_id", event.id)
+          .eq("is_active", true)
+          .order("sort_order");
 
+        if (cancelled) return;
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          setTicketTypes(data);
+          setSelectedTypeId(data[0].id);
+        } else {
+          /* fallback: synthesise from event.price */
+          const fallback = [
+            {
+              id: "__fallback_general__",
+              name: event.price === 0 ? "Free Admission" : "General Admission",
+              price: event.price || 0,
+              capacity: event.capacity,
+              sold_count: event.attendees_count || 0,
+              description: "",
+            },
+          ];
+          if (event.price > 0) {
+            fallback.push({
+              id: "__fallback_vip__",
+              name: "VIP Access",
+              price: Math.round(event.price * 2.5),
+              capacity: null,
+              sold_count: 0,
+              description: "Premium experience",
+            });
+          }
+          setTicketTypes(fallback);
+          setSelectedTypeId(fallback[0].id);
+        }
+      } catch {
+        /* error fallback */
+        const fallback = [
+          {
+            id: "__fallback_general__",
+            name: event.price === 0 ? "Free Admission" : "General Admission",
+            price: event.price || 0,
+            capacity: event.capacity,
+            sold_count: event.attendees_count || 0,
+            description: "",
+          },
+        ];
+        if (!cancelled) {
+          setTicketTypes(fallback);
+          setSelectedTypeId(fallback[0].id);
+        }
+      } finally {
+        if (!cancelled) setLoadingTypes(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [event.id, event.price, event.capacity, event.attendees_count]);
+
+  /* ── derived values ── */
   const selectedTicket =
-    ticketTypes.find((t) => t.id === ticketType) || ticketTypes[0];
-  const subtotal = selectedTicket.price * qty;
+    ticketTypes.find((t) => t.id === selectedTypeId) || ticketTypes[0];
+
+  const isFree = !selectedTicket || Number(selectedTicket.price) === 0;
+
+  const spotsLeft =
+    selectedTicket?.capacity != null
+      ? Math.max(
+          0,
+          Number(selectedTicket.capacity) -
+            Number(selectedTicket.sold_count || 0)
+        )
+      : 999;
+
+  const maxQty = Math.min(10, spotsLeft);
+  const soldOut = selectedTicket?.capacity != null && spotsLeft === 0;
+  const subtotal = selectedTicket ? Number(selectedTicket.price) * qty : 0;
   const fees = isFree ? 0 : Math.round(subtotal * 0.05);
   const total = subtotal + fees;
   const totalStr = total.toFixed(2);
 
-  /* ── close / keyboard ── */
+  /* ── close / keyboard / scroll lock ── */
   const overlayRef = useRef(null);
 
   function handleOverlayClick(e) {
@@ -650,6 +749,10 @@ function GetTicketsModal({ event, onClose }) {
     };
   }, []);
 
+  /* ── helpers ── */
+  const isFallback = (id) =>
+    typeof id === "string" && id.startsWith("__fallback");
+
   /* ── free RSVP ── */
   async function handleFreeRSVP() {
     if (!user?.id) {
@@ -658,10 +761,33 @@ function GetTicketsModal({ event, onClose }) {
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase
-        .from("event_attendees")
-        .upsert({ event_id: event.id, user_id: user.id }, { onConflict: "event_id,user_id" });
-      if (error) throw error;
+      if (!isFallback(selectedTicket?.id)) {
+        /* real ticket type → write to event_ticket_purchases */
+        const { error } = await supabase
+          .from("event_ticket_purchases")
+          .insert({
+            event_id: event.id,
+            ticket_type_id: selectedTicket.id,
+            user_id: user.id,
+            order_id: orderId,
+            quantity: 1,
+            unit_price: 0,
+            total_amount: 0,
+            payment_method: "free",
+            status: "confirmed",
+            confirmed_at: new Date().toISOString(),
+          });
+        if (error) throw error;
+      } else {
+        /* fallback → write directly to event_attendees */
+        const { error } = await supabase
+          .from("event_attendees")
+          .upsert(
+            { event_id: event.id, user_id: user.id },
+            { onConflict: "event_id,user_id" }
+          );
+        if (error) throw error;
+      }
       setStep(MODAL_STEP.DONE);
     } catch (err) {
       showToast(err.message || "RSVP failed. Please try again.", "error");
@@ -670,14 +796,14 @@ function GetTicketsModal({ event, onClose }) {
     }
   }
 
-  /* ── paid: method selected → go to details ── */
+  /* ── method select ── */
   function handleMethodSelect(m) {
     setMethod(m);
     if (m.id === "crypto") setCryptoOption(CRYPTO_OPTIONS[0]);
     setStep(MODAL_STEP.DETAILS);
   }
 
-  /* ── paid: submit proof ── */
+  /* ── paid submit ── */
   async function handleSubmit() {
     if (!txRef.trim()) {
       showToast("Please enter your transaction reference", "error");
@@ -689,25 +815,47 @@ function GetTicketsModal({ event, onClose }) {
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase
-        .from("subscription_requests")
-        .insert({
-          user_id: user.id,
-          order_id: orderId,
-          plan_id: event.id,
-          plan_name: `${event.title} — ${selectedTicket.label} × ${qty}`,
-          billing_cycle: "one_time",
-          price_usd: selectedTicket.price,
-          total_usd: parseFloat(totalStr),
-          method: method?.id,
-          crypto_option: cryptoOption?.id ?? null,
-          tx_reference: txRef.trim(),
-          proof_url: proofUrl.trim() || null,
-          note: note.trim() || null,
-          status: "pending",
-          created_at: new Date().toISOString(),
-        });
-      if (error) throw error;
+      if (!isFallback(selectedTicket?.id)) {
+        /* real ticket type */
+        const { error } = await supabase
+          .from("event_ticket_purchases")
+          .insert({
+            event_id: event.id,
+            ticket_type_id: selectedTicket.id,
+            user_id: user.id,
+            order_id: orderId,
+            quantity: qty,
+            unit_price: Number(selectedTicket.price),
+            total_amount: parseFloat(totalStr),
+            payment_method: method?.id,
+            payment_reference: txRef.trim(),
+            proof_url: proofUrl.trim() || null,
+            note: note.trim() || null,
+            status: "pending",
+          });
+        if (error) throw error;
+      } else {
+        /* fallback → subscription_requests table */
+        const { error } = await supabase
+          .from("subscription_requests")
+          .insert({
+            user_id: user.id,
+            order_id: orderId,
+            plan_id: event.id,
+            plan_name: `${event.title} — ${selectedTicket.name} × ${qty}`,
+            billing_cycle: "one_time",
+            price_usd: Number(selectedTicket.price),
+            total_usd: parseFloat(totalStr),
+            method: method?.id,
+            crypto_option: cryptoOption?.id ?? null,
+            tx_reference: txRef.trim(),
+            proof_url: proofUrl.trim() || null,
+            note: note.trim() || null,
+            status: "pending",
+            created_at: new Date().toISOString(),
+          });
+        if (error) throw error;
+      }
       setStep(MODAL_STEP.DONE);
     } catch (err) {
       showToast(err.message || "Submission failed. Please try again.", "error");
@@ -736,6 +884,7 @@ function GetTicketsModal({ event, onClose }) {
   const showBack =
     step !== MODAL_STEP.SELECT && step !== MODAL_STEP.DONE;
 
+  /* ── render ── */
   return (
     <>
       <Toast toast={toast} />
@@ -760,7 +909,7 @@ function GetTicketsModal({ event, onClose }) {
           </div>
 
           {/* Header */}
-          <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-[2rem] sm:rounded-t-[2rem]">
             {showBack && (
               <button
                 onClick={handleBack}
@@ -786,141 +935,186 @@ function GetTicketsModal({ event, onClose }) {
             </button>
           </div>
 
-          {/* ── SELECT STEP ── */}
+          {/* ══════════════════════════════════
+              SELECT STEP
+          ══════════════════════════════════ */}
           {step === MODAL_STEP.SELECT && (
             <div className="px-6 py-5 space-y-5">
-              {soldOut ? (
+              {soldOut && !loadingTypes && (
                 <div className="rounded-2xl bg-red-50 border border-red-100 p-6 text-center">
                   <p className="text-base font-bold text-red-700">Sold Out</p>
                   <p className="text-xs text-red-500 mt-1">
                     No spots remaining for this event.
                   </p>
                 </div>
-              ) : (
-                <>
-                  {/* Ticket type */}
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
-                      Ticket Type
-                    </p>
-                    {ticketTypes.map((tt) => (
+              )}
+
+              {/* Ticket type selector */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
+                  Ticket Type
+                </p>
+                {loadingTypes ? (
+                  <TicketSkeleton />
+                ) : (
+                  ticketTypes.map((tt) => {
+                    const ttSpotsLeft =
+                      tt.capacity != null
+                        ? Math.max(
+                            0,
+                            Number(tt.capacity) - Number(tt.sold_count || 0)
+                          )
+                        : null;
+                    const ttSoldOut =
+                      tt.capacity != null && ttSpotsLeft === 0;
+                    const isSelected = selectedTypeId === tt.id;
+
+                    return (
                       <button
                         key={tt.id}
-                        onClick={() => setTicketType(tt.id)}
-                        className={`w-full flex items-center justify-between rounded-2xl border-2 px-4 py-3.5 transition-all duration-150 ${
-                          ticketType === tt.id
+                        onClick={() => {
+                          if (!ttSoldOut) {
+                            setSelectedTypeId(tt.id);
+                            setQty(1);
+                          }
+                        }}
+                        disabled={ttSoldOut}
+                        className={`w-full flex items-start justify-between rounded-2xl border-2 px-4 py-3.5 transition-all duration-150 text-left ${
+                          isSelected
                             ? "border-violet-600 bg-violet-50"
+                            : ttSoldOut
+                            ? "border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed"
                             : "border-gray-100 bg-white hover:border-gray-200"
                         }`}
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
                           <div
-                            className={`h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                              ticketType === tt.id
+                            className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                              isSelected
                                 ? "border-violet-600 bg-violet-600"
                                 : "border-gray-300"
                             }`}
                           >
-                            {ticketType === tt.id && (
+                            {isSelected && (
                               <div className="h-2 w-2 rounded-full bg-white" />
                             )}
                           </div>
-                          <span className="font-semibold text-sm text-gray-900">
-                            {tt.label}
-                          </span>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-gray-900">
+                              {tt.name}
+                              {ttSoldOut && (
+                                <span className="ml-2 text-[10px] font-bold text-red-500 uppercase">
+                                  Sold out
+                                </span>
+                              )}
+                            </p>
+                            {tt.description && (
+                              <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                {tt.description}
+                              </p>
+                            )}
+                            {ttSpotsLeft != null && !ttSoldOut && (
+                              <p className="text-[10px] text-gray-400 mt-0.5">
+                                {ttSpotsLeft} spot
+                                {ttSpotsLeft !== 1 ? "s" : ""} left
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <span className="font-bold text-sm text-violet-700">
-                          {tt.price === 0
+                        <span className="font-bold text-sm text-violet-700 shrink-0 ml-3 mt-0.5">
+                          {Number(tt.price) === 0
                             ? "Free"
-                            : priceFmtExact.format(tt.price)}
+                            : priceFmtExact.format(Number(tt.price))}
                         </span>
                       </button>
-                    ))}
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Quantity — paid only */}
+              {!loadingTypes && !isFree && !soldOut && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
+                    Quantity
+                  </p>
+                  <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-2">
+                    <button
+                      onClick={() => setQty((q) => Math.max(1, q - 1))}
+                      disabled={qty <= 1}
+                      className="h-10 w-10 rounded-xl bg-white shadow-sm border border-gray-100 flex items-center justify-center text-gray-700 disabled:opacity-30 hover:bg-gray-50 active:scale-90 transition-all"
+                    >
+                      <MinusIcon className="h-4 w-4" />
+                    </button>
+                    <span className="text-lg font-extrabold text-gray-900 w-12 text-center">
+                      {qty}
+                    </span>
+                    <button
+                      onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+                      disabled={qty >= maxQty}
+                      className="h-10 w-10 rounded-xl bg-white shadow-sm border border-gray-100 flex items-center justify-center text-gray-700 disabled:opacity-30 hover:bg-gray-50 active:scale-90 transition-all"
+                    >
+                      <PlusIcon className="h-4 w-4" />
+                    </button>
                   </div>
-
-                  {/* Quantity — paid only */}
-                  {!isFree && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
-                        Quantity
-                      </p>
-                      <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-2">
-                        <button
-                          onClick={() => setQty((q) => Math.max(1, q - 1))}
-                          disabled={qty <= 1}
-                          className="h-10 w-10 rounded-xl bg-white shadow-sm border border-gray-100 flex items-center justify-center text-gray-700 disabled:opacity-30 hover:bg-gray-50 active:scale-90 transition-all"
-                        >
-                          <MinusIcon className="h-4 w-4" />
-                        </button>
-                        <span className="text-lg font-extrabold text-gray-900 w-12 text-center">
-                          {qty}
-                        </span>
-                        <button
-                          onClick={() =>
-                            setQty((q) => Math.min(maxQty, q + 1))
-                          }
-                          disabled={qty >= maxQty}
-                          className="h-10 w-10 rounded-xl bg-white shadow-sm border border-gray-100 flex items-center justify-center text-gray-700 disabled:opacity-30 hover:bg-gray-50 active:scale-90 transition-all"
-                        >
-                          <PlusIcon className="h-4 w-4" />
-                        </button>
-                      </div>
-                      {event.capacity != null && (
-                        <p className="text-xs text-gray-400 text-center">
-                          {spotsLeft} spot{spotsLeft !== 1 ? "s" : ""} remaining
-                        </p>
-                      )}
-                    </div>
+                  {spotsLeft < 999 && (
+                    <p className="text-xs text-gray-400 text-center">
+                      {spotsLeft} spot{spotsLeft !== 1 ? "s" : ""} remaining
+                    </p>
                   )}
+                </div>
+              )}
 
-                  {/* Order summary — paid only */}
-                  {!isFree && (
-                    <div className="rounded-2xl bg-gray-50 border border-gray-100 p-4 space-y-2">
-                      <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">
-                        Order Summary
-                      </p>
-                      <Row
-                        label={`${qty} × ${selectedTicket.label}`}
-                        value={priceFmtExact.format(subtotal)}
-                      />
-                      <Row
-                        label="Service fee (5%)"
-                        value={priceFmtExact.format(fees)}
-                      />
-                      <div className="flex justify-between text-sm border-t border-gray-200 pt-2">
-                        <span className="font-bold text-gray-900">Total</span>
-                        <span className="font-bold text-violet-700 text-base">
-                          {priceFmtExact.format(total)}
-                        </span>
-                      </div>
-                    </div>
+              {/* Order summary — paid only */}
+              {!loadingTypes && !isFree && !soldOut && (
+                <div className="rounded-2xl bg-gray-50 border border-gray-100 p-4 space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">
+                    Order Summary
+                  </p>
+                  <Row
+                    label={`${qty} × ${selectedTicket?.name}`}
+                    value={priceFmtExact.format(subtotal)}
+                  />
+                  <Row
+                    label="Service fee (5%)"
+                    value={priceFmtExact.format(fees)}
+                  />
+                  <div className="flex justify-between text-sm border-t border-gray-200 pt-2">
+                    <span className="font-bold text-gray-900">Total</span>
+                    <span className="font-bold text-violet-700 text-base">
+                      {priceFmtExact.format(total)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* CTA */}
+              {!loadingTypes && !soldOut && (
+                <button
+                  onClick={() =>
+                    isFree ? handleFreeRSVP() : setStep(MODAL_STEP.METHOD)
+                  }
+                  disabled={submitting || !selectedTicket}
+                  className="w-full h-14 rounded-2xl bg-gradient-to-r from-violet-600 to-violet-500 text-white font-extrabold text-base shadow-lg shadow-violet-600/30 hover:from-violet-500 hover:to-violet-400 active:scale-95 transition-all duration-150 disabled:opacity-70 flex items-center justify-center gap-2"
+                >
+                  {submitting ? (
+                    <>
+                      <SpinnerIcon className="h-5 w-5 animate-spin" />
+                      Reserving…
+                    </>
+                  ) : isFree ? (
+                    "Reserve My Spot — Free"
+                  ) : (
+                    `Continue · ${priceFmtExact.format(total)}`
                   )}
-
-                  {/* CTA */}
-                  <button
-                    onClick={() =>
-                      isFree ? handleFreeRSVP() : setStep(MODAL_STEP.METHOD)
-                    }
-                    disabled={submitting}
-                    className="w-full h-14 rounded-2xl bg-gradient-to-r from-violet-600 to-violet-500 text-white font-extrabold text-base shadow-lg shadow-violet-600/30 hover:from-violet-500 hover:to-violet-400 active:scale-95 transition-all duration-150 disabled:opacity-70 flex items-center justify-center gap-2"
-                  >
-                    {submitting ? (
-                      <>
-                        <SpinnerIcon className="h-5 w-5 animate-spin" />
-                        Reserving…
-                      </>
-                    ) : isFree ? (
-                      "Reserve My Spot"
-                    ) : (
-                      `Continue · ${priceFmtExact.format(total)}`
-                    )}
-                  </button>
-                </>
+                </button>
               )}
             </div>
           )}
 
-          {/* ── METHOD STEP ── */}
+          {/* ══════════════════════════════════
+              METHOD STEP
+          ══════════════════════════════════ */}
           {step === MODAL_STEP.METHOD && (
             <div className="px-6 py-5 space-y-3">
               <p className="text-xs font-bold uppercase tracking-widest text-gray-400 px-1">
@@ -930,7 +1124,7 @@ function GetTicketsModal({ event, onClose }) {
               {/* Order summary chip */}
               <div className="rounded-2xl bg-violet-50 border border-violet-100 px-4 py-3 flex items-center justify-between">
                 <span className="text-sm text-gray-600">
-                  {qty} × {selectedTicket.label}
+                  {qty} × {selectedTicket?.name}
                 </span>
                 <span className="font-extrabold text-violet-700">
                   {priceFmtExact.format(total)}
@@ -953,7 +1147,9 @@ function GetTicketsModal({ event, onClose }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-extrabold text-gray-900">{m.label}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{m.sublabel}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {m.sublabel}
+                    </p>
                   </div>
                   <ChevronRightIcon className="h-5 w-5 text-gray-300 shrink-0" />
                 </button>
@@ -974,7 +1170,9 @@ function GetTicketsModal({ event, onClose }) {
             </div>
           )}
 
-          {/* ── DETAILS STEP ── */}
+          {/* ══════════════════════════════════
+              DETAILS STEP
+          ══════════════════════════════════ */}
           {step === MODAL_STEP.DETAILS && method && (
             <div className="px-6 py-5 space-y-4">
               {/* Method chip */}
@@ -1119,7 +1317,7 @@ function GetTicketsModal({ event, onClose }) {
                     </div>
                   </div>
 
-                  {/* Fields */}
+                  {/* Payment fields */}
                   <div className="rounded-3xl bg-white border border-gray-100 shadow-sm overflow-hidden">
                     <div className="px-5 pt-5 pb-3 border-b border-gray-50">
                       <p className="text-sm font-bold text-gray-900">
@@ -1173,10 +1371,12 @@ function GetTicketsModal({ event, onClose }) {
             </div>
           )}
 
-          {/* ── CONFIRM STEP ── */}
+          {/* ══════════════════════════════════
+              CONFIRM STEP
+          ══════════════════════════════════ */}
           {step === MODAL_STEP.CONFIRM && method && (
             <div className="px-6 py-5 space-y-4">
-              {/* Recap */}
+              {/* Recap chip */}
               <div
                 className={`rounded-3xl border-2 ${method.border} ${method.bg} p-5`}
               >
@@ -1199,9 +1399,7 @@ function GetTicketsModal({ event, onClose }) {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-xs text-gray-400">Total sent</p>
-                    <p className="font-extrabold text-gray-900">
-                      ${totalStr}
-                    </p>
+                    <p className="font-extrabold text-gray-900">${totalStr}</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between rounded-xl bg-white/70 border border-white px-4 py-2.5">
@@ -1326,7 +1524,9 @@ function GetTicketsModal({ event, onClose }) {
             </div>
           )}
 
-          {/* ── DONE STEP ── */}
+          {/* ══════════════════════════════════
+              DONE STEP
+          ══════════════════════════════════ */}
           {step === MODAL_STEP.DONE && (
             <div className="px-6 py-10 flex flex-col items-center text-center gap-5">
               {/* Success ring */}
@@ -1351,29 +1551,35 @@ function GetTicketsModal({ event, onClose }) {
               {/* Summary */}
               <div className="w-full bg-violet-50 rounded-2xl p-4 text-left space-y-2">
                 <Row label="Event" value={event.title} truncate />
-                <Row label="Date" value={formatDateTime(event.starts_at).date} />
+                <Row
+                  label="Date"
+                  value={formatDateTime(event.starts_at).date}
+                />
+                <Row
+                  label="Ticket"
+                  value={
+                    isFree
+                      ? selectedTicket?.name || "Free Admission"
+                      : `${qty} × ${selectedTicket?.name}`
+                  }
+                />
                 {!isFree && (
                   <>
-                    <Row
-                      label="Ticket"
-                      value={`${qty} × ${selectedTicket.label}`}
-                    />
                     <Row label="Order ID" value={orderId} />
                     <Row label="Method" value={method?.label} />
                     <div className="flex justify-between text-sm border-t border-violet-100 pt-2">
                       <span className="font-bold text-gray-900">
-                        {isFree ? "Total" : "Total Paid"}
+                        Total Paid
                       </span>
                       <span className="font-bold text-violet-700">
-                        {isFree ? "Free" : `$${totalStr}`}
+                        ${totalStr}
                       </span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Status</span>
-                      <span className="font-bold text-amber-600">
-                        Pending verification
-                      </span>
-                    </div>
+                    <Row
+                      label="Status"
+                      value="Pending verification"
+                      highlight
+                    />
                   </>
                 )}
               </div>
@@ -1389,33 +1595,6 @@ function GetTicketsModal({ event, onClose }) {
         </div>
       </div>
     </>
-  );
-}
-
-/* ================================================================
-   EXPANDABLE TEXT
-   ================================================================ */
-function ExpandableText({ text, maxChars = 200 }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!text) return null;
-  const needsTruncation = text.length > maxChars;
-  const displayed =
-    expanded || !needsTruncation
-      ? text
-      : `${text.slice(0, maxChars).trimEnd()}…`;
-
-  return (
-    <div>
-      <p className="text-sm text-gray-600 leading-relaxed">{displayed}</p>
-      {needsTruncation && (
-        <button
-          onClick={() => setExpanded((e) => !e)}
-          className="mt-2 text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors"
-        >
-          {expanded ? "Show less" : "Read more"}
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -1495,10 +1674,12 @@ export default function EventDetail() {
   }, [hasMap, event]);
 
   const handleShare = useCallback(() => shareEvent(event), [event]);
+
   const handleRetry = useCallback(() => {
     setEvent(null);
     setRetryKey((k) => k + 1);
   }, []);
+
   const handleOpenTickets = useCallback(() => setShowTickets(true), []);
   const handleCloseTickets = useCallback(() => setShowTickets(false), []);
 
@@ -1575,7 +1756,7 @@ export default function EventDetail() {
 
         {/* Content */}
         <main className="relative z-10 -mt-10 px-5 max-w-lg mx-auto space-y-5">
-          {/* Title */}
+          {/* Title block */}
           <div className="space-y-2">
             <h1 className="text-3xl font-extrabold text-gray-900 leading-tight tracking-tight">
               {event.title}
@@ -1616,7 +1797,7 @@ export default function EventDetail() {
             )}
           </div>
 
-          {/* Organiser */}
+          {/* Organiser card */}
           <div className="flex items-center justify-between gap-4 bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
             <div className="flex items-center gap-3 min-w-0">
               <div className="relative shrink-0">
@@ -1651,7 +1832,7 @@ export default function EventDetail() {
             </button>
           </div>
 
-          {/* Date + Capacity */}
+          {/* Date + Capacity grid */}
           <div className="grid grid-cols-2 gap-3">
             <InfoCard
               label="Date & Time"
@@ -1748,7 +1929,7 @@ export default function EventDetail() {
             )}
           </div>
 
-          {/* Stale data warning */}
+          {/* Stale-data warning */}
           {error && event && (
             <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3">
               <WarningIcon className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
@@ -1801,7 +1982,7 @@ export default function EventDetail() {
 }
 
 /* ================================================================
-   ICONS
+   ICONS — all inline SVG, zero external icon lib imports
    ================================================================ */
 function ChevronLeftIcon({ className = "h-5 w-5" }) {
   return (
