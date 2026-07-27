@@ -1,4 +1,5 @@
-import { Outlet } from "react-router-dom";
+//import { Outlet } from "react-router-dom";
+import { Outlet } from "@tanstack/react-router";
 import ErrorBoundary from "../components/ErrorBoundary.jsx";
 import DebugOverlay from "../components/DebugOverlay.jsx";
 

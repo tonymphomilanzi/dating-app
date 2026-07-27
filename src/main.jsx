@@ -1,12 +1,14 @@
+// src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
-import App from "./App.jsx";
+import { RouterProvider } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import { queryClient } from "./lib/queryClient";
+import { router } from "./router";
 import "./index.css";
-import { AuthProvider } from "./contexts/AuthContext.jsx";
-import { AuthFlowProvider } from "./contexts/AuthFlowContext.jsx";
 
-// Global error logs (dev only to reduce noise in prod)
+// ── Global error logging (dev only) ──────────────────────────────
 if (import.meta.env.DEV) {
   window.addEventListener("error", (e) => {
     console.error("[GlobalError] window.error", {
@@ -17,24 +19,33 @@ if (import.meta.env.DEV) {
       error: e.error?.stack || e.error,
     });
   });
+
   window.addEventListener("unhandledrejection", (e) => {
     console.error("[GlobalError] unhandledrejection", {
-      reason: (e.reason && (e.reason.stack || e.reason.message)) || String(e.reason),
+      reason:
+        e.reason && (e.reason.stack || e.reason.message)
+          ? e.reason.stack || e.reason.message
+          : String(e.reason),
     });
   });
 }
 
-const root = document.getElementById("root");
-if (!root) throw new Error("Root element not found");
+// ── Root element guard ────────────────────────────────────────────
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Root element not found");
 
-ReactDOM.createRoot(root).render(
+// ── Render ────────────────────────────────────────────────────────
+ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <AuthFlowProvider>
-          <App />
-        </AuthFlowProvider>
-      </AuthProvider>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+
+      {import.meta.env.DEV && (
+        <ReactQueryDevtools
+          initialIsOpen={false}
+          buttonPosition="bottom-left"
+        />
+      )}
+    </QueryClientProvider>
   </React.StrictMode>
 );
