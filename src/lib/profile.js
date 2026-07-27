@@ -1,25 +1,18 @@
 // src/lib/profile.js
-import { supabase } from "./supabase.client"; // adjust to your supabase client path
+import { authStore } from "./authStore.js";
 
+/**
+ * Used by setupGateRoute.beforeLoad
+ * First call: checks fields (instant) + interests (one DB call, cached)
+ * Every call after: fully instant from memory/localStorage
+ */
 export async function getProfileCompletion() {
-  const { data: { user } } = await supabase.auth.getUser();
+  await authStore.waitUntilReady();
 
-  if (!user) {
+  const session = authStore.getSession();
+  if (!session?.user?.id) {
     return { isComplete: false, redirectTo: "/setup/basics" };
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("name, dob, gender, interests, avatar_url")
-    .eq("id", user.id)
-    .single();
-
-  // Adjust field names to match your actual DB columns
-  if (!profile?.name)       return { isComplete: false, redirectTo: "/setup/basics" };
-  if (!profile?.dob)        return { isComplete: false, redirectTo: "/setup/dob" };
-  if (!profile?.gender)     return { isComplete: false, redirectTo: "/setup/gender" };
-  if (!profile?.interests)  return { isComplete: false, redirectTo: "/setup/interests" };
-  if (!profile?.avatar_url) return { isComplete: false, redirectTo: "/setup/photo" };
-
-  return { isComplete: true, redirectTo: "/discover" };
+  return authStore.checkSetupComplete(session.user.id);
 }

@@ -7,72 +7,71 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 
-// ── Layouts ───────────────────────────────────────────────────────
-import RootLayout from "./layouts/RootLayout";
-import TabsLayout from "./layouts/TabsLayout";
-
-// ── Auth helpers ──────────────────────────────────────────────────
-import { getAuthSession } from "./lib/auth";
-import { getProfileCompletion } from "./lib/profile";
+// ── Auth helpers (reads from memory — no DB calls) ────────────────
+import { getAuthSession }      from "./lib/auth.js";
+import { getProfileCompletion } from "./lib/profile.js";
 
 // ── Contexts ──────────────────────────────────────────────────────
-import { AuthProvider } from "./contexts/AuthContext";
-import { AuthFlowProvider } from "./contexts/AuthFlowContext";
-import { NotificationProvider } from "./contexts/NotificationContext";
-import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider }        from "./contexts/AuthContext.jsx";
+import { AuthFlowProvider }    from "./contexts/AuthFlowContext.jsx";
+import { NotificationProvider } from "./contexts/NotificationContext.jsx";
+import { Toaster }             from "@/components/ui/sonner";
+
+// ── Layouts ───────────────────────────────────────────────────────
+import RootLayout  from "./layouts/RootLayout.jsx";
+import TabsLayout  from "./layouts/TabsLayout.jsx";
 
 // ── Public pages ──────────────────────────────────────────────────
-import Onboarding from "./pages/Onboarding";
-import AuthChoice from "./pages/AuthChoice";
-import EmailVerify from "./pages/EmailVerify";
-import AuthCallback from "./pages/AuthCallback";
-import SignUp from "./pages/SignUp";
-import SignInEmail from "./pages/SignInEmail";
-import ForgotPassword from "./pages/ForgotPassword";
+import Onboarding      from "./pages/Onboarding.jsx";
+import AuthChoice      from "./pages/AuthChoice.jsx";
+import EmailVerify     from "./pages/EmailVerify.jsx";
+import AuthCallback    from "./pages/AuthCallback.jsx";
+import SignUp          from "./pages/SignUp.jsx";
+import SignInEmail     from "./pages/SignInEmail.jsx";
+import ForgotPassword  from "./pages/ForgotPassword.jsx";
 
 // ── Setup wizard ──────────────────────────────────────────────────
-import SetupBasics from "./pages/setup/Basics";
-import SetupDOB from "./pages/setup/DOB";
-import SetupGender from "./pages/setup/Gender";
-import SetupInterests from "./pages/setup/Interests";
-import SetupPhoto from "./pages/setup/Photo";
+import SetupBasics    from "./pages/setup/Basics.jsx";
+import SetupDOB       from "./pages/setup/DOB.jsx";
+import SetupGender    from "./pages/setup/Gender.jsx";
+import SetupInterests from "./pages/setup/Interests.jsx";
+import SetupPhoto     from "./pages/setup/Photo.jsx";
 
 // ── Tab pages ─────────────────────────────────────────────────────
-import Discover from "./pages/Discover";
-import Matches from "./pages/Matches";
-import Messages from "./pages/Messages";
-import Events from "./pages/Events";
-import MassageClinic from "./pages/MassageClinic";
+import Discover    from "./pages/Discover.jsx";
+import Matches     from "./pages/Matches.jsx";
+import Messages    from "./pages/Messages.jsx";
+import Events      from "./pages/Events.jsx";
+import MassageClinic from "./pages/MassageClinic.jsx";
 
 // ── Full screen pages ─────────────────────────────────────────────
-import ProfileYou from "./pages/ProfileYou";
-import Filters from "./pages/Filters";
-import Chat from "./pages/Chat";
-import ProfileView from "./pages/ProfileView";
-import MatchSuccess from "./pages/MatchSuccess";
-import ProfileGallery from "./pages/ProfileGallery";
-import StoryComposer from "./pages/StoryComposer";
-import StoryPage from "./pages/StoryPage";
-import EventDetail from "./pages/EventDetail";
-import CreateEvent from "./pages/CreateEvent";
-import EditEvent from "./pages/EditEvent";
-import Calendar from "./pages/Calendar";
-import Notifications from "./pages/Notifications";
-import Streams from "./pages/Streams";
-import CreateMassageClinic from "./pages/CreateMassageClinic";
-import MassageClinicDetail from "./pages/MassageClinicDetail";
-import SubscriptionPlans from "./pages/SubscriptionPlans";
-import SubscriptionPayment from "./pages/SubscriptionPayment";
-import Feeds from "./pages/Feeds";
-import FeedPost from "./pages/FeedPost";
-import FeedDetail from "./pages/FeedDetail";
+import ProfileYou          from "./pages/ProfileYou.jsx";
+import Filters             from "./pages/Filters.jsx";
+import Chat                from "./pages/Chat.jsx";
+import ProfileView         from "./pages/ProfileView.jsx";
+import MatchSuccess        from "./pages/MatchSuccess.jsx";
+import ProfileGallery      from "./pages/ProfileGallery.jsx";
+import StoryComposer       from "./pages/StoryComposer.jsx";
+import StoryPage           from "./pages/StoryPage.jsx";
+import EventDetail         from "./pages/EventDetail.jsx";
+import CreateEvent         from "./pages/CreateEvent.jsx";
+import EditEvent           from "./pages/EditEvent.jsx";
+import Calendar            from "./pages/Calendar.jsx";
+import Notifications       from "./pages/Notifications.jsx";
+import Streams             from "./pages/Streams.jsx";
+import CreateMassageClinic from "./pages/CreateMassageClinic.jsx";
+import MassageClinicDetail from "./pages/MassageClinicDetail.jsx";
+import SubscriptionPlans   from "./pages/SubscriptionPlans.jsx";
+import SubscriptionPayment from "./pages/SubscriptionPayment.jsx";
+import Feeds               from "./pages/Feeds.jsx";
+import FeedPost            from "./pages/FeedPost.jsx";
+import FeedDetail          from "./pages/FeedDetail.jsx";
 
 // ── Admin ─────────────────────────────────────────────────────────
-import AdminApp from "./admin/AdminApp";
+import AdminApp from "./admin/AdminApp.jsx";
 
 /* ================================================================
-   ROOT ROUTE
-   Single place for all providers — no more double mounting
+   ROOT ROUTE — providers live here, rendered once, never unmount
    ================================================================ */
 const rootRoute = createRootRoute({
   component: () => (
@@ -80,7 +79,7 @@ const rootRoute = createRootRoute({
       <AuthFlowProvider>
         <NotificationProvider>
           <Toaster richColors closeButton position="top-center" />
-          <Outlet />
+          <RootLayout />
         </NotificationProvider>
       </AuthFlowProvider>
     </AuthProvider>
@@ -88,8 +87,7 @@ const rootRoute = createRootRoute({
 });
 
 /* ================================================================
-   ADMIN ROUTE
-   Completely isolated from main app
+   ADMIN — completely isolated
    ================================================================ */
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -98,8 +96,7 @@ const adminRoute = createRoute({
 });
 
 /* ================================================================
-   AUTH CALLBACK
-   Public — no guard needed
+   AUTH CALLBACK — public, no guard
    ================================================================ */
 const authCallbackRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -108,17 +105,14 @@ const authCallbackRoute = createRoute({
 });
 
 /* ================================================================
-   GUEST LAYOUT ROUTE
-   If already logged in → go to /discover
+   GUEST ROUTES — redirect to /discover if already logged in
    ================================================================ */
 const guestRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "guest",
   beforeLoad: async () => {
     const session = await getAuthSession();
-    if (session) {
-      throw redirect({ to: "/discover" });
-    }
+    if (session) throw redirect({ to: "/discover" });
   },
   component: Outlet,
 });
@@ -172,24 +166,20 @@ const forgotPasswordRoute = createRoute({
 });
 
 /* ================================================================
-   AUTH LAYOUT ROUTE
-   If not logged in → go to /
+   AUTH ROUTES — redirect to / if not logged in
    ================================================================ */
 const authRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "auth",
   beforeLoad: async () => {
     const session = await getAuthSession();
-    if (!session) {
-      throw redirect({ to: "/" });
-    }
+    if (!session) throw redirect({ to: "/" });
   },
   component: Outlet,
 });
 
 /* ================================================================
-   SETUP WIZARD ROUTES
-   Auth required but NO profile completion check
+   SETUP WIZARD — auth required, no profile gate
    ================================================================ */
 const setupBasicsRoute = createRoute({
   getParentRoute: () => authRoute,
@@ -222,9 +212,8 @@ const setupPhotoRoute = createRoute({
 });
 
 /* ================================================================
-   SETUP GATE ROUTE
-   Auth + profile must be complete
-   Redirects to correct setup step if incomplete
+   SETUP GATE — profile must be complete
+   Reads from authStore (in-memory) — no DB call on navigation
    ================================================================ */
 const setupGateRoute = createRoute({
   getParentRoute: () => authRoute,
@@ -239,8 +228,7 @@ const setupGateRoute = createRoute({
 });
 
 /* ================================================================
-   TABS LAYOUT ROUTE
-   Bottom navigation pages
+   TABS LAYOUT — bottom navigation
    ================================================================ */
 const tabsRoute = createRoute({
   getParentRoute: () => setupGateRoute,
@@ -279,8 +267,7 @@ const massageClinicsTabRoute = createRoute({
 });
 
 /* ================================================================
-   FULL SCREEN ROUTES
-   Auth + profile complete, outside tabs layout
+   FULL SCREEN PAGES
    ================================================================ */
 const streamsRoute = createRoute({
   getParentRoute: () => setupGateRoute,
@@ -342,7 +329,6 @@ const storyPageRoute = createRoute({
   component: StoryPage,
 });
 
-// ── Events ────────────────────────────────────────────────────────
 const createEventRoute = createRoute({
   getParentRoute: () => setupGateRoute,
   path: "/events/new",
@@ -367,7 +353,6 @@ const calendarRoute = createRoute({
   component: Calendar,
 });
 
-// ── Massage Clinics ───────────────────────────────────────────────
 const createMassageClinicRoute = createRoute({
   getParentRoute: () => setupGateRoute,
   path: "/massage-clinics/new",
@@ -386,7 +371,6 @@ const massageClinicDetailRoute = createRoute({
   component: MassageClinicDetail,
 });
 
-// ── Feeds ─────────────────────────────────────────────────────────
 const feedsRoute = createRoute({
   getParentRoute: () => setupGateRoute,
   path: "/feeds",
@@ -405,7 +389,6 @@ const feedDetailRoute = createRoute({
   component: FeedDetail,
 });
 
-// ── Subscriptions ─────────────────────────────────────────────────
 const subscriptionPlansRoute = createRoute({
   getParentRoute: () => setupGateRoute,
   path: "/subscription",
@@ -424,9 +407,7 @@ const subscriptionPaymentRoute = createRoute({
 const catchAllRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "*",
-  beforeLoad: () => {
-    throw redirect({ to: "/" });
-  },
+  beforeLoad: () => { throw redirect({ to: "/" }); },
   component: () => null,
 });
 
@@ -463,7 +444,6 @@ const routeTree = rootRoute.addChildren([
         eventsTabRoute,
         massageClinicsTabRoute,
       ]),
-
       streamsRoute,
       notificationsRoute,
       profileYouRoute,
@@ -493,11 +473,11 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 /* ================================================================
-   ROUTER INSTANCE
+   ROUTER
    ================================================================ */
 export const router = createRouter({
   routeTree,
-  defaultPreload: "intent",     // Preload data on hover/focus
-  defaultPreloadDelay: 50,      // 50ms before preload fires
-  defaultStaleTime: 1000 * 60,  // Routes stay fresh for 1 minute
+  defaultPreload: "intent",    // preload on hover/focus = instant feel
+  defaultPreloadDelay: 50,     // 50ms hover before preload fires
+  defaultStaleTime: 1000 * 60, // routes stay fresh 1 minute
 });

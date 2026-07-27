@@ -1,16 +1,10 @@
-import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext.jsx";
+// src/components/GuestOnly.jsx
+// Guard logic moved to guestRoute.beforeLoad in router.jsx
+// Kept as passthrough so existing imports don't break
+// Safe to delete after full migration is confirmed
+
+import { Outlet } from "@tanstack/react-router";
 
 export default function GuestOnly() {
-  const { ready, user } = useAuth();
-  const loc = useLocation();
-  if (!ready) {
-    console.info("[Guard:GuestOnly] waiting for auth.ready … route:", loc.pathname);
-    return <div className="grid min-h-dvh place-items-center">Loading…</div>;
-  }
-  if (user) {
-    console.info("[Guard:GuestOnly] user present; redirecting to /discover from", loc.pathname);
-    return <Navigate to="/discover" replace />;
-  }
   return <Outlet />;
 }

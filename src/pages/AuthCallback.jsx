@@ -1,270 +1,90 @@
 // src/pages/AuthCallback.jsx
+// Handles:
+//   1. Email confirmation clicks  (?code=xxx)
+//   2. Google OAuth return        (?code=xxx)
+//   3. Password reset             (?type=recovery&code=xxx)
+
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { supabase } from "../lib/supabase.client.js";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const POLL_INTERVAL_MS = 150;
-const POLL_TIMEOUT_MS = 15_000;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toUserMessage(err) {
-  const msg = (err?.message ?? "").toLowerCase();
-
-  if (
-    msg.includes("code verifier") ||
-    msg.includes("both auth code") ||
-    msg.includes("code has already been used") ||
-    msg.includes("invalid request")
-  ) {
-    return "This sign‑in link has already been used or expired. Please sign in again.";
-  }
-  if (msg.includes("network") || msg.includes("fetch")) {
-    return "A network error occurred. Please check your connection and try again.";
-  }
-  if (msg.includes("timeout")) {
-    return "Sign‑in is taking too long. Please try again.";
-  }
-  return "We couldn't complete sign‑in. Please try again.";
-}
-
-/**
- * Check if profile is complete based on database data
- */
-function isProfileComplete(profile) {
-  if (!profile) return false;
-  return (
-    !!String(profile.display_name ?? "").trim() &&
-    !!profile.dob &&
-    !!String(profile.gender ?? "").trim()
-  );
-}
-
-/**
- * Set setup completion flags in localStorage
- */
-function setSetupComplete(uid) {
-  if (!uid) return;
-  try {
-    localStorage.setItem(`SETUP_OK_${uid}`, "1");
-    localStorage.setItem("SETUP_OK", "1"); // Legacy compatibility
-  } catch (err) {
-    console.warn("Could not set localStorage flags:", err);
-  }
-}
-
-/**
- * Ensure profile row exists and get profile data
- */
-async function ensureAndLoadProfile(user) {
-  if (!user) return null;
-
-  try {
-    // First check if profile exists
-    const { data: existing } = await supabase
-      .from("profiles")
-      .select("id, display_name, dob, gender, avatar_url, city")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (existing) {
-      return existing;
-    }
-
-    // Create profile row if it doesn't exist (for new OAuth users)
-    const display_name =
-      user.user_metadata?.display_name ||
-      user.user_metadata?.full_name ||
-      user.user_metadata?.name ||
-      null;
-
-    const avatar_url =
-      user.user_metadata?.avatar_url ||
-      user.user_metadata?.picture ||
-      null;
-
-    const { data: created } = await supabase
-      .from("profiles")
-      .insert({ 
-        id: user.id, 
-        display_name, 
-        avatar_url 
-      })
-      .select("id, display_name, dob, gender, avatar_url, city")
-      .single();
-
-    return created;
-  } catch (err) {
-    console.error("[AuthCallback] Profile error:", err);
-    return null;
-  }
-}
-
-// ─── Module-level guard ───────────────────────────────────────────────────────
-let exchangeStarted = false;
-
-// ─── Component ────────────────────────────────────────────────────────────────
+import { useAuthFlow } from "../contexts/AuthFlowContext.jsx";
 
 export default function AuthCallback() {
-  const nav = useNavigate();
+  const navigate = useNavigate();
+  const search   = useSearch({ strict: false });
+  const { clearFlow } = useAuthFlow();
 
-  const [status, setStatus] = useState("pending");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  const abortRef = useRef(null);
+  const [error, setError] = useState("");
+  const ranRef = useRef(false);
 
   useEffect(() => {
-    if (exchangeStarted) return;
-    exchangeStarted = true;
+    if (ranRef.current) return;
+    ranRef.current = true;
 
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    const run = async () => {
+    async function handleCallback() {
       try {
-        console.log("[AuthCallback] Starting OAuth callback process...");
-        console.log("[AuthCallback] href:", window.location.href);
+        const type = search?.type;
 
-        // ── Check for OAuth error param ───────────────────────────────────
-        const params = new URLSearchParams(window.location.search);
-        const oauthError = params.get("error");
+        // Supabase auto-exchanges the ?code= param when detectSessionInUrl: true
+        // We just need to wait for onAuthStateChange to fire in AuthContext.
+        // getSession() here confirms the exchange worked.
+        const { data: { session }, error: sessionError } =
+          await supabase.auth.getSession();
 
-        if (oauthError) {
-          throw new Error(params.get("error_description") ?? oauthError);
+        if (sessionError) throw sessionError;
+
+        if (!session) {
+          // No session yet — Supabase may still be exchanging
+          // Wait briefly then check again
+          await new Promise((r) => setTimeout(r, 1000));
+          const { data: { session: retrySession } } =
+            await supabase.auth.getSession();
+
+          if (!retrySession) {
+            throw new Error("Could not verify your session. Please try again.");
+          }
         }
 
-        // ── Wait for Supabase to auto-exchange the code ───────────────────
-        console.log("[AuthCallback] Waiting for session...");
-        const session = await pollForSession(ac.signal);
+        clearFlow();
 
-        if (ac.signal.aborted) return;
-
-        const user = session?.user;
-        if (!user) {
-          throw new Error("No session after exchange");
+        // Password recovery → let user set new password
+        if (type === "recovery") {
+          navigate({ to: "/auth/forgot-password", search: { recovery: "1" } });
+          return;
         }
 
-        console.log("[AuthCallback] Session established for user:", user.id);
-
-        // ── CRITICAL FIX: Check actual profile data from database ─────────
-        console.log("[AuthCallback] Loading profile from database...");
-        const profile = await ensureAndLoadProfile(user);
-
-        if (ac.signal.aborted) return;
-
-        const setupComplete = isProfileComplete(profile);
-        console.log("[AuthCallback] Profile complete:", setupComplete, profile);
-
-        if (setupComplete) {
-          // Set localStorage flags for future quick checks
-          setSetupComplete(user.id);
-          console.log("[AuthCallback] Redirecting to /discover");
-          nav("/discover", { replace: true });
-        } else {
-          console.log("[AuthCallback] Redirecting to /setup/basics");
-          nav("/setup/basics", { replace: true });
-        }
-
+        // Normal sign-in / email confirmation → go to app
+        // SetupGate will redirect to setup if profile incomplete
+        navigate({ to: "/discover" });
       } catch (err) {
-        if (ac.signal.aborted) return;
-
-        console.error("[AuthCallback] Error:", err);
-        setErrorMsg(toUserMessage(err));
-        setStatus("error");
-        exchangeStarted = false;
+        console.error("[AuthCallback]", err);
+        setError(err.message || "Something went wrong. Please try again.");
       }
-    };
+    }
 
-    run();
+    handleCallback();
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-    return () => {
-      ac.abort();
-    };
-  }, [nav]);
-
-  // ── Error UI ──────────────────────────────────────────────────────────────
-
-  if (status === "error") {
+  if (error) {
     return (
-      <div className="grid min-h-dvh place-items-center bg-white p-6">
-        <div className="flex flex-col items-center gap-6 text-center max-w-sm">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
-            <svg
-              className="h-7 w-7 text-red-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          </div>
-
-          <div>
-            <h1 className="text-base font-semibold text-gray-900">Sign‑in failed</h1>
-            <p className="mt-2 text-sm text-gray-500">{errorMsg}</p>
-          </div>
-
-          <div className="flex flex-col gap-3 w-full">
-            <Link
-              to="/auth"
-              className="w-full rounded-full bg-violet-600 px-6 py-2.5 text-sm font-medium text-white text-center hover:bg-violet-700 transition-colors"
-            >
-              Back to sign in
-            </Link>
-            <Link
-              to="/"
-              className="w-full rounded-full border border-gray-200 bg-white px-6 py-2.5 text-sm font-medium text-gray-700 text-center hover:bg-gray-50 transition-colors"
-            >
-              Go home
-            </Link>
-          </div>
-        </div>
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6">
+        <p className="text-center text-sm text-red-600">{error}</p>
+        <a
+          href="/auth"
+          className="text-sm font-medium text-gray-900 underline"
+        >
+          Back to sign in
+        </a>
       </div>
     );
   }
 
-  // ── Pending UI ────────────────────────────────────────────────────────────
-
   return (
-    <div className="grid min-h-dvh place-items-center bg-white p-6">
-      <div className="flex flex-col items-center gap-4 text-center">
-        <div
-          className="h-10 w-10 animate-spin rounded-full border-4 border-violet-200 border-t-violet-600"
-          role="status"
-          aria-label="Loading"
-        />
-        <p className="text-sm text-gray-600">Completing sign‑in...</p>
+    <div className="grid min-h-dvh place-items-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <p className="text-sm text-gray-500">Signing you in…</p>
       </div>
     </div>
   );
-}
-
-// ─── pollForSession ───────────────────────────────────────────────────────────
-
-async function pollForSession(signal) {
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    if (signal.aborted) return null;
-
-    const { data, error } = await supabase.auth.getSession();
-
-    if (error) throw error;
-
-    if (data?.session) {
-      return data.session;
-    }
-
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-  }
-
-  throw new Error(`Timeout after ${POLL_TIMEOUT_MS}ms waiting for session`);
 }
